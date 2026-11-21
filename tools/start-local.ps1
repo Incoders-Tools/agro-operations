@@ -8,8 +8,23 @@ if (-not (Test-Path -LiteralPath (Join-Path $web 'package.json'))) {
 }
 $node = Get-Command node.exe -ErrorAction SilentlyContinue
 $pnpm = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
-if (-not $node -or -not $pnpm) {
-    throw 'Instale Node.js y pnpm antes de iniciar la demostración local.'
+$runner = $null
+$prefix = @()
+$startPrefix = @()
+if ($node -and $pnpm) {
+    $runner = $pnpm.Source
+} else {
+    # Explorer can retain an older PATH than interactive shells. Resolve the user's fnm default.
+    $fnm = Join-Path $HOME 'scoop\shims\fnm.exe'
+    $userPnpm = Join-Path $env:APPDATA 'npm\pnpm.cmd'
+    if (-not (Test-Path -LiteralPath $fnm) -or -not (Test-Path -LiteralPath $userPnpm)) {
+        throw 'No se encontró Node.js/pnpm ni la instalación local de fnm. Compruebe fnm y pnpm.'
+    }
+    $runner = $fnm
+    $prefix = @('exec', '--using=default', '--', $userPnpm)
+    $startPrefix = @('exec', '--using=default', '--', "`"$userPnpm`"")
+    & $runner @prefix --version | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'fnm no pudo iniciar pnpm con la versión predeterminada de Node.js.' }
 }
 
 # Never open a different service if the expected port is already occupied.
@@ -27,7 +42,7 @@ try {
 
 if (-not (Test-Path -LiteralPath (Join-Path $web 'node_modules/next/package.json'))) {
     Write-Host 'Instalando dependencias de la demostración local...'
-    & $pnpm.Source --dir $web install --frozen-lockfile --ignore-scripts
+    & $runner @prefix --dir $web install --frozen-lockfile --ignore-scripts
     if ($LASTEXITCODE -ne 0) { throw 'No se pudieron instalar las dependencias locales.' }
 }
 
@@ -35,7 +50,7 @@ $env:LOCAL_PREVIEW = '1'
 $env:NODE_ENV = 'development'
 Write-Host 'Iniciando vista con datos inventados en http://127.0.0.1:3000/'
 Write-Host 'Para detener el servidor, pulse Ctrl+C en esta ventana.'
-$server = Start-Process -FilePath $pnpm.Source -ArgumentList @('--dir', "`"$web`"", 'dev') -WorkingDirectory $web -NoNewWindow -PassThru
+$server = Start-Process -FilePath $runner -ArgumentList ($startPrefix + @('--dir', "`"$web`"", 'dev')) -WorkingDirectory $web -NoNewWindow -PassThru
 try {
     $ready = $false
     for ($i = 0; $i -lt 80; $i++) {
