@@ -1,0 +1,8 @@
+# Send only the API sources required by the multi-stage build.
+**
+!src/
+!src/AgroOperations.Api/
+!src/AgroOperations.Api/**
+src/AgroOperations.Api/bin/
+src/AgroOperations.Api/obj/
+src/AgroOperations.Api/.env*

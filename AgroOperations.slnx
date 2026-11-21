@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/AgroOperations.Api/AgroOperations.Api.csproj" />
+  <Project Path="tests/AgroOperations.Smoke/AgroOperations.Smoke.csproj" />
+</Solution>
