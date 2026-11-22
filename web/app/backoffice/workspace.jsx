@@ -3,12 +3,34 @@
 import { useEffect, useState } from 'react';
 
 const groups = {
-  clients: { title: 'Clientes', singular: 'Cliente', parent: null },
-  fields: { title: 'Campos', singular: 'Campo', parent: 'clients', parentKey: 'clientId' },
-  plots: { title: 'Lotes', singular: 'Lote', parent: 'fields', parentKey: 'fieldId' },
-  crops: { title: 'Cultivos', singular: 'Cultivo', parent: null },
+  clients: { title: 'Clientes', singular: 'Cliente', parents: [] },
+  fields: { title: 'Campos', singular: 'Campo', parents: [{ group: 'clients', key: 'clientId', label: 'Cliente' }] },
+  plots: { title: 'Lotes', singular: 'Lote', parents: [{ group: 'fields', key: 'fieldId', label: 'Campo' }], area: true },
+  crops: { title: 'Cultivos', singular: 'Cultivo', parents: [] },
+  campaigns: { title: 'Campañas', singular: 'Campaña', feminine: true, parents: [] },
+  'labor-types': { title: 'Tipos de labor', singular: 'Tipo de labor', parents: [] },
+  'plot-campaign-areas': {
+    title: 'Superficie por campaña', singular: 'Registro de superficie', nameField: false, area: true,
+    parents: [{ group: 'plots', key: 'plotId', label: 'Lote' }, { group: 'campaigns', key: 'campaignId', label: 'Campaña' }],
+    primaryLabel: row => `${row.areaHectares} ha`,
+  },
+  recipes: {
+    title: 'Recetas', singular: 'Receta', feminine: true, nameField: false, stage: true,
+    parents: [
+      { group: 'plots', key: 'plotId', label: 'Lote' },
+      { group: 'campaigns', key: 'campaignId', label: 'Campaña' },
+      { group: 'labor-types', key: 'laborTypeId', label: 'Tipo de labor' },
+    ],
+    primaryLabel: row => `${row.stage} · ${row.targetUse}`,
+  },
+  'recipe-lines': {
+    title: 'Líneas de receta', singular: 'Línea de receta', feminine: true, nameField: false, dose: true,
+    parents: [{ group: 'recipes', key: 'recipeId', label: 'Receta' }],
+    primaryLabel: row => `${row.productName} · ${row.doseValue} ${row.doseUnit}`,
+  },
 };
-const empty = { clients: [], fields: [], plots: [], crops: [] };
+const emptyForm = { name: '', parents: {}, area: '', stage: 'presiembra', targetUse: '', responsibleEngineer: '', productName: '', doseValue: '', doseUnit: '' };
+const empty = Object.fromEntries(Object.keys(groups).map(key => [key, []]));
 
 async function api(path, options = {}) {
   const response = await fetch(`/api/v1/${path}`, { cache: 'no-store', credentials: 'same-origin', ...options });
@@ -28,7 +50,7 @@ export default function Backoffice() {
   const [password, setPassword] = useState('');
   const [group, setGroup] = useState('clients');
   const [rows, setRows] = useState(empty);
-  const [form, setForm] = useState({ name: '', parent: '', area: '' });
+  const [form, setForm] = useState(emptyForm);
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -69,21 +91,35 @@ export default function Backoffice() {
     finally { setIdentity(null); setRows(empty); setEditing(null); setBusy(false); }
   }
   function switchGroup(key) {
-    setGroup(key); setForm({ name: '', parent: '', area: '' }); setEditing(null); setError('');
+    setGroup(key); setForm(emptyForm); setEditing(null); setError('');
   }
   function edit(row) {
     const meta = groups[group];
     setEditing(row);
-    setForm({ name: row.name, parent: meta.parentKey ? row[meta.parentKey] : '', area: row.areaHectares ?? '' });
+    setForm({
+      ...emptyForm,
+      name: meta.nameField === false ? '' : row.name,
+      parents: Object.fromEntries(meta.parents.map(parent => [parent.key, row[parent.key]])),
+      area: meta.area ? row.areaHectares : '',
+      stage: meta.stage ? row.stage : 'presiembra',
+      targetUse: meta.stage ? row.targetUse : '',
+      responsibleEngineer: meta.stage ? row.responsibleEngineer : '',
+      productName: meta.dose ? row.productName : '',
+      doseValue: meta.dose ? row.doseValue : '',
+      doseUnit: meta.dose ? row.doseUnit : '',
+    });
     setError('');
   }
   async function save(event) {
     event.preventDefault();
     setBusy(true); setError('');
     const meta = groups[group];
-    const value = { name: form.name.trim() };
-    if (!editing && meta.parentKey) value[meta.parentKey] = form.parent;
-    if (group === 'plots') value.areaHectares = Number(form.area);
+    const value = {};
+    if (meta.nameField !== false) value.name = form.name.trim();
+    if (meta.area) value.areaHectares = Number(form.area);
+    if (meta.stage) { value.stage = form.stage; value.targetUse = form.targetUse.trim(); value.responsibleEngineer = form.responsibleEngineer.trim(); }
+    if (meta.dose) { value.productName = form.productName.trim(); value.doseValue = Number(form.doseValue); value.doseUnit = form.doseUnit.trim(); }
+    if (!editing) for (const parent of meta.parents) value[parent.key] = form.parents[parent.key];
     if (editing) value.revision = editing.revision;
     try {
       await api(editing ? `${group}/${editing.id}` : group, {
@@ -92,7 +128,7 @@ export default function Backoffice() {
         body: JSON.stringify(value),
       });
       await refresh();
-      setForm({ name: '', parent: '', area: '' }); setEditing(null);
+      setForm(emptyForm); setEditing(null);
     } catch (cause) { setError(cause.message); }
     finally { setBusy(false); }
   }
@@ -109,26 +145,47 @@ export default function Backoffice() {
     </div></main>;
 
   const meta = groups[group];
-  const parents = meta.parent ? rows[meta.parent] : [];
-  const parentName = id => parents.find(row => row.id === id)?.name ?? 'Sin referencia';
+  const rowLabel = (groupKey, row) => groups[groupKey].primaryLabel ? groups[groupKey].primaryLabel(row) : row.name;
+  const label = row => rowLabel(group, row);
+  const parentName = (parent, id) => {
+    const match = rows[parent.group]?.find(row => row.id === id);
+    return match ? rowLabel(parent.group, match) : 'Sin referencia';
+  };
+  const parentsReady = meta.parents.every(parent => rows[parent.group]?.length);
+  const stages = ['presiembra', 'preemergencia', 'postemergencia'];
   return <div className="bo-app">
     <aside className="bo-sidebar"><div className="bo-mark"><span aria-hidden="true">✳</span><strong>Agro</strong><small>Operaciones</small></div>
       <nav aria-label="Registros operativos">{Object.entries(groups).map(([key, item]) =>
         <button key={key} type="button" className={key === group ? 'bo-selected' : ''} onClick={() => switchGroup(key)} aria-current={key === group ? 'page' : undefined}>{item.title}<span>{rows[key].length}</span></button>
-      )}</nav><p>Las campañas, recetas y labores se incorporarán como registros separados. Una tarea planificada no equivale a un trabajo realizado.</p>
+      )}</nav><p>Una receta es un plan interno de tratamiento: no es una prescripción oficial emitida ni prueba de que la labor se haya realizado.</p>
       <button type="button" className="bo-logout" disabled={busy} onClick={logout}>Cerrar sesión</button>
     </aside>
     <main className="bo-main"><header><div><p className="bo-kicker">Registro privado · {identity.email}</p><h1>{meta.title}</h1><p>Consulta y administra los datos guardados en PostgreSQL local.</p></div><span className="bo-count">{rows[group].length} {rows[group].length === 1 ? 'registro' : 'registros'}</span></header>
       {error && <p className="bo-error" role="alert">{error}</p>}
       <div className="bo-columns"><section className="bo-list" aria-label={`Listado de ${meta.title.toLowerCase()}`}><div className="bo-section-head"><h2>Registros</h2><button type="button" onClick={() => { setError(''); refresh().catch(cause => setError(cause.message)); }}>Actualizar</button></div>
         {rows[group].length === 0 ? <p className="bo-empty">Aún no hay {meta.title.toLowerCase()}. Crea el primer registro desde el formulario.</p> :
-          <ul>{rows[group].map(row => <li key={row.id}><div><strong>{row.name}</strong><small>{meta.parentKey ? `${parentName(row[meta.parentKey])} · ` : ''}{group === 'plots' ? `${row.areaHectares} ha · ` : ''}Revisión {row.revision}</small></div><button type="button" onClick={() => edit(row)}>Editar</button></li>)}</ul>}
-      </section><section className="bo-editor"><h2>{editing ? `Editar ${meta.singular.toLowerCase()}` : `Nuevo ${meta.singular.toLowerCase()}`}</h2>
-        <form onSubmit={save}><label htmlFor="bo-name">Nombre</label><input id="bo-name" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} required maxLength={200} />
-          {!editing && meta.parent && <><label htmlFor="bo-parent">{groups[meta.parent].singular}</label><select id="bo-parent" value={form.parent} onChange={event => setForm({ ...form, parent: event.target.value })} required><option value="">Selecciona un registro</option>{parents.map(parent => <option key={parent.id} value={parent.id}>{parent.name}</option>)}</select></>}
-          {group === 'plots' && <><label htmlFor="bo-area">Superficie (ha)</label><input id="bo-area" type="number" min="0.0001" max="99999999.9999" step="0.0001" value={form.area} onChange={event => setForm({ ...form, area: event.target.value })} required /></>}
-          <div className="bo-actions"><button type="submit" disabled={busy || (!editing && meta.parent && !parents.length)}>{busy ? 'Guardando…' : editing ? 'Guardar cambios' : `Crear ${meta.singular.toLowerCase()}`}</button>{editing && <button type="button" onClick={() => { setEditing(null); setForm({ name: '', parent: '', area: '' }); }}>Cancelar</button>}</div>
-          {!editing && meta.parent && !parents.length && <p>Primero crea un {groups[meta.parent].singular.toLowerCase()}.</p>}
+          <ul>{rows[group].map(row => <li key={row.id}><div><strong>{label(row)}</strong><small>{meta.parents.map(parent => parentName(parent, row[parent.key])).join(' · ')}{meta.parents.length ? ' · ' : ''}Revisión {row.revision}</small></div><button type="button" onClick={() => edit(row)}>Editar</button></li>)}</ul>}
+      </section><section className="bo-editor"><h2>{editing ? `Editar ${meta.singular.toLowerCase()}` : `${meta.feminine ? 'Nueva' : 'Nuevo'} ${meta.singular.toLowerCase()}`}</h2>
+        <form onSubmit={save}>
+          {meta.nameField !== false && <><label htmlFor="bo-name">Nombre</label><input id="bo-name" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} required maxLength={200} /></>}
+          {!editing && meta.parents.map(parent => <div key={parent.key}><label htmlFor={`bo-parent-${parent.key}`}>{parent.label}</label>
+            <select id={`bo-parent-${parent.key}`} value={form.parents[parent.key] ?? ''} onChange={event => setForm({ ...form, parents: { ...form.parents, [parent.key]: event.target.value } })} required>
+              <option value="">Selecciona un registro</option>{(rows[parent.group] ?? []).map(option => <option key={option.id} value={option.id}>{rowLabel(parent.group, option)}</option>)}
+            </select></div>)}
+          {meta.area && <><label htmlFor="bo-area">Superficie (ha)</label><input id="bo-area" type="number" min="0.0001" max="99999999.9999" step="0.0001" value={form.area} onChange={event => setForm({ ...form, area: event.target.value })} required /></>}
+          {meta.stage && <>
+            <label htmlFor="bo-stage">Etapa del ciclo</label>
+            <select id="bo-stage" value={form.stage} onChange={event => setForm({ ...form, stage: event.target.value })}>{stages.map(stage => <option key={stage} value={stage}>{stage}</option>)}</select>
+            <label htmlFor="bo-target">Uso objetivo</label><input id="bo-target" value={form.targetUse} onChange={event => setForm({ ...form, targetUse: event.target.value })} placeholder="Ej. Barbecho" required maxLength={200} />
+            <label htmlFor="bo-engineer">Ingeniero responsable</label><input id="bo-engineer" value={form.responsibleEngineer} onChange={event => setForm({ ...form, responsibleEngineer: event.target.value })} required maxLength={200} />
+          </>}
+          {meta.dose && <>
+            <label htmlFor="bo-product">Producto (ficticio por ahora)</label><input id="bo-product" value={form.productName} onChange={event => setForm({ ...form, productName: event.target.value })} required maxLength={200} />
+            <label htmlFor="bo-dose">Dosis</label><input id="bo-dose" type="number" min="0.0001" max="99999999.9999" step="0.0001" value={form.doseValue} onChange={event => setForm({ ...form, doseValue: event.target.value })} required />
+            <label htmlFor="bo-dose-unit">Unidad</label><input id="bo-dose-unit" value={form.doseUnit} onChange={event => setForm({ ...form, doseUnit: event.target.value })} placeholder="Ej. l/ha" required maxLength={50} />
+          </>}
+          <div className="bo-actions"><button type="submit" disabled={busy || (!editing && !parentsReady)}>{busy ? 'Guardando…' : editing ? 'Guardar cambios' : `Crear ${meta.singular.toLowerCase()}`}</button>{editing && <button type="button" onClick={() => { setEditing(null); setForm(emptyForm); }}>Cancelar</button>}</div>
+          {!editing && !parentsReady && <p>Primero crea los registros relacionados: {meta.parents.map(parent => groups[parent.group].title.toLowerCase()).join(', ')}.</p>}
         </form></section></div>
     </main>
   </div>;
