@@ -22,7 +22,7 @@ try
     using (var db = new NpgsqlConnection(scoped.ConnectionString))
     {
         db.Open();
-        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql" })
+        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql" })
         {
             var file = Path.Combine(root, "src", "AgroOperations.Api", "Persistence", "Migrations", name);
             using var migration = new NpgsqlCommand(File.ReadAllText(file), db);
@@ -143,6 +143,11 @@ try
             throw new Exception("Invalid recipe line changed stored records");
         if ((await Send(HttpMethod.Put, $"/api/v1/recipes/{recipeId}", new { stage = "postemergencia", targetUse = "Barbecho", responsibleEngineer = "Matías Kincaid", revision = 0 })).StatusCode != HttpStatusCode.Conflict)
             throw new Exception("Stale recipe update did not conflict");
+        using (var anonymous = new HttpClient { BaseAddress = client.BaseAddress })
+            if ((await anonymous.GetAsync("/api/v1/import-records")).StatusCode != HttpStatusCode.Unauthorized)
+                throw new Exception("Anonymous import-records route accessible");
+        var importRecords = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/import-records");
+        if (importRecords?.Length != 0) throw new Exception("Unexpected import-records in fresh schema");
         // A wrong persisted DB password must fail startup, not serve a healthy but unusable API.
         using var spare = new TcpListener(IPAddress.Loopback, 0);
         spare.Start();

@@ -21,6 +21,7 @@ public static class BackofficeRoutes
         var laborTypes = new LaborTypeCatalog(new PostgresLaborTypeRepository(connectionString));
         var plotAreas = new PlotCampaignAreaService(new PostgresPlotCampaignAreaRepository(connectionString));
         var recipes = new RecipeService(new PostgresRecipeRepository(connectionString));
+        var provenance = new ImportProvenanceService(new PostgresImportRecordRepository(connectionString));
         var protectedRoutes = local.MapGroup("").RequireAuthorization().AddEndpointFilter(async (context, next) =>
         {
             if (HttpMethods.IsGet(context.HttpContext.Request.Method)) return await next(context);
@@ -38,6 +39,7 @@ public static class BackofficeRoutes
         protectedRoutes.MapGet("/plot-campaign-areas", () => Results.Json(plotAreas.List()));
         protectedRoutes.MapGet("/recipes", () => Results.Json(recipes.List()));
         protectedRoutes.MapGet("/recipe-lines", () => Results.Json(recipes.ListLines()));
+        protectedRoutes.MapGet("/import-records", () => Results.Json(provenance.List()));
         protectedRoutes.MapGet("/clients/{id:guid}", (Guid id) => Item(operations.GetClient(id)));
         protectedRoutes.MapGet("/fields/{id:guid}", (Guid id) => Item(operations.GetField(id)));
         protectedRoutes.MapGet("/plots/{id:guid}", (Guid id) => Item(operations.GetPlot(id)));

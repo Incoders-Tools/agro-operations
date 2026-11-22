@@ -28,6 +28,11 @@ const groups = {
     parents: [{ group: 'recipes', key: 'recipeId', label: 'Receta' }],
     primaryLabel: row => `${row.productName} · ${row.doseValue} ${row.doseUnit}`,
   },
+  'import-records': {
+    title: 'Procedencia', singular: 'Registro de procedencia', readOnly: true, parents: [],
+    primaryLabel: row => `${row.entityType} · ${row.sourceReference}`,
+    secondaryLabel: row => row.verified ? 'Verificado' : 'Importado, sin verificar',
+  },
 };
 const emptyForm = { name: '', parents: {}, area: '', stage: 'presiembra', targetUse: '', responsibleEngineer: '', productName: '', doseValue: '', doseUnit: '' };
 const empty = Object.fromEntries(Object.keys(groups).map(key => [key, []]));
@@ -164,8 +169,10 @@ export default function Backoffice() {
       {error && <p className="bo-error" role="alert">{error}</p>}
       <div className="bo-columns"><section className="bo-list" aria-label={`Listado de ${meta.title.toLowerCase()}`}><div className="bo-section-head"><h2>Registros</h2><button type="button" onClick={() => { setError(''); refresh().catch(cause => setError(cause.message)); }}>Actualizar</button></div>
         {rows[group].length === 0 ? <p className="bo-empty">Aún no hay {meta.title.toLowerCase()}. Crea el primer registro desde el formulario.</p> :
-          <ul>{rows[group].map(row => <li key={row.id}><div><strong>{label(row)}</strong><small>{meta.parents.map(parent => parentName(parent, row[parent.key])).join(' · ')}{meta.parents.length ? ' · ' : ''}Revisión {row.revision}</small></div><button type="button" onClick={() => edit(row)}>Editar</button></li>)}</ul>}
-      </section><section className="bo-editor"><h2>{editing ? `Editar ${meta.singular.toLowerCase()}` : `${meta.feminine ? 'Nueva' : 'Nuevo'} ${meta.singular.toLowerCase()}`}</h2>
+          <ul>{rows[group].map(row => <li key={row.id}><div><strong>{label(row)}</strong><small>{meta.secondaryLabel ? meta.secondaryLabel(row) :
+            `${meta.parents.map(parent => parentName(parent, row[parent.key])).join(' · ')}${meta.parents.length ? ' · ' : ''}Revisión ${row.revision}`}</small></div>
+            {!meta.readOnly && <button type="button" onClick={() => edit(row)}>Editar</button>}</li>)}</ul>}
+      </section>{!meta.readOnly && <section className="bo-editor"><h2>{editing ? `Editar ${meta.singular.toLowerCase()}` : `${meta.feminine ? 'Nueva' : 'Nuevo'} ${meta.singular.toLowerCase()}`}</h2>
         <form onSubmit={save}>
           {meta.nameField !== false && <><label htmlFor="bo-name">Nombre</label><input id="bo-name" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} required maxLength={200} /></>}
           {!editing && meta.parents.map(parent => <div key={parent.key}><label htmlFor={`bo-parent-${parent.key}`}>{parent.label}</label>
@@ -186,7 +193,7 @@ export default function Backoffice() {
           </>}
           <div className="bo-actions"><button type="submit" disabled={busy || (!editing && !parentsReady)}>{busy ? 'Guardando…' : editing ? 'Guardar cambios' : `Crear ${meta.singular.toLowerCase()}`}</button>{editing && <button type="button" onClick={() => { setEditing(null); setForm(emptyForm); }}>Cancelar</button>}</div>
           {!editing && !parentsReady && <p>Primero crea los registros relacionados: {meta.parents.map(parent => groups[parent.group].title.toLowerCase()).join(', ')}.</p>}
-        </form></section></div>
+        </form></section>}</div>
     </main>
   </div>;
 }
