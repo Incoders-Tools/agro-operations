@@ -106,6 +106,31 @@ try
         if ((await Send(HttpMethod.Put, $"/api/v1/clients/{id}", new { name = "Stale", revision = 0 })).StatusCode != HttpStatusCode.Conflict ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/clients"))![0].GetProperty("name").GetString() != "Sample")
             throw new Exception("Stale client update overwrote record");
+        // A wrong persisted DB password must fail startup, not serve a healthy but unusable API.
+        using var spare = new TcpListener(IPAddress.Loopback, 0);
+        spare.Start();
+        var refusedPort = ((IPEndPoint)spare.LocalEndpoint).Port;
+        spare.Stop();
+        var wrongDatabase = new NpgsqlConnectionStringBuilder(scoped.ConnectionString) { Password = "invalid-test-password" };
+        var refusedStart = new ProcessStartInfo("dotnet")
+        {
+            ArgumentList = { "run", "--no-build", "--project", Path.Combine(root, "src", "AgroOperations.Api", "AgroOperations.Api.csproj"),
+                "--no-launch-profile", "--", "--urls", $"http://127.0.0.1:{refusedPort}" },
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        refusedStart.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        refusedStart.Environment["AGRO_LOCAL_ADMIN_EMAIL"] = "owner@example.test";
+        refusedStart.Environment["AGRO_LOCAL_ADMIN_PASSWORD"] = password;
+        refusedStart.Environment["AGRO_LOCAL_DATABASE"] = wrongDatabase.ConnectionString;
+        using var refused = Process.Start(refusedStart) ?? throw new Exception("Unable to start invalid-DB API probe");
+        try
+        {
+            if (!refused.WaitForExit(10000)) throw new Exception("Invalid DB password left the API running");
+            if (refused.ExitCode == 0) throw new Exception("Invalid DB password did not reject startup");
+        }
+        finally { if (!refused.HasExited) { refused.Kill(entireProcessTree: true); await refused.WaitForExitAsync(); } }
+        if ((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/clients")) is not { Length: 1 })
+            throw new Exception("Rejected DB startup changed client listing");
         Console.WriteLine("PASS: private HTTP CRUD, rejection invariants and revision guards in isolated PostgreSQL");
         return 0;
     }

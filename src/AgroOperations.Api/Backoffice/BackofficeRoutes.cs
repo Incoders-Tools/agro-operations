@@ -13,6 +13,8 @@ public static class BackofficeRoutes
         var database = new NpgsqlConnectionStringBuilder(connectionString);
         if (database.Host is not ("127.0.0.1" or "localhost"))
             throw new InvalidOperationException("Local backoffice requires a loopback-only PostgreSQL host");
+        // Refuse to advertise a healthy private API if the persisted database rejects these credentials.
+        using (var probe = new NpgsqlConnection(connectionString)) probe.Open();
         var operations = new OperationsService(new PostgresOperationsRepository(connectionString));
         var crops = new CropCatalog(new PostgresCropRepository(connectionString));
         var protectedRoutes = local.MapGroup("").RequireAuthorization().AddEndpointFilter(async (context, next) =>
