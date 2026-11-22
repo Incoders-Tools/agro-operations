@@ -32,7 +32,32 @@ $socket = [System.Net.Sockets.TcpClient]::new()
 try {
     $attempt = $socket.ConnectAsync('127.0.0.1', 3000)
     if ($attempt.Wait(300) -and $socket.Connected) {
-        throw 'El puerto local 3000 está ocupado. Detenga ese servicio antes de abrir esta demostración.'
+        # Reopening this exact loopback preview is safe; never adopt an unrelated server on this port.
+        $listener = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
+        $expectedPath = (Join-Path $web 'node_modules') + '\'
+        $nextServer = '\node_modules\next\dist\server\lib\start-server.js'
+        $owned = @($listener | Where-Object {
+            $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)"
+            # The script, not an unused argument, must be Next's executable under this repository.
+            $commandLine = if ($process) { [string]$process.CommandLine } else { '' }
+            $command = [regex]::Match($commandLine, '^(?:"[^"]*\\node\.exe"|\S*\\node\.exe)\s+(?:"(?<script>[^"]+)"|(?<script>\S+))$', 'IgnoreCase')
+            $scriptPath = ''
+            if ($command.Success) {
+                try { $scriptPath = [IO.Path]::GetFullPath($command.Groups['script'].Value) } catch { }
+            }
+            $process.Name -eq 'node.exe' -and $command.Success -and
+            $scriptPath.StartsWith($expectedPath, [StringComparison]::OrdinalIgnoreCase) -and
+            $scriptPath.EndsWith($nextServer, [StringComparison]::OrdinalIgnoreCase)
+        }).Count -gt 0
+        $response = $null
+        try { $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 3 } catch { }
+        if ($owned -and $response -and $response.StatusCode -eq 200 -and
+            $response.Content -match 'DEMOSTRACI[ÓO]N LOCAL') {
+            Write-Host 'La demostración local ya está iniciada; abriendo la instancia existente.'
+            Start-Process $url
+            return
+        }
+        throw 'El puerto local 3000 está ocupado por otro servicio o no se pudo verificar la demostración. No se abrirá ese servicio.'
     }
 } catch [System.AggregateException] {
     # Connection refused means the port is available.
