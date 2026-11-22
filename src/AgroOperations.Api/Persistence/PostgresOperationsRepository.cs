@@ -70,4 +70,18 @@ public sealed class PostgresOperationsRepository(string connectionString) : IOpe
     public Client? GetClient(Guid id) => Find("SELECT id,name,revision FROM clients WHERE id=@id", id, ClientRow);
     public Field? GetField(Guid id) => Find("SELECT id,client_id,name,revision FROM fields WHERE id=@id", id, FieldRow);
     public Plot? GetPlot(Guid id) => Find("SELECT id,field_id,name,area_hectares,revision FROM plots WHERE id=@id", id, PlotRow);
+
+    private IReadOnlyList<T> List<T>(string sql, Func<NpgsqlDataReader, T> map)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand(sql, connection);
+        using var reader = command.ExecuteReader();
+        var rows = new List<T>();
+        while (reader.Read()) rows.Add(map(reader));
+        return rows;
+    }
+    public IReadOnlyList<Client> ListClients() => List("SELECT id,name,revision FROM clients ORDER BY name,id", ClientRow);
+    public IReadOnlyList<Field> ListFields() => List("SELECT id,client_id,name,revision FROM fields ORDER BY name,id", FieldRow);
+    public IReadOnlyList<Plot> ListPlots() => List("SELECT id,field_id,name,area_hectares,revision FROM plots ORDER BY name,id", PlotRow);
 }

@@ -47,6 +47,9 @@ try
     foreach (var area in new[] { 0m, -1m, 0.00001m, 100000000m })
         Reject<DomainValidationException>(() => service.CreatePlot(field.Id, "Plot", area), "invalid area");
     var plot = service.CreatePlot(field.Id, "Plot", 1.2500m);
+    Check(service.ListClients().Any(item => item == client) &&
+          service.ListFields().Any(item => item == field) &&
+          service.ListPlots().Any(item => item == plot), "master record listings");
     Check(client.Id != Guid.Empty && field.Id != Guid.Empty && plot.Id != Guid.Empty &&
           field.ClientId == client.Id && plot.FieldId == field.Id && plot.AreaHectares == 1.2500m &&
           client.Revision == 1 && field.Revision == 1 && plot.Revision == 1, "initial hierarchy");

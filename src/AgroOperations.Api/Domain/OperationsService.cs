@@ -35,6 +35,9 @@ public sealed class OperationsService(IOperationsRepository repository)
     public Client? GetClient(Guid id) => repository.GetClient(id);
     public Field? GetField(Guid id) => repository.GetField(id);
     public Plot? GetPlot(Guid id) => repository.GetPlot(id);
+    public IReadOnlyList<Client> ListClients() => repository.ListClients();
+    public IReadOnlyList<Field> ListFields() => repository.ListFields();
+    public IReadOnlyList<Plot> ListPlots() => repository.ListPlots();
 }
 
 public interface IOperationsRepository
@@ -48,4 +51,7 @@ public interface IOperationsRepository
     Client? GetClient(Guid id);
     Field? GetField(Guid id);
     Plot? GetPlot(Guid id);
+    IReadOnlyList<Client> ListClients();
+    IReadOnlyList<Field> ListFields();
+    IReadOnlyList<Plot> ListPlots();
 }

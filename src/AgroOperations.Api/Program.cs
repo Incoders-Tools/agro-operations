@@ -1,3 +1,4 @@
+using AgroOperations.Api.Backoffice;
 using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -81,6 +82,9 @@ if (localAccess)
         await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         return Results.NoContent();
     }).RequireAuthorization();
+
+    var localDatabase = Environment.GetEnvironmentVariable("AGRO_LOCAL_DATABASE");
+    if (!string.IsNullOrWhiteSpace(localDatabase)) BackofficeRoutes.Map(local, localDatabase);
 }
 
 app.Run();
