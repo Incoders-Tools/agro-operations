@@ -22,7 +22,7 @@ try
     using (var db = new NpgsqlConnection(scoped.ConnectionString))
     {
         db.Open();
-        foreach (var name in new[] { "001_operations.sql", "003_crops.sql" })
+        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql" })
         {
             var file = Path.Combine(root, "src", "AgroOperations.Api", "Persistence", "Migrations", name);
             using var migration = new NpgsqlCommand(File.ReadAllText(file), db);
@@ -57,7 +57,7 @@ try
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException) { await Task.Delay(250); }
         }
         if (health?.StatusCode != HttpStatusCode.OK) throw new Exception("Test API did not start");
-        foreach (var route in new[] { "clients", "fields", "plots", "crops" })
+        foreach (var route in new[] { "clients", "fields", "plots", "crops", "campaigns", "labor-types", "plot-campaign-areas", "recipes", "recipe-lines" })
             if ((await client.GetAsync($"/api/v1/{route}")).StatusCode != HttpStatusCode.Unauthorized ||
                 (await client.PostAsJsonAsync($"/api/v1/{route}", new { name = "Example" })).StatusCode != HttpStatusCode.Unauthorized)
                 throw new Exception($"Anonymous {route} route accessible");
@@ -106,6 +106,43 @@ try
         if ((await Send(HttpMethod.Put, $"/api/v1/clients/{id}", new { name = "Stale", revision = 0 })).StatusCode != HttpStatusCode.Conflict ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/clients"))![0].GetProperty("name").GetString() != "Sample")
             throw new Exception("Stale client update overwrote record");
+
+        var campaign = await Send(HttpMethod.Post, "/api/v1/campaigns", new { name = "2026-27" });
+        if (campaign.StatusCode != HttpStatusCode.Created) throw new Exception("Campaign create failed");
+        using var campaignRow = JsonDocument.Parse(await campaign.Content.ReadAsStringAsync());
+        var campaignId = campaignRow.RootElement.GetProperty("id").GetGuid();
+        if ((await Send(HttpMethod.Post, "/api/v1/campaigns", new { name = "2026-27" })).StatusCode != HttpStatusCode.BadRequest ||
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/campaigns"))!.Length != 1)
+            throw new Exception("Duplicate campaign changed stored records");
+        var laborType = await Send(HttpMethod.Post, "/api/v1/labor-types", new { name = "Pulverización terrestre" });
+        if (laborType.StatusCode != HttpStatusCode.Created) throw new Exception("Labor type create failed");
+        using var laborTypeRow = JsonDocument.Parse(await laborType.Content.ReadAsStringAsync());
+        var laborTypeId = laborTypeRow.RootElement.GetProperty("id").GetGuid();
+        if ((await Send(HttpMethod.Post, "/api/v1/plot-campaign-areas", new { plotId = Guid.NewGuid(), campaignId, areaHectares = 1m })).StatusCode != HttpStatusCode.NotFound ||
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/plot-campaign-areas"))!.Length != 0)
+            throw new Exception("Orphan plot campaign area changed stored records");
+        using var plotRow = JsonDocument.Parse(await (await client.GetAsync("/api/v1/plots")).Content.ReadAsStringAsync());
+        var plotId = plotRow.RootElement[0].GetProperty("id").GetGuid();
+        var createdArea = await Send(HttpMethod.Post, "/api/v1/plot-campaign-areas", new { plotId, campaignId, areaHectares = 2.75m });
+        if (createdArea.StatusCode != HttpStatusCode.Created) throw new Exception("Plot campaign area create failed");
+        if ((await Send(HttpMethod.Post, "/api/v1/plot-campaign-areas", new { plotId, campaignId, areaHectares = 3m })).StatusCode != HttpStatusCode.BadRequest ||
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/plot-campaign-areas"))!.Length != 1)
+            throw new Exception("Duplicate plot campaign area changed stored records");
+        var recipe = await Send(HttpMethod.Post, "/api/v1/recipes",
+            new { plotId, campaignId, laborTypeId, stage = "presiembra", targetUse = "Barbecho", responsibleEngineer = "Matías Kincaid" });
+        if (recipe.StatusCode != HttpStatusCode.Created) throw new Exception("Recipe create failed");
+        using var recipeRow = JsonDocument.Parse(await recipe.Content.ReadAsStringAsync());
+        var recipeId = recipeRow.RootElement.GetProperty("id").GetGuid();
+        if ((await Send(HttpMethod.Post, "/api/v1/recipes", new { plotId, campaignId, laborTypeId, stage = "invalida", targetUse = "Barbecho", responsibleEngineer = "Matías Kincaid" })).StatusCode != HttpStatusCode.BadRequest ||
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/recipes"))!.Length != 1)
+            throw new Exception("Invalid-stage recipe changed stored records");
+        var recipeLine = await Send(HttpMethod.Post, "/api/v1/recipe-lines", new { recipeId, productName = "Glifosato equivalente ácido", doseValue = 2m, doseUnit = "l/ha" });
+        if (recipeLine.StatusCode != HttpStatusCode.Created) throw new Exception("Recipe line create failed");
+        if ((await Send(HttpMethod.Post, "/api/v1/recipe-lines", new { recipeId, productName = " ", doseValue = 2m, doseUnit = "l/ha" })).StatusCode != HttpStatusCode.BadRequest ||
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/recipe-lines"))!.Length != 1)
+            throw new Exception("Invalid recipe line changed stored records");
+        if ((await Send(HttpMethod.Put, $"/api/v1/recipes/{recipeId}", new { stage = "postemergencia", targetUse = "Barbecho", responsibleEngineer = "Matías Kincaid", revision = 0 })).StatusCode != HttpStatusCode.Conflict)
+            throw new Exception("Stale recipe update did not conflict");
         // A wrong persisted DB password must fail startup, not serve a healthy but unusable API.
         using var spare = new TcpListener(IPAddress.Loopback, 0);
         spare.Start();

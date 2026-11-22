@@ -17,6 +17,10 @@ public static class BackofficeRoutes
         using (var probe = new NpgsqlConnection(connectionString)) probe.Open();
         var operations = new OperationsService(new PostgresOperationsRepository(connectionString));
         var crops = new CropCatalog(new PostgresCropRepository(connectionString));
+        var campaigns = new CampaignCatalog(new PostgresCampaignRepository(connectionString));
+        var laborTypes = new LaborTypeCatalog(new PostgresLaborTypeRepository(connectionString));
+        var plotAreas = new PlotCampaignAreaService(new PostgresPlotCampaignAreaRepository(connectionString));
+        var recipes = new RecipeService(new PostgresRecipeRepository(connectionString));
         var protectedRoutes = local.MapGroup("").RequireAuthorization().AddEndpointFilter(async (context, next) =>
         {
             if (HttpMethods.IsGet(context.HttpContext.Request.Method)) return await next(context);
@@ -29,6 +33,11 @@ public static class BackofficeRoutes
         protectedRoutes.MapGet("/fields", () => Results.Json(operations.ListFields()));
         protectedRoutes.MapGet("/plots", () => Results.Json(operations.ListPlots()));
         protectedRoutes.MapGet("/crops", () => Results.Json(crops.List()));
+        protectedRoutes.MapGet("/campaigns", () => Results.Json(campaigns.List()));
+        protectedRoutes.MapGet("/labor-types", () => Results.Json(laborTypes.List()));
+        protectedRoutes.MapGet("/plot-campaign-areas", () => Results.Json(plotAreas.List()));
+        protectedRoutes.MapGet("/recipes", () => Results.Json(recipes.List()));
+        protectedRoutes.MapGet("/recipe-lines", () => Results.Json(recipes.ListLines()));
         protectedRoutes.MapGet("/clients/{id:guid}", (Guid id) => Item(operations.GetClient(id)));
         protectedRoutes.MapGet("/fields/{id:guid}", (Guid id) => Item(operations.GetField(id)));
         protectedRoutes.MapGet("/plots/{id:guid}", (Guid id) => Item(operations.GetPlot(id)));
@@ -36,10 +45,26 @@ public static class BackofficeRoutes
         protectedRoutes.MapPost("/fields", (FieldInput input) => Create(() => operations.CreateField(input.ClientId, input.Name)));
         protectedRoutes.MapPost("/plots", (PlotInput input) => Create(() => operations.CreatePlot(input.FieldId, input.Name, input.AreaHectares)));
         protectedRoutes.MapPost("/crops", (NameInput input) => Create(() => crops.Create(input.Name)));
+        protectedRoutes.MapPost("/campaigns", (NameInput input) => Create(() => campaigns.Create(input.Name)));
+        protectedRoutes.MapPost("/labor-types", (NameInput input) => Create(() => laborTypes.Create(input.Name)));
+        protectedRoutes.MapPost("/plot-campaign-areas", (PlotCampaignAreaInput input) =>
+            Create(() => plotAreas.Create(input.PlotId, input.CampaignId, input.AreaHectares)));
+        protectedRoutes.MapPost("/recipes", (RecipeInput input) =>
+            Create(() => recipes.Create(input.PlotId, input.CampaignId, input.LaborTypeId, input.Stage, input.TargetUse, input.ResponsibleEngineer)));
+        protectedRoutes.MapPost("/recipe-lines", (RecipeLineInput input) =>
+            Create(() => recipes.CreateLine(input.RecipeId, input.ProductName, input.DoseValue, input.DoseUnit)));
         protectedRoutes.MapPut("/clients/{id:guid}", (Guid id, RevisionNameInput input) => Change(() => operations.UpdateClient(id, input.Revision, input.Name)));
         protectedRoutes.MapPut("/fields/{id:guid}", (Guid id, RevisionNameInput input) => Change(() => operations.UpdateField(id, input.Revision, input.Name)));
         protectedRoutes.MapPut("/plots/{id:guid}", (Guid id, RevisionPlotInput input) => Change(() => operations.UpdatePlot(id, input.Revision, input.Name, input.AreaHectares)));
         protectedRoutes.MapPut("/crops/{id:guid}", (Guid id, RevisionNameInput input) => Change(() => crops.Update(id, input.Revision, input.Name)));
+        protectedRoutes.MapPut("/campaigns/{id:guid}", (Guid id, RevisionNameInput input) => Change(() => campaigns.Update(id, input.Revision, input.Name)));
+        protectedRoutes.MapPut("/labor-types/{id:guid}", (Guid id, RevisionNameInput input) => Change(() => laborTypes.Update(id, input.Revision, input.Name)));
+        protectedRoutes.MapPut("/plot-campaign-areas/{id:guid}", (Guid id, RevisionAreaInput input) =>
+            Change(() => plotAreas.Update(id, input.Revision, input.AreaHectares)));
+        protectedRoutes.MapPut("/recipes/{id:guid}", (Guid id, RevisionRecipeInput input) =>
+            Change(() => recipes.Update(id, input.Revision, input.Stage, input.TargetUse, input.ResponsibleEngineer)));
+        protectedRoutes.MapPut("/recipe-lines/{id:guid}", (Guid id, RevisionRecipeLineInput input) =>
+            Change(() => recipes.UpdateLine(id, input.Revision, input.ProductName, input.DoseValue, input.DoseUnit)));
     }
 
     private static IResult Item<T>(T? item) where T : class => item is null ? Results.NotFound() : Results.Json(item);
@@ -57,4 +82,10 @@ public static class BackofficeRoutes
     public sealed record PlotInput(Guid FieldId, string Name, decimal AreaHectares);
     public sealed record RevisionNameInput(string Name, long Revision);
     public sealed record RevisionPlotInput(string Name, decimal AreaHectares, long Revision);
+    public sealed record PlotCampaignAreaInput(Guid PlotId, Guid CampaignId, decimal AreaHectares);
+    public sealed record RevisionAreaInput(decimal AreaHectares, long Revision);
+    public sealed record RecipeInput(Guid PlotId, Guid CampaignId, Guid LaborTypeId, string Stage, string TargetUse, string ResponsibleEngineer);
+    public sealed record RevisionRecipeInput(string Stage, string TargetUse, string ResponsibleEngineer, long Revision);
+    public sealed record RecipeLineInput(Guid RecipeId, string ProductName, decimal DoseValue, string DoseUnit);
+    public sealed record RevisionRecipeLineInput(string ProductName, decimal DoseValue, string DoseUnit, long Revision);
 }
