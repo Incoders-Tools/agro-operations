@@ -25,6 +25,9 @@ try
         var cropsMigration = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/AgroOperations.Api/Persistence/Migrations/003_crops.sql"));
         using var cropsCommand = new NpgsqlCommand(File.ReadAllText(cropsMigration), connection);
         cropsCommand.ExecuteNonQuery();
+        var agronomyMigration = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/AgroOperations.Api/Persistence/Migrations/004_agronomy.sql"));
+        using var agronomyCommand = new NpgsqlCommand(File.ReadAllText(agronomyMigration), connection);
+        agronomyCommand.ExecuteNonQuery();
     }
     var service = new OperationsService(new PostgresOperationsRepository(builder.ConnectionString));
     static void Check(bool condition, string label)
@@ -79,7 +82,12 @@ try
               (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM clients c),
               (SELECT coalesce(string_agg(to_jsonb(f)::text, ',' ORDER BY f.id), '') FROM fields f),
               (SELECT coalesce(string_agg(to_jsonb(p)::text, ',' ORDER BY p.id), '') FROM plots p),
-              (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM crops c))
+              (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM crops c),
+              (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM campaigns c),
+              (SELECT coalesce(string_agg(to_jsonb(a)::text, ',' ORDER BY a.id), '') FROM plot_campaign_areas a),
+              (SELECT coalesce(string_agg(to_jsonb(l)::text, ',' ORDER BY l.id), '') FROM labor_types l),
+              (SELECT coalesce(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id), '') FROM recipes r),
+              (SELECT coalesce(string_agg(to_jsonb(rl)::text, ',' ORDER BY rl.id), '') FROM recipe_lines rl))
             """, connection);
         return (string)command.ExecuteScalar()!;
     }
@@ -122,7 +130,58 @@ try
     Reject<DomainNotFoundException>(() => crops.Update(Guid.NewGuid(), 1, "Wheat"), "missing crop");
     Check(Snapshot() == cropBefore && crops.List().Single(item => item.Id == crop.Id) == changedCrop,
           "crop rejected writes changed stored rows");
-    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy, crops and concurrent revisions");
+
+    var campaigns = new CampaignCatalog(new PostgresCampaignRepository(builder.ConnectionString));
+    Reject<DomainValidationException>(() => campaigns.Create(" "), "blank campaign");
+    var campaign = campaigns.Create("2026-27");
+    Check(campaign.Revision == 1 && campaigns.List().Any(item => item == campaign), "campaign creation/listing");
+    var campaignBefore = Snapshot();
+    Reject<DomainValidationException>(() => campaigns.Create("  2026-27  "), "duplicate campaign");
+    Check(Snapshot() == campaignBefore, "rejected campaign create changed stored rows");
+
+    var laborTypes = new LaborTypeCatalog(new PostgresLaborTypeRepository(builder.ConnectionString));
+    Reject<DomainValidationException>(() => laborTypes.Create(" "), "blank labor type");
+    var laborType = laborTypes.Create("Pulverización terrestre");
+    Check(laborType.Revision == 1 && laborTypes.List().Any(item => item == laborType), "labor type creation/listing");
+
+    var plotAreas = new PlotCampaignAreaService(new PostgresPlotCampaignAreaRepository(builder.ConnectionString));
+    Reject<DomainNotFoundException>(() => plotAreas.Create(Guid.NewGuid(), campaign.Id, 1m), "area with missing plot");
+    Reject<DomainNotFoundException>(() => plotAreas.Create(plot.Id, Guid.NewGuid(), 1m), "area with missing campaign");
+    foreach (var invalidArea in new[] { 0m, -1m, 0.00001m, 100000000m })
+        Reject<DomainValidationException>(() => plotAreas.Create(plot.Id, campaign.Id, invalidArea), "invalid campaign area");
+    var plotArea = plotAreas.Create(plot.Id, campaign.Id, 2.75m);
+    Check(plotArea.AreaHectares == 2.75m && plotAreas.List().Any(item => item == plotArea), "plot campaign area creation/listing");
+    var plotAreaBefore = Snapshot();
+    Reject<DomainValidationException>(() => plotAreas.Create(plot.Id, campaign.Id, 3m), "duplicate plot campaign area");
+    Check(Snapshot() == plotAreaBefore, "rejected duplicate area changed stored rows");
+    var updatedPlotArea = plotAreas.Update(plotArea.Id, plotArea.Revision, 3.1m);
+    Reject<DomainConflictException>(() => plotAreas.Update(plotArea.Id, plotArea.Revision, 4m), "stale plot campaign area");
+    Reject<DomainNotFoundException>(() => plotAreas.Update(Guid.NewGuid(), 1, 1m), "missing plot campaign area");
+    Check(updatedPlotArea.AreaHectares == 3.1m && updatedPlotArea.Revision == 2, "plot campaign area update");
+
+    var recipes = new RecipeService(new PostgresRecipeRepository(builder.ConnectionString));
+    Reject<DomainNotFoundException>(() => recipes.Create(Guid.NewGuid(), campaign.Id, laborType.Id, "presiembra", "Barbecho", "Matías Kincaid"), "recipe with missing plot");
+    Reject<DomainValidationException>(() => recipes.Create(plot.Id, campaign.Id, laborType.Id, "invalida", "Barbecho", "Matías Kincaid"), "recipe with invalid stage");
+    Reject<DomainValidationException>(() => recipes.Create(plot.Id, campaign.Id, laborType.Id, "presiembra", " ", "Matías Kincaid"), "recipe with blank target use");
+    var recipe = recipes.Create(plot.Id, campaign.Id, laborType.Id, "presiembra", "Barbecho", "Matías Kincaid");
+    Check(recipe.Stage == "presiembra" && recipe.Revision == 1 && recipes.List().Any(item => item == recipe), "recipe creation/listing");
+    var recipeBefore = Snapshot();
+    Reject<DomainValidationException>(() => recipes.CreateLine(recipe.Id, " ", 2m, "l/ha"), "recipe line with blank product");
+    foreach (var invalidDose in new[] { 0m, -1m, 0.00001m, 100000000m })
+        Reject<DomainValidationException>(() => recipes.CreateLine(recipe.Id, "Glifosato equivalente ácido", invalidDose, "l/ha"), "invalid recipe line dose");
+    Check(Snapshot() == recipeBefore, "rejected recipe line creates changed stored rows");
+    var recipeLine = recipes.CreateLine(recipe.Id, "Glifosato equivalente ácido", 2m, "l/ha");
+    Check(recipeLine.Revision == 1 && recipes.ListLines().Any(item => item == recipeLine), "recipe line creation/listing");
+    var updatedRecipe = recipes.Update(recipe.Id, recipe.Revision, "postemergencia", "Control de malezas", "Matías Kincaid");
+    Reject<DomainConflictException>(() => recipes.Update(recipe.Id, recipe.Revision, "presiembra", "Stale", "Matías Kincaid"), "stale recipe");
+    Reject<DomainNotFoundException>(() => recipes.Update(Guid.NewGuid(), 1, "presiembra", "Missing", "Matías Kincaid"), "missing recipe");
+    Check(updatedRecipe.Stage == "postemergencia" && updatedRecipe.Revision == 2, "recipe update");
+    var updatedLine = recipes.UpdateLine(recipeLine.Id, recipeLine.Revision, "Glifosato equivalente ácido", 2.5m, "l/ha");
+    Reject<DomainConflictException>(() => recipes.UpdateLine(recipeLine.Id, recipeLine.Revision, "Stale", 1m, "l/ha"), "stale recipe line");
+    Reject<DomainNotFoundException>(() => recipes.UpdateLine(Guid.NewGuid(), 1, "Missing", 1m, "l/ha"), "missing recipe line");
+    Check(updatedLine.DoseValue == 2.5m && updatedLine.Revision == 2, "recipe line update");
+
+    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy, crops, campaigns, labor types, plot campaign areas and recipes with concurrent revisions");
     return 0;
 }
 finally
