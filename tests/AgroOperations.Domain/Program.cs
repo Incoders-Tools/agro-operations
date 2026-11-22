@@ -22,6 +22,9 @@ try
         var migration = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/AgroOperations.Api/Persistence/Migrations/001_operations.sql"));
         using var command = new NpgsqlCommand(File.ReadAllText(migration), connection);
         command.ExecuteNonQuery();
+        var cropsMigration = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/AgroOperations.Api/Persistence/Migrations/003_crops.sql"));
+        using var cropsCommand = new NpgsqlCommand(File.ReadAllText(cropsMigration), connection);
+        cropsCommand.ExecuteNonQuery();
     }
     var service = new OperationsService(new PostgresOperationsRepository(builder.ConnectionString));
     static void Check(bool condition, string label)
@@ -72,7 +75,8 @@ try
             SELECT concat_ws('|',
               (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM clients c),
               (SELECT coalesce(string_agg(to_jsonb(f)::text, ',' ORDER BY f.id), '') FROM fields f),
-              (SELECT coalesce(string_agg(to_jsonb(p)::text, ',' ORDER BY p.id), '') FROM plots p))
+              (SELECT coalesce(string_agg(to_jsonb(p)::text, ',' ORDER BY p.id), '') FROM plots p),
+              (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM crops c))
             """, connection);
         return (string)command.ExecuteScalar()!;
     }
@@ -101,7 +105,21 @@ try
     var winner = first.Result ?? second.Result!;
     Check(winner.Revision == updatedPlot.Revision + 1 && service.GetPlot(plot.Id) == winner,
           "stale contender overwrote winner");
-    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and concurrent revisions");
+    var crops = new CropCatalog(new PostgresCropRepository(builder.ConnectionString));
+    Reject<DomainValidationException>(() => crops.Create(" "), "blank crop");
+    var crop = crops.Create("Trigo");
+    Check(crop.Revision == 1 && crops.List().Any(item => item == crop), "crop creation/listing");
+    var cropBefore = Snapshot();
+    Reject<DomainValidationException>(() => crops.Create("  TRIGO  "), "duplicate crop");
+    Reject<DomainValidationException>(() => crops.Create(" "), "blank crop");
+    Check(Snapshot() == cropBefore, "rejected crop creates changed stored rows");
+    var changedCrop = crops.Update(crop.Id, crop.Revision, "Trigo candeal");
+    cropBefore = Snapshot();
+    Reject<DomainConflictException>(() => crops.Update(crop.Id, crop.Revision, "Stale crop"), "crop conflict");
+    Reject<DomainNotFoundException>(() => crops.Update(Guid.NewGuid(), 1, "Wheat"), "missing crop");
+    Check(Snapshot() == cropBefore && crops.List().Single(item => item.Id == crop.Id) == changedCrop,
+          "crop rejected writes changed stored rows");
+    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy, crops and concurrent revisions");
     return 0;
 }
 finally
