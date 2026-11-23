@@ -2,5 +2,6 @@
   <Project Path="src/AgroOperations.Api/AgroOperations.Api.csproj" />
   <Project Path="tests/AgroOperations.Smoke/AgroOperations.Smoke.csproj" />
   <Project Path="tests/AgroOperations.Domain/AgroOperations.Domain.csproj" />
+  <Project Path="tests/AgroOperations.Identity/AgroOperations.Identity.csproj" />
   <Project Path="tests/AgroOperations.Backoffice/AgroOperations.Backoffice.csproj" />
 </Solution>
