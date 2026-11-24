@@ -22,7 +22,7 @@ try
     using (var db = new NpgsqlConnection(scoped.ConnectionString))
     {
         db.Open();
-        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql" })
+        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql" })
         {
             var file = Path.Combine(root, "src", "AgroOperations.Api", "Persistence", "Migrations", name);
             using var migration = new NpgsqlCommand(File.ReadAllText(file), db);
@@ -64,6 +64,8 @@ try
                 throw new Exception($"Anonymous {route} route accessible");
         var anonymousOrder = Guid.NewGuid();
         if ((await client.GetAsync($"/api/v1/work-orders/{anonymousOrder}")).StatusCode != HttpStatusCode.Unauthorized ||
+            (await client.GetAsync($"/api/v1/work-orders/{anonymousOrder}/document")).StatusCode != HttpStatusCode.Unauthorized ||
+            (await client.GetAsync("/api/v1/work-orders?q=1")).StatusCode != HttpStatusCode.Unauthorized ||
             (await client.GetAsync($"/api/v1/work-orders?firmId={anonymousOrder}&status=emitida")).StatusCode != HttpStatusCode.Unauthorized ||
             (await client.PostAsJsonAsync($"/api/v1/work-orders/{anonymousOrder}/cancel", new { revision = 1, reason = "Motivo" })).StatusCode != HttpStatusCode.Unauthorized ||
             (await client.PostAsJsonAsync($"/api/v1/work-orders/{anonymousOrder}/complete", new { revision = 1 })).StatusCode != HttpStatusCode.Unauthorized)
@@ -109,6 +111,10 @@ try
         var id = clientRow.RootElement.GetProperty("id").GetGuid();
         var list = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/clients");
         if (list?.Length != 1 || list[0].GetProperty("id").GetGuid() != id) throw new Exception("Client list mismatch");
+        // 009: creating a client also creates its commercial firm with the client's name.
+        if ((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/commercial-firms?clientId={id}")) is not [var defaultFirm] ||
+            defaultFirm.GetProperty("name").GetString() != "Sample" || defaultFirm.GetProperty("nextWorkOrderNumber").GetInt32() != 1)
+            throw new Exception("Client create did not create its firm");
         if ((await Send(HttpMethod.Post, "/api/v1/fields", new { clientId = Guid.NewGuid(), name = "Orphan" })).StatusCode != HttpStatusCode.NotFound ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/fields"))!.Length != 0)
             throw new Exception("Orphan field changed stored records");
@@ -211,7 +217,7 @@ try
         if (!await IsError(await Send(HttpMethod.Post, "/api/v1/commercial-firms", new { clientId = Guid.NewGuid(), name = "Firma" }), HttpStatusCode.NotFound, "Record not found") ||
             !await IsError(await Send(HttpMethod.Post, "/api/v1/commercial-firms", new { clientId = richId, name = " " }), HttpStatusCode.BadRequest) ||
             !await IsError(await Send(HttpMethod.Post, "/api/v1/commercial-firms", new { clientId = richId, name = "Firma", taxId = "123" }), HttpStatusCode.BadRequest) ||
-            await Count("commercial-firms") != 0)
+            await Count("commercial-firms") != 2)
             throw new Exception("Rejected firm changed stored records");
         var firm = await Send(HttpMethod.Post, "/api/v1/commercial-firms", new { clientId = richId, name = "Firma comercial", taxId = "30-11111111-1" });
         var firmRow = await Body(firm);
@@ -219,7 +225,7 @@ try
         if (firm.StatusCode != HttpStatusCode.Created || firmRow.GetProperty("taxId").GetString() != "30111111111" || firmRow.GetProperty("clientId").GetGuid() != richId)
             throw new Exception($"Firm create: {(int)firm.StatusCode}");
         if (!await IsError(await Send(HttpMethod.Post, "/api/v1/commercial-firms", new { clientId = id, name = " FIRMA COMERCIAL " }), HttpStatusCode.Conflict, "Duplicate name") ||
-            await Count("commercial-firms") != 1)
+            await Count("commercial-firms") != 3)
             throw new Exception("Duplicate firm changed stored records");
         // The update body has no client: a firm never moves to another client, even if one is sent.
         var changedFirm = await Send(HttpMethod.Put, $"/api/v1/commercial-firms/{firmId}", new { clientId = id, name = "Firma comercial SA", revision = 1 });
@@ -229,9 +235,11 @@ try
         if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/commercial-firms/{firmId}", new { name = "Stale", revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
             !await IsError(await Send(HttpMethod.Put, $"/api/v1/commercial-firms/{firmId}", new { name = "Firma", taxId = "1", revision = 2 }), HttpStatusCode.BadRequest) ||
             !await IsError(await Send(HttpMethod.Put, $"/api/v1/commercial-firms/{Guid.NewGuid()}", new { name = "Missing", revision = 1 }), HttpStatusCode.NotFound) ||
-            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/commercial-firms"))![0].GetProperty("name").GetString() != "Firma comercial SA")
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/commercial-firms"))!.Single(item => item.GetProperty("id").GetGuid() == firmId)
+                .GetProperty("name").GetString() != "Firma comercial SA")
             throw new Exception("Rejected firm update overwrote record");
-        if (!(await Ids($"commercial-firms?clientId={richId}")).SequenceEqual([firmId]) || (await Ids($"commercial-firms?clientId={id}")).Length != 0)
+        var richFirms = await Ids($"commercial-firms?clientId={richId}");
+        if (richFirms.Length != 2 || richFirms[1] != firmId || (await Ids($"commercial-firms?clientId={id}")).Length != 1)
             throw new Exception("Firms filter by client mismatch");
 
         var campaign = await Send(HttpMethod.Post, "/api/v1/campaigns", new { name = "2026-27" });
@@ -368,6 +376,7 @@ try
             throw new Exception("Rejected input update overwrote record");
 
         // 008 work orders: codedPlotId (3 ha) is in richFieldId of client richId, whose firm is firmId; samplePlot is in another client's field.
+        // Since 009 an order has no single field: bodies that still send fieldId keep working and it is ignored.
         var rangedInput = await Send(HttpMethod.Post, "/api/v1/inputs", new { commercialName = "Producto con rango", unit = "l", doseMin = 1m, doseMax = 2m });
         if (rangedInput.StatusCode != HttpStatusCode.Created) throw new Exception("Ranged input create failed");
         var rangedInputId = (await Body(rangedInput)).GetProperty("id").GetGuid();
@@ -386,9 +395,9 @@ try
         var emptyOrders = await OrderState();
         var samplePlotId = samplePlot.GetProperty("id").GetGuid();
         if (!await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { plots = new object[] { new { plotId = samplePlotId, workedAreaHectares = 1m } } }),
-                HttpStatusCode.BadRequest, "Every plot must belong to the work order's field") ||
+                HttpStatusCode.BadRequest, "Every plot must belong to the firm's client") ||
             !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { fieldId = fieldId, plots = new object[] { new { plotId = samplePlotId, workedAreaHectares = 1m } } }),
-                HttpStatusCode.BadRequest, "Field must belong to the firm's client") ||
+                HttpStatusCode.BadRequest, "Every plot must belong to the firm's client") ||
             !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { plots = new object[0] }), HttpStatusCode.BadRequest, "At least one plot is required") ||
             !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { issuedOn = (string?)null }), HttpStatusCode.BadRequest, "Issued on is required") ||
             !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { lines = new object[] { new { inputId, dosePerHectare = 0m } } }), HttpStatusCode.BadRequest,
@@ -421,7 +430,8 @@ try
         var orderSummaries = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/work-orders");
         if (orderDetail.StatusCode != HttpStatusCode.OK || (await Body(orderDetail)).GetProperty("lines").GetArrayLength() != 2 ||
             orderSummaries is not { Length: 1 } || orderSummaries[0].GetProperty("plotCount").GetInt32() != 1 || orderSummaries[0].GetProperty("number").GetInt32() != 1 ||
-            orderSummaries[0].GetProperty("firmId").GetGuid() != firmId || orderSummaries[0].GetProperty("fieldId").GetGuid() != richFieldId ||
+            orderSummaries[0].GetProperty("firmId").GetGuid() != firmId ||
+            !orderSummaries[0].GetProperty("fieldIds").EnumerateArray().Select(item => item.GetGuid()).SequenceEqual([richFieldId]) ||
             (await client.GetAsync($"/api/v1/work-orders/{Guid.NewGuid()}")).StatusCode != HttpStatusCode.NotFound ||
             (await firmNext()).GetProperty("nextWorkOrderNumber").GetInt32() != 2)
             throw new Exception("Work order detail or list mismatch");
@@ -455,7 +465,7 @@ try
                 editBody.fieldId, editBody.plots, editBody.lines, revision = 2 }), HttpStatusCode.Conflict, "Stale revision") ||
             !await IsError(await Send(HttpMethod.Put, $"/api/v1/work-orders/{orderId}", new { editBody.issuedOn, editBody.laborTypeId, editBody.contractorId,
                 editBody.fieldId, plots = new object[] { new { plotId = samplePlotId, workedAreaHectares = 1m } }, revision = 1 }), HttpStatusCode.BadRequest,
-                "Every plot must belong to the work order's field") ||
+                "Every plot must belong to the firm's client") ||
             !await IsError(await Send(HttpMethod.Put, $"/api/v1/work-orders/{orderId}", new { editBody.issuedOn, laborTypeId = Guid.NewGuid(), editBody.contractorId,
                 editBody.fieldId, editBody.plots, revision = 1 }), HttpStatusCode.NotFound, "Record not found") ||
             !await IsError(await Send(HttpMethod.Put, $"/api/v1/work-orders/{Guid.NewGuid()}", new { editBody.issuedOn, editBody.laborTypeId, editBody.contractorId,
@@ -506,6 +516,72 @@ try
         var afterCancel = await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody);
         if (afterCancel.StatusCode != HttpStatusCode.Created || (await Body(afterCancel)).GetProperty("number").GetInt32() != 51 || await Count("work-orders") != 3)
             throw new Exception("Create after cancel did not take the following number");
+
+        // 009: one order across two fields of the firm's client, without fieldId in the body.
+        var northField = await Body(await Send(HttpMethod.Post, "/api/v1/fields", new { clientId = richId, name = "Campo norte" }));
+        var northFieldId = northField.GetProperty("id").GetGuid();
+        var northPlot = await Send(HttpMethod.Post, "/api/v1/plots", new { fieldId = northFieldId, name = "Lote N", areaHectares = 2m, code = "NOR-1" });
+        var northPlotId = (await Body(northPlot)).GetProperty("id").GetGuid();
+        var crossBody = new { firmId, issuedOn = "2026-11-24", laborTypeId, stageId, contractorId, campaignId, cropId = soyId, variety = "Híbrido ficticio 1",
+            observations = "Observación ficticia", responsibleEngineer = "Ingeniero ficticio",
+            plots = new object[] { new { plotId = codedPlotId, workedAreaHectares = 3.5m }, new { plotId = northPlotId, workedAreaHectares = 2m } },
+            lines = new object[] { new { inputId = rangedInputId, dosePerHectare = 2.5m } } };
+        issuedOrders = await OrderState();
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", crossBody with { plots = new object[] {
+                new { plotId = codedPlotId, workedAreaHectares = 1m }, new { plotId = samplePlotId, workedAreaHectares = 1m } } }),
+                HttpStatusCode.BadRequest, "Every plot must belong to the firm's client") ||
+            await OrderState() != issuedOrders)
+            throw new Exception("Rejected cross-field order changed stored records or the next number");
+        var crossOrder = await Send(HttpMethod.Post, "/api/v1/work-orders", crossBody);
+        var crossRow = await Body(crossOrder);
+        var crossId = crossRow.GetProperty("id").GetGuid();
+        if (crossOrder.StatusCode != HttpStatusCode.Created || crossRow.GetProperty("number").GetInt32() != 52 || crossRow.GetProperty("plots").GetArrayLength() != 2 ||
+            crossRow.GetProperty("lines")[0].GetProperty("total").GetDecimal() != 13.75m || crossRow.TryGetProperty("fieldId", out _) ||
+            !crossRow.GetProperty("plots").EnumerateArray().Select(item => item.GetProperty("fieldId").GetGuid()).Order().SequenceEqual(new[] { richFieldId, northFieldId }.Order()))
+            throw new Exception($"Cross-field work order: {(int)crossOrder.StatusCode}");
+        var crossSummary = (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/work-orders"))!.Single(item => item.GetProperty("id").GetGuid() == crossId);
+        if (crossSummary.GetProperty("plotCount").GetInt32() != 2 ||
+            !crossSummary.GetProperty("fieldIds").EnumerateArray().Select(item => item.GetGuid()).SequenceEqual([richFieldId, northFieldId]))
+            throw new Exception("Cross-field summary field ids mismatch");
+
+        // Search by number, firm, field, plot name or code; combinable with firm and status; blank is no filter.
+        var everyOrder = await Ids("work-orders");
+        if (!(await Ids("work-orders?q=52")).SequenceEqual([crossId]) || !(await Ids("work-orders?q=campo%20NORTE")).SequenceEqual([crossId]) ||
+            !(await Ids("work-orders?q=lote%20n")).SequenceEqual([crossId]) || !(await Ids("work-orders?q=nor-1")).SequenceEqual([crossId]) ||
+            !(await Ids("work-orders?q=FIRMA%20comercial")).SequenceEqual(everyOrder) || !(await Ids("work-orders?q=%20%20")).SequenceEqual(everyOrder) ||
+            (await Ids("work-orders?q=inexistente")).Length != 0 || (await Ids($"work-orders?firmId={Guid.NewGuid()}&q=52")).Length != 0 ||
+            !(await Ids("work-orders?status=cancelada&q=firma")).SequenceEqual([laterId]) ||
+            !await IsError(await client.GetAsync("/api/v1/work-orders?status=anulada&q=52"), HttpStatusCode.BadRequest, "Status must be one of: emitida, realizada, cancelada"))
+            throw new Exception("Work order search mismatch");
+
+        // Print document with display values resolved server-side and the workbook file name.
+        if ((await client.GetAsync($"/api/v1/work-orders/{Guid.NewGuid()}/document")).StatusCode != HttpStatusCode.NotFound)
+            throw new Exception("Document of a missing work order");
+        var documentResponse = await client.GetAsync($"/api/v1/work-orders/{crossId}/document");
+        var document = await Body(documentResponse);
+        var documentPlots = document.GetProperty("plots");
+        var documentLine = document.GetProperty("lines").EnumerateArray().Single();
+        if (documentResponse.StatusCode != HttpStatusCode.OK || document.GetProperty("number").GetInt32() != 52 || document.GetProperty("issuedOn").GetString() != "2026-11-24" ||
+            document.GetProperty("status").GetString() != "emitida" || !Absent(document, "cancelReason") ||
+            document.GetProperty("firm").GetProperty("name").GetString() != "Firma comercial SA" || !Absent(document.GetProperty("firm"), "taxId") ||
+            document.GetProperty("clientName").GetString() != "Cliente con datos" ||
+            document.GetProperty("labor").GetProperty("name").GetString() != "Labor de prueba" || document.GetProperty("labor").GetProperty("abbreviation").GetString() != "LP" ||
+            document.GetProperty("stageName").GetString() != "Cosecha" || document.GetProperty("campaignName").GetString() != "2026-27" ||
+            document.GetProperty("cropName").GetString() != "Soja" || document.GetProperty("variety").GetString() != "Híbrido ficticio 1" ||
+            document.GetProperty("contractor").GetProperty("name").GetString() != "Contratista de prueba" || !document.GetProperty("contractor").GetProperty("ownEquipment").GetBoolean() ||
+            documentPlots.GetArrayLength() != 2 || documentPlots[0].GetProperty("fieldName").GetString() != "Campo alquilado" ||
+            documentPlots[0].GetProperty("plotName").GetString() != "Lote" || !Absent(documentPlots[0], "plotCode") ||
+            documentPlots[0].GetProperty("areaHectares").GetDecimal() != 3m || documentPlots[0].GetProperty("workedAreaHectares").GetDecimal() != 3.5m ||
+            !documentPlots[0].GetProperty("workedAreaExceedsPlot").GetBoolean() || documentPlots[1].GetProperty("fieldName").GetString() != "Campo norte" ||
+            documentPlots[1].GetProperty("plotCode").GetString() != "NOR-1" || documentPlots[1].GetProperty("workedAreaExceedsPlot").GetBoolean() ||
+            document.GetProperty("totalWorkedAreaHectares").GetDecimal() != 5.5m ||
+            documentLine.GetProperty("position").GetInt32() != 1 || documentLine.GetProperty("inputName").GetString() != "Producto con rango" ||
+            !Absent(documentLine, "formulation", "mixOrder") || documentLine.GetProperty("dosePerHectare").GetDecimal() != 2.5m ||
+            documentLine.GetProperty("unit").GetString() != "l" || documentLine.GetProperty("total").GetDecimal() != 13.75m ||
+            !documentLine.GetProperty("doseOutOfRange").GetBoolean() || documentLine.GetProperty("hollowCone").GetBoolean() ||
+            document.GetProperty("observations").GetString() != "Observación ficticia" || document.GetProperty("responsibleEngineer").GetString() != "Ingeniero ficticio" ||
+            document.GetProperty("fileName").GetString() != "FIRMA COMERCIAL SA_ORDEN_52_CAMPO ALQUILADO_(Lote)_CAMPO NORTE_(Lote N)_LP_24-nov")
+            throw new Exception($"Work order document: {(int)documentResponse.StatusCode} {document}");
         if ((await Send(HttpMethod.Post, "/api/v1/plot-campaign-areas", new { plotId = Guid.NewGuid(), campaignId, areaHectares = 1m })).StatusCode != HttpStatusCode.NotFound ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/plot-campaign-areas"))!.Length != 0)
             throw new Exception("Orphan plot campaign area changed stored records");

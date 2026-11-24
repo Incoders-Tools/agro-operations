@@ -118,6 +118,10 @@ Ensure-Migration '005_import_records.sql' 'public.import_records'
 Ensure-Migration '006_catalogs.sql' 'public.stages,public.contractors,public.inputs'
 Ensure-Migration '007_attributes.sql' 'public.commercial_firms,public.plot_crops'
 Ensure-Migration '008_work_orders.sql' 'public.work_orders,public.work_order_plots,public.work_order_lines'
+# 009 creates no table: it is pending while work_orders still has the single field column it removes.
+$fieldColumn = & docker.exe compose -p $project -f $compose exec -T postgres psql -U agro_dev -d agro_operations -tAc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='work_orders' AND column_name='field_id'"
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect local PostgreSQL schema.' }
+if ([int]$fieldColumn.Trim() -eq 1) { Apply-Migration '009_ot_across_fields.sql'; Write-Host 'Applied local schema migration 009_ot_across_fields.sql.' }
 
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
 $env:AGRO_LOCAL_ADMIN_EMAIL = $settings.email

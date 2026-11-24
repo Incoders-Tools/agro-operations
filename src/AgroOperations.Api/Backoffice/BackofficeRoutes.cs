@@ -52,10 +52,13 @@ public static class BackofficeRoutes
         protectedRoutes.MapGet("/recipes", () => Results.Json(recipes.List()));
         protectedRoutes.MapGet("/recipe-lines", () => Results.Json(recipes.ListLines()));
         protectedRoutes.MapGet("/import-records", () => Results.Json(provenance.List()));
-        // Work orders: optional firm and status filters; an unknown status is rejected rather than matching nothing.
-        protectedRoutes.MapGet("/work-orders", (Guid? firmId, string? status) => Change(() => workOrders.List(firmId, status)));
+        // Work orders: optional firm, status and search (q) filters; an unknown status is rejected rather than matching nothing.
+        protectedRoutes.MapGet("/work-orders", (Guid? firmId, string? status, string? q) => Change(() => workOrders.List(firmId, status, q)));
         protectedRoutes.MapGet("/work-orders/{id:guid}", (Guid id) => Item(workOrders.Get(id)));
-        // The server takes the number from the firm; a client-sent number or firm on update is ignored.
+        // The print view of one order: display names resolved here and the default PDF file name.
+        protectedRoutes.MapGet("/work-orders/{id:guid}/document", (Guid id) => Item(workOrders.Document(id)));
+        // The server takes the number from the firm; a client-sent number or firm on update is ignored, and so is a fieldId
+        // from bodies written before an order could cover several fields.
         protectedRoutes.MapPost("/work-orders", (WorkOrderInput input) => Create(() => workOrders.Create(input.FirmId, input.Draft())));
         protectedRoutes.MapPut("/work-orders/{id:guid}", (Guid id, RevisionWorkOrderInput input) => Change(() => workOrders.Update(id, input.Revision, input.Draft())));
         protectedRoutes.MapPost("/work-orders/{id:guid}/cancel", (Guid id, CancelWorkOrderInput input) => Change(() => workOrders.Cancel(id, input.Revision, input.Reason)));
@@ -147,18 +150,18 @@ public static class BackofficeRoutes
     }
     public sealed record FirmInput(Guid ClientId, string Name, string? TaxId);
     public sealed record RevisionFirmInput(string Name, string? TaxId, long Revision, int? NextWorkOrderNumber);
-    public sealed record WorkOrderInput(Guid FirmId, DateOnly? IssuedOn, Guid LaborTypeId, Guid? StageId, Guid ContractorId, Guid FieldId,
+    public sealed record WorkOrderInput(Guid FirmId, DateOnly? IssuedOn, Guid LaborTypeId, Guid? StageId, Guid ContractorId,
         Guid? CampaignId, Guid? CropId, string? Variety, string? Observations, string? ResponsibleEngineer,
         WorkOrderPlotDraft[]? Plots, WorkOrderLineDraft[]? Lines)
     {
-        public WorkOrderDraft Draft() => new(IssuedOn, LaborTypeId, StageId, ContractorId, FieldId, CampaignId, CropId, Variety, Observations,
+        public WorkOrderDraft Draft() => new(IssuedOn, LaborTypeId, StageId, ContractorId, CampaignId, CropId, Variety, Observations,
             ResponsibleEngineer, Plots, Lines);
     }
-    public sealed record RevisionWorkOrderInput(DateOnly? IssuedOn, Guid LaborTypeId, Guid? StageId, Guid ContractorId, Guid FieldId,
+    public sealed record RevisionWorkOrderInput(DateOnly? IssuedOn, Guid LaborTypeId, Guid? StageId, Guid ContractorId,
         Guid? CampaignId, Guid? CropId, string? Variety, string? Observations, string? ResponsibleEngineer,
         WorkOrderPlotDraft[]? Plots, WorkOrderLineDraft[]? Lines, long Revision)
     {
-        public WorkOrderDraft Draft() => new(IssuedOn, LaborTypeId, StageId, ContractorId, FieldId, CampaignId, CropId, Variety, Observations,
+        public WorkOrderDraft Draft() => new(IssuedOn, LaborTypeId, StageId, ContractorId, CampaignId, CropId, Variety, Observations,
             ResponsibleEngineer, Plots, Lines);
     }
     public sealed record CancelWorkOrderInput(long Revision, string? Reason);

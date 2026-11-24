@@ -50,9 +50,18 @@ public sealed class PostgresOperationsRepository(string connectionString) : IOpe
         Add(c, "name", plot.Name); Add(c, "area", plot.AreaHectares); Add(c, "code", plot.Code);
     }
 
-    public Client CreateClient(ClientDraft client) => Execute(
-        $"INSERT INTO clients(id,name,tax_id,producers,email,phone,address) VALUES (@id,@name,@taxId,@producers,@email,@phone,@address) RETURNING {ClientColumns}",
-        c => { Add(c, "id", Guid.NewGuid()); Bind(c, client); }, ClientRow);
+    // One statement also creates the client's commercial firm with the client's name. Firm names are unique across
+    // clients, so when the name is already a firm's the client is still created, without a firm: the name a client is
+    // known by must not block registering it, and a firm with another name can be added later.
+    public Client CreateClient(ClientDraft client) => Execute($"""
+        WITH client AS (
+          INSERT INTO clients(id,name,tax_id,producers,email,phone,address) VALUES (@id,@name,@taxId,@producers,@email,@phone,@address)
+          RETURNING {ClientColumns}),
+        firm AS (
+          INSERT INTO commercial_firms(id,client_id,name) SELECT @firmId,id,name FROM client ON CONFLICT ((lower(name))) DO NOTHING)
+        SELECT {ClientColumns} FROM client
+        """,
+        c => { Add(c, "id", Guid.NewGuid()); Add(c, "firmId", Guid.NewGuid()); Bind(c, client); }, ClientRow);
 
     public Field CreateField(Guid clientId, FieldDraft field) => Execute(
         $"INSERT INTO fields(id,client_id,name,tenure,locality) SELECT @id,id,@name,@tenure,@locality FROM clients WHERE id=@parent RETURNING {FieldColumns}",

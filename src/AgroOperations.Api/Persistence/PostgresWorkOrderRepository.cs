@@ -8,7 +8,7 @@ namespace AgroOperations.Api.Persistence;
 public sealed class PostgresWorkOrderRepository(string connectionString) : IWorkOrderRepository
 {
     private const string HeaderColumns = """
-        id,firm_id,number,issued_on,labor_type_id,stage_id,contractor_id,field_id,campaign_id,crop_id,
+        id,firm_id,number,issued_on,labor_type_id,stage_id,contractor_id,campaign_id,crop_id,
         variety,observations,responsible_engineer,status,cancel_reason,created_at,revision
         """;
 
@@ -46,9 +46,9 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
         var (plotAreas, units) = References(db, tx, clientId, order);
         var id = Guid.NewGuid();
         using (var insert = new NpgsqlCommand("""
-            INSERT INTO work_orders(id,firm_id,number,issued_on,labor_type_id,stage_id,contractor_id,field_id,campaign_id,crop_id,
+            INSERT INTO work_orders(id,firm_id,number,issued_on,labor_type_id,stage_id,contractor_id,campaign_id,crop_id,
               variety,observations,responsible_engineer)
-            VALUES (@id,@firm,@number,@issuedOn,@labor,@stage,@contractor,@field,@campaign,@crop,@variety,@observations,@engineer)
+            VALUES (@id,@firm,@number,@issuedOn,@labor,@stage,@contractor,@campaign,@crop,@variety,@observations,@engineer)
             """, db, tx))
         {
             insert.Parameters.AddWithValue("id", id);
@@ -85,7 +85,7 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
         }
         var (plotAreas, units) = References(db, tx, clientId, order);
         using (var update = new NpgsqlCommand("""
-            UPDATE work_orders SET issued_on=@issuedOn,labor_type_id=@labor,stage_id=@stage,contractor_id=@contractor,field_id=@field,
+            UPDATE work_orders SET issued_on=@issuedOn,labor_type_id=@labor,stage_id=@stage,contractor_id=@contractor,
               campaign_id=@campaign,crop_id=@crop,variety=@variety,observations=@observations,responsible_engineer=@engineer,revision=revision+1
             WHERE id=@id;
             DELETE FROM work_order_lines WHERE work_order_id=@id;
@@ -128,26 +128,81 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
         return Read(db, id);
     }
 
-    public IReadOnlyList<WorkOrderSummary> List(Guid? firmId, string? status)
+    public IReadOnlyList<WorkOrderSummary> List(Guid? firmId, string? status, int? number, string? text)
     {
         using var db = Open();
         var filters = new List<string>();
         if (firmId is not null) filters.Add("w.firm_id=@firm");
         if (status is not null) filters.Add("w.status=@status");
+        // strpos rather than LIKE, so % and _ in the search are plain characters.
+        if (text is not null) filters.Add($"""
+            ({(number is null ? "" : "w.number=@number OR ")}
+             EXISTS(SELECT 1 FROM commercial_firms f WHERE f.id=w.firm_id AND strpos(lower(f.name),lower(@text))>0)
+             OR EXISTS(SELECT 1 FROM work_order_plots wp JOIN plots p ON p.id=wp.plot_id JOIN fields f ON f.id=p.field_id
+               WHERE wp.work_order_id=w.id AND (strpos(lower(f.name),lower(@text))>0 OR strpos(lower(p.name),lower(@text))>0
+                 OR strpos(lower(coalesce(p.code,'')),lower(@text))>0)))
+            """);
         using var cmd = new NpgsqlCommand($"""
-            SELECT w.id,w.firm_id,w.number,w.issued_on,w.labor_type_id,w.stage_id,w.contractor_id,w.field_id,w.status,
-              (SELECT count(*) FROM work_order_plots p WHERE p.work_order_id=w.id)::integer,w.revision
+            SELECT w.id,w.firm_id,w.number,w.issued_on,w.labor_type_id,w.stage_id,w.contractor_id,
+              ARRAY(SELECT f.id FROM fields f WHERE f.id IN (
+                SELECT p.field_id FROM work_order_plots wp JOIN plots p ON p.id=wp.plot_id WHERE wp.work_order_id=w.id) ORDER BY f.name,f.id),
+              w.status,(SELECT count(*) FROM work_order_plots p WHERE p.work_order_id=w.id)::integer,w.revision
             FROM work_orders w {(filters.Count == 0 ? "" : "WHERE " + string.Join(" AND ", filters))}
             ORDER BY w.issued_on DESC,w.number DESC,w.id
             """, db);
         if (firmId is { } firm) cmd.Parameters.AddWithValue("firm", firm);
         if (status is not null) cmd.Parameters.AddWithValue("status", status);
+        if (text is not null) cmd.Parameters.AddWithValue("text", text);
+        if (number is { } value) cmd.Parameters.AddWithValue("number", value);
         using var row = cmd.ExecuteReader();
         var orders = new List<WorkOrderSummary>();
         while (row.Read())
             orders.Add(new(row.GetGuid(0), row.GetGuid(1), row.GetInt32(2), row.GetFieldValue<DateOnly>(3), row.GetGuid(4), Id(row, 5),
-                row.GetGuid(6), row.GetGuid(7), row.GetString(8), row.GetInt32(9), row.GetInt64(10)));
+                row.GetGuid(6), row.GetFieldValue<Guid[]>(7), row.GetString(8), row.GetInt32(9), row.GetInt64(10)));
         return orders;
+    }
+
+    public WorkOrderDocument? Document(Guid id)
+    {
+        using var db = Open();
+        var plots = new List<WorkOrderDocumentPlot>();
+        using (var cmd = new NpgsqlCommand("""
+            SELECT f.name,p.name,p.code,w.area_hectares,w.worked_area_hectares,w.worked_area_hectares > w.area_hectares
+            FROM work_order_plots w JOIN plots p ON p.id=w.plot_id JOIN fields f ON f.id=p.field_id
+            WHERE w.work_order_id=@id ORDER BY f.name,f.id,p.name,p.id
+            """, db))
+        {
+            cmd.Parameters.AddWithValue("id", id);
+            using var row = cmd.ExecuteReader();
+            while (row.Read()) plots.Add(new(row.GetString(0), row.GetString(1), Text(row, 2), row.GetDecimal(3), row.GetDecimal(4), row.GetBoolean(5)));
+        }
+        var lines = new List<WorkOrderDocumentLine>();
+        using (var cmd = new NpgsqlCommand("""
+            SELECT l.position,i.commercial_name,i.formulation,i.mix_order,l.dose_per_hectare,l.unit,l.total,
+              coalesce(l.dose_per_hectare < i.dose_min, false) OR coalesce(l.dose_per_hectare > i.dose_max, false),i.hollow_cone
+            FROM work_order_lines l JOIN inputs i ON i.id=l.input_id WHERE l.work_order_id=@id ORDER BY l.position
+            """, db))
+        {
+            cmd.Parameters.AddWithValue("id", id);
+            using var row = cmd.ExecuteReader();
+            while (row.Read())
+                lines.Add(new(row.GetInt16(0), row.GetString(1), Text(row, 2), row.IsDBNull(3) ? null : row.GetInt16(3), row.GetDecimal(4), row.GetString(5),
+                    row.GetDecimal(6), row.GetBoolean(7), row.GetBoolean(8)));
+        }
+        using var header = new NpgsqlCommand("""
+            SELECT w.number,w.issued_on,w.status,w.cancel_reason,fi.name,fi.tax_id,c.name,l.name,l.abbreviation,s.name,co.name,co.own_equipment,
+              ca.name,cr.name,w.variety,w.observations,w.responsible_engineer
+            FROM work_orders w JOIN commercial_firms fi ON fi.id=w.firm_id JOIN clients c ON c.id=fi.client_id
+              JOIN labor_types l ON l.id=w.labor_type_id JOIN contractors co ON co.id=w.contractor_id
+              LEFT JOIN stages s ON s.id=w.stage_id LEFT JOIN campaigns ca ON ca.id=w.campaign_id LEFT JOIN crops cr ON cr.id=w.crop_id
+            WHERE w.id=@id
+            """, db);
+        header.Parameters.AddWithValue("id", id);
+        using var r = header.ExecuteReader();
+        if (!r.Read()) return null;
+        return new(r.GetInt32(0), r.GetFieldValue<DateOnly>(1), r.GetString(2), Text(r, 3), new(r.GetString(4), Text(r, 5)), r.GetString(6),
+            new(r.GetString(7), Text(r, 8)), Text(r, 9), new(r.GetString(10), r.GetBoolean(11)), Text(r, 12), Text(r, 13), Text(r, 14),
+            plots, lines, Text(r, 15), Text(r, 16));
     }
 
     private static void BindHeader(NpgsqlCommand cmd, WorkOrderDraft order)
@@ -156,7 +211,6 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
         cmd.Parameters.AddWithValue("labor", order.LaborTypeId);
         cmd.Parameters.Add(Uuid("stage", order.StageId));
         cmd.Parameters.AddWithValue("contractor", order.ContractorId);
-        cmd.Parameters.AddWithValue("field", order.FieldId);
         cmd.Parameters.Add(Uuid("campaign", order.CampaignId));
         cmd.Parameters.Add(Uuid("crop", order.CropId));
         cmd.Parameters.Add(Varchar("variety", order.Variety));
@@ -165,43 +219,37 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
     }
 
     /// <summary>
-    /// Missing referenced rows are not found; a field of another client or a plot of another field is invalid.
+    /// Missing referenced rows are not found; a plot of a field of another client is invalid. Plots may come from several fields.
     /// Returns the current plot areas and input units, which the order stores as its snapshot.
     /// </summary>
     private static (Dictionary<Guid, decimal> PlotAreas, Dictionary<Guid, string> Units) References(
         NpgsqlConnection db, NpgsqlTransaction tx, Guid clientId, WorkOrderDraft order)
     {
-        Guid? fieldClient;
         using (var header = new NpgsqlCommand("""
-            SELECT (SELECT client_id FROM fields WHERE id=@field),
-              EXISTS(SELECT 1 FROM labor_types WHERE id=@labor) AND EXISTS(SELECT 1 FROM contractors WHERE id=@contractor)
+            SELECT EXISTS(SELECT 1 FROM labor_types WHERE id=@labor) AND EXISTS(SELECT 1 FROM contractors WHERE id=@contractor)
               AND (@stage IS NULL OR EXISTS(SELECT 1 FROM stages WHERE id=@stage))
               AND (@campaign IS NULL OR EXISTS(SELECT 1 FROM campaigns WHERE id=@campaign))
               AND (@crop IS NULL OR EXISTS(SELECT 1 FROM crops WHERE id=@crop))
             """, db, tx))
         {
-            header.Parameters.AddWithValue("field", order.FieldId);
             header.Parameters.AddWithValue("labor", order.LaborTypeId);
             header.Parameters.AddWithValue("contractor", order.ContractorId);
             header.Parameters.Add(Uuid("stage", order.StageId));
             header.Parameters.Add(Uuid("campaign", order.CampaignId));
             header.Parameters.Add(Uuid("crop", order.CropId));
-            using var row = header.ExecuteReader();
-            row.Read();
-            fieldClient = Id(row, 0);
-            if (fieldClient is null || !row.GetBoolean(1)) throw new DomainNotFoundException();
+            if (header.ExecuteScalar() is not true) throw new DomainNotFoundException();
         }
         var plotIds = order.Plots!.Select(plot => plot.PlotId).ToArray();
         var plotAreas = new Dictionary<Guid, decimal>();
-        var plotFields = new List<Guid>();
-        using (var plots = new NpgsqlCommand("SELECT id,field_id,area_hectares FROM plots WHERE id = ANY(@ids)", db, tx))
+        var plotClients = new List<Guid>();
+        using (var plots = new NpgsqlCommand("SELECT p.id,f.client_id,p.area_hectares FROM plots p JOIN fields f ON f.id=p.field_id WHERE p.id = ANY(@ids)", db, tx))
         {
             plots.Parameters.AddWithValue("ids", plotIds);
             using var row = plots.ExecuteReader();
             while (row.Read())
             {
                 plotAreas[row.GetGuid(0)] = row.GetDecimal(2);
-                plotFields.Add(row.GetGuid(1));
+                plotClients.Add(row.GetGuid(1));
             }
         }
         var units = new Dictionary<Guid, string>();
@@ -213,8 +261,7 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
             while (row.Read()) units[row.GetGuid(0)] = row.GetString(1);
         }
         if (plotAreas.Count != plotIds.Length || units.Count != inputIds.Length) throw new DomainNotFoundException();
-        if (fieldClient != clientId) throw new DomainValidationException("Field must belong to the firm's client");
-        if (plotFields.Any(field => field != order.FieldId)) throw new DomainValidationException("Every plot must belong to the work order's field");
+        if (plotClients.Any(client => client != clientId)) throw new DomainValidationException("Every plot must belong to the firm's client");
         return (plotAreas, units);
     }
 
@@ -254,13 +301,14 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
     {
         var plots = new List<WorkOrderPlot>();
         using (var cmd = new NpgsqlCommand("""
-            SELECT w.plot_id,w.area_hectares,w.worked_area_hectares,w.worked_area_hectares > w.area_hectares
-            FROM work_order_plots w JOIN plots p ON p.id=w.plot_id WHERE w.work_order_id=@id ORDER BY p.name,p.id
+            SELECT w.plot_id,p.field_id,w.area_hectares,w.worked_area_hectares,w.worked_area_hectares > w.area_hectares
+            FROM work_order_plots w JOIN plots p ON p.id=w.plot_id JOIN fields f ON f.id=p.field_id
+            WHERE w.work_order_id=@id ORDER BY f.name,f.id,p.name,p.id
             """, db))
         {
             cmd.Parameters.AddWithValue("id", id);
             using var row = cmd.ExecuteReader();
-            while (row.Read()) plots.Add(new(row.GetGuid(0), row.GetDecimal(1), row.GetDecimal(2), row.GetBoolean(3)));
+            while (row.Read()) plots.Add(new(row.GetGuid(0), row.GetGuid(1), row.GetDecimal(2), row.GetDecimal(3), row.GetBoolean(4)));
         }
         var lines = new List<WorkOrderLine>();
         using (var cmd = new NpgsqlCommand("""
@@ -278,8 +326,8 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
         header.Parameters.AddWithValue("id", id);
         using var r = header.ExecuteReader();
         if (!r.Read()) return null;
-        return new(r.GetGuid(0), r.GetGuid(1), r.GetInt32(2), r.GetFieldValue<DateOnly>(3), r.GetGuid(4), Id(r, 5), r.GetGuid(6), r.GetGuid(7),
-            Id(r, 8), Id(r, 9), Text(r, 10), Text(r, 11), Text(r, 12), r.GetString(13), Text(r, 14), r.GetFieldValue<DateTimeOffset>(15),
-            r.GetInt64(16), plots, lines);
+        return new(r.GetGuid(0), r.GetGuid(1), r.GetInt32(2), r.GetFieldValue<DateOnly>(3), r.GetGuid(4), Id(r, 5), r.GetGuid(6),
+            Id(r, 7), Id(r, 8), Text(r, 9), Text(r, 10), Text(r, 11), r.GetString(12), Text(r, 13), r.GetFieldValue<DateTimeOffset>(14),
+            r.GetInt64(15), plots, lines);
     }
 }

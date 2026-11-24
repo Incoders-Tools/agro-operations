@@ -29,7 +29,14 @@ CREATE TABLE IF NOT EXISTS work_orders (
     UNIQUE (firm_id, number),
     CHECK ((status = 'cancelada') = (cancel_reason IS NOT NULL))
 );
-CREATE INDEX IF NOT EXISTS work_orders_field_id_idx ON work_orders (field_id);
+-- 009 drops field_id; the index is created only while the column exists, so rerunning 008 after 009 stays safe.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema = current_schema() AND table_name = 'work_orders' AND column_name = 'field_id') THEN
+        CREATE INDEX IF NOT EXISTS work_orders_field_id_idx ON work_orders (field_id);
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS work_orders_status_idx ON work_orders (status);
 
 -- area_hectares is the plot area when the OT was written; worked area may exceed it (the API warns).
