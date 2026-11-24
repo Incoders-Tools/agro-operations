@@ -8,7 +8,7 @@ const groups = {
   plots: { title: 'Lotes', singular: 'Lote', parents: [{ group: 'fields', key: 'fieldId', label: 'Campo' }], area: true },
   crops: { title: 'Cultivos', singular: 'Cultivo', parents: [] },
   campaigns: { title: 'Campañas', singular: 'Campaña', feminine: true, parents: [] },
-  'labor-types': { title: 'Tipos de labor', singular: 'Tipo de labor', parents: [] },
+  'labor-types': { title: 'Labores', singular: 'Labor', feminine: true, parents: [] },
   'plot-campaign-areas': {
     title: 'Superficie por campaña', singular: 'Registro de superficie', nameField: false, area: true,
     parents: [{ group: 'plots', key: 'plotId', label: 'Lote' }, { group: 'campaigns', key: 'campaignId', label: 'Campaña' }],
@@ -19,7 +19,7 @@ const groups = {
     parents: [
       { group: 'plots', key: 'plotId', label: 'Lote' },
       { group: 'campaigns', key: 'campaignId', label: 'Campaña' },
-      { group: 'labor-types', key: 'laborTypeId', label: 'Tipo de labor' },
+      { group: 'labor-types', key: 'laborTypeId', label: 'Labor' },
     ],
     primaryLabel: row => `${row.stage} · ${row.targetUse}`,
   },
@@ -175,7 +175,7 @@ export default function Backoffice() {
       </section>{!meta.readOnly && <section className="bo-editor"><h2>{editing ? `Editar ${meta.singular.toLowerCase()}` : `${meta.feminine ? 'Nueva' : 'Nuevo'} ${meta.singular.toLowerCase()}`}</h2>
         <form onSubmit={save}>
           {meta.nameField !== false && <><label htmlFor="bo-name">Nombre</label><input id="bo-name" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} required maxLength={200} /></>}
-          {!editing && meta.parents.map(parent => <div key={parent.key}><label htmlFor={`bo-parent-${parent.key}`}>{parent.label}</label>
+          {!editing && meta.parents.map(parent => <div key={parent.key} className="bo-field"><label htmlFor={`bo-parent-${parent.key}`}>{parent.label}</label>
             <select id={`bo-parent-${parent.key}`} value={form.parents[parent.key] ?? ''} onChange={event => setForm({ ...form, parents: { ...form.parents, [parent.key]: event.target.value } })} required>
               <option value="">Selecciona un registro</option>{(rows[parent.group] ?? []).map(option => <option key={option.id} value={option.id}>{rowLabel(parent.group, option)}</option>)}
             </select></div>)}
