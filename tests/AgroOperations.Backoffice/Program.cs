@@ -22,7 +22,7 @@ try
     using (var db = new NpgsqlConnection(scoped.ConnectionString))
     {
         db.Open();
-        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql" })
+        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql" })
         {
             var file = Path.Combine(root, "src", "AgroOperations.Api", "Persistence", "Migrations", name);
             using var migration = new NpgsqlCommand(File.ReadAllText(file), db);
@@ -57,7 +57,7 @@ try
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException) { await Task.Delay(250); }
         }
         if (health?.StatusCode != HttpStatusCode.OK) throw new Exception("Test API did not start");
-        foreach (var route in new[] { "clients", "fields", "plots", "crops", "campaigns", "labor-types", "plot-campaign-areas", "recipes", "recipe-lines", "stages", "contractors", "inputs" })
+        foreach (var route in new[] { "clients", "fields", "plots", "crops", "campaigns", "labor-types", "plot-campaign-areas", "recipes", "recipe-lines", "stages", "contractors", "inputs", "commercial-firms", "plot-crops" })
             if ((await client.GetAsync($"/api/v1/{route}")).StatusCode != HttpStatusCode.Unauthorized ||
                 (await client.PostAsJsonAsync($"/api/v1/{route}", new { name = "Example" })).StatusCode != HttpStatusCode.Unauthorized ||
                 (await client.PutAsJsonAsync($"/api/v1/{route}/{Guid.NewGuid()}", new { name = "Example", revision = 1 })).StatusCode != HttpStatusCode.Unauthorized)
@@ -69,7 +69,12 @@ try
         if ((await client.PostAsJsonAsync("/api/v1/clients", new { name = "Example" })).StatusCode != HttpStatusCode.Forbidden)
             throw new Exception("Business write accepted without CSRF");
         async Task<int> Count(string route) => (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/{route}"))!.Length;
-        var catalogCounts = new Dictionary<string, int> { ["labor-types"] = 14, ["stages"] = 7, ["contractors"] = 1, ["inputs"] = 0 };
+        foreach (var route in new[] { "fields?clientId=" + Guid.NewGuid(), "plots?fieldId=" + Guid.NewGuid(), "commercial-firms?clientId=" + Guid.NewGuid(), "plot-crops?plotId=" + Guid.NewGuid() })
+            using (var anonymous = new HttpClient { BaseAddress = client.BaseAddress })
+                if ((await anonymous.GetAsync($"/api/v1/{route}")).StatusCode != HttpStatusCode.Unauthorized)
+                    throw new Exception($"Anonymous filtered {route} accessible");
+        var catalogCounts = new Dictionary<string, int> { ["labor-types"] = 14, ["stages"] = 7, ["contractors"] = 1, ["inputs"] = 0,
+            ["crops"] = 28, ["commercial-firms"] = 0, ["plot-crops"] = 0 };
         var catalogBody = new { name = "Example", abbreviation = "EX", sortOrder = 1, commercialName = "Example", unit = "l", revision = 1 };
         foreach (var (route, expected) in catalogCounts)
         {
@@ -110,18 +115,118 @@ try
             throw new Exception("Invalid plot area changed stored records");
         var plot = await Send(HttpMethod.Post, "/api/v1/plots", new { fieldId, name = "Plot", areaHectares = 2.5m });
         if (plot.StatusCode != HttpStatusCode.Created) throw new Exception("Plot create failed");
+        if (!(await client.GetFromJsonAsync<JsonElement[]>("/api/v1/crops"))!.Any(item => item.GetProperty("name").GetString() == "Pastura de gramíneas"))
+            throw new Exception("Seeded reference crop missing");
         var crop = await Send(HttpMethod.Post, "/api/v1/crops", new { name = "Crop" });
         if (crop.StatusCode != HttpStatusCode.Created) throw new Exception("Crop create failed");
         if (!await IsError(await Send(HttpMethod.Post, "/api/v1/crops", new { name = " CROP " }), HttpStatusCode.Conflict, "Duplicate name") ||
-            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/crops"))!.Length != 1)
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/crops", new { name = " soja " }), HttpStatusCode.Conflict, "Duplicate name") ||
+            await Count("crops") != 29)
             throw new Exception("Duplicate crop changed stored records");
         if ((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/fields"))!.Length != 1 ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/plots"))!.Length != 1 ||
-            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/crops"))!.Length != 1)
+            await Count("crops") != 29)
             throw new Exception("Master listings incomplete");
         if ((await Send(HttpMethod.Put, $"/api/v1/clients/{id}", new { name = "Stale", revision = 0 })).StatusCode != HttpStatusCode.Conflict ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/clients"))![0].GetProperty("name").GetString() != "Sample")
             throw new Exception("Stale client update overwrote record");
+
+        // 007 attributes: old payloads keep working and every response carries the new properties.
+        static bool Absent(JsonElement row, params string[] names) => names.All(name => row.GetProperty(name).ValueKind == JsonValueKind.Null);
+        var sampleClient = await client.GetFromJsonAsync<JsonElement>($"/api/v1/clients/{id}");
+        var sampleField = await client.GetFromJsonAsync<JsonElement>($"/api/v1/fields/{fieldId}");
+        var samplePlot = (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/plots"))![0];
+        if (!Absent(sampleClient, "taxId", "producers", "email", "phone", "address") || !Absent(sampleField, "tenure", "locality") || !Absent(samplePlot, "code"))
+            throw new Exception("Old-shape records do not expose absent attributes");
+        var clientBody = new { name = "Cliente con datos", taxId = "30-12345678-9", producers = "Productor Uno", email = "cliente@example.test",
+            phone = "0000 000000", address = "Calle ficticia 1" };
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/clients", clientBody with { taxId = "123" }), HttpStatusCode.BadRequest) ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/clients", clientBody with { email = "a@b@c" }), HttpStatusCode.BadRequest) ||
+            await Count("clients") != 1)
+            throw new Exception("Rejected client attributes changed stored records");
+        var richClient = await Send(HttpMethod.Post, "/api/v1/clients", clientBody);
+        var richClientRow = await Body(richClient);
+        var richId = richClientRow.GetProperty("id").GetGuid();
+        if (richClient.StatusCode != HttpStatusCode.Created || richClientRow.GetProperty("taxId").GetString() != "30123456789" ||
+            richClientRow.GetProperty("producers").GetString() != "Productor Uno" || richClientRow.GetProperty("address").GetString() != "Calle ficticia 1")
+            throw new Exception($"Client with attributes: {(int)richClient.StatusCode}");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/clients/{richId}", new { name = "Cliente con datos", email = "a@b@c", revision = 1 }), HttpStatusCode.BadRequest) ||
+            (await client.GetFromJsonAsync<JsonElement>($"/api/v1/clients/{richId}")).GetProperty("email").GetString() != "cliente@example.test")
+            throw new Exception("Rejected client attribute update changed stored record");
+        var replacedClient = await Send(HttpMethod.Put, $"/api/v1/clients/{richId}", new { name = "Cliente con datos", revision = 1 });
+        if (replacedClient.StatusCode != HttpStatusCode.OK || !Absent(await Body(replacedClient), "taxId", "producers", "email", "phone", "address"))
+            throw new Exception("Old-shape client update did not replace attributes");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/clients/{richId}", new { name = "Stale", taxId = "30-12345678-9", revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !Absent(await client.GetFromJsonAsync<JsonElement>($"/api/v1/clients/{richId}"), "taxId"))
+            throw new Exception("Stale client attribute update overwrote record");
+
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/fields", new { clientId = richId, name = "Campo", tenure = "arrendado" }), HttpStatusCode.BadRequest) ||
+            await Count("fields") != 1)
+            throw new Exception("Rejected field tenure changed stored records");
+        var richField = await Send(HttpMethod.Post, "/api/v1/fields", new { clientId = richId, name = "Campo alquilado", tenure = "alquiler_fijo", locality = "Localidad ficticia" });
+        var richFieldRow = await Body(richField);
+        var richFieldId = richFieldRow.GetProperty("id").GetGuid();
+        if (richField.StatusCode != HttpStatusCode.Created || richFieldRow.GetProperty("tenure").GetString() != "alquiler_fijo" ||
+            richFieldRow.GetProperty("locality").GetString() != "Localidad ficticia")
+            throw new Exception("Field with attributes failed");
+        var changedField = await Send(HttpMethod.Put, $"/api/v1/fields/{richFieldId}", new { name = "Campo alquilado", tenure = "alquiler_porcentaje", revision = 1 });
+        if (changedField.StatusCode != HttpStatusCode.OK || (await Body(changedField)) is var changedFieldRow &&
+            (changedFieldRow.GetProperty("tenure").GetString() != "alquiler_porcentaje" || !Absent(changedFieldRow, "locality")))
+            throw new Exception("Field attribute update failed");
+        var oldShapeField = await Send(HttpMethod.Put, $"/api/v1/fields/{fieldId}", new { name = "Field", revision = 1 });
+        if (oldShapeField.StatusCode != HttpStatusCode.OK || (await Body(oldShapeField)).GetProperty("revision").GetInt64() != 2)
+            throw new Exception("Old-shape field update failed");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/fields/{richFieldId}", new { name = "Stale", revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/fields/{richFieldId}", new { name = "Campo", tenure = "arrendado", revision = 2 }), HttpStatusCode.BadRequest) ||
+            (await client.GetFromJsonAsync<JsonElement>($"/api/v1/fields/{richFieldId}")).GetProperty("tenure").GetString() != "alquiler_porcentaje")
+            throw new Exception("Rejected field update overwrote record");
+        async Task<Guid[]> Ids(string route) => (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/{route}"))!.Select(item => item.GetProperty("id").GetGuid()).ToArray();
+        if (!(await Ids($"fields?clientId={richId}")).SequenceEqual([richFieldId]) || !(await Ids($"fields?clientId={id}")).SequenceEqual([fieldId]) ||
+            (await Ids($"fields?clientId={Guid.NewGuid()}")).Length != 0 || (await Ids("fields")).Length != 2)
+            throw new Exception("Fields filter by client mismatch");
+
+        var codedPlot = await Send(HttpMethod.Post, "/api/v1/plots", new { fieldId = richFieldId, name = "Lote", areaHectares = 3m, code = "CLI - CAMPO - LOTE" });
+        var codedPlotRow = await Body(codedPlot);
+        var codedPlotId = codedPlotRow.GetProperty("id").GetGuid();
+        if (codedPlot.StatusCode != HttpStatusCode.Created || codedPlotRow.GetProperty("code").GetString() != "CLI - CAMPO - LOTE")
+            throw new Exception("Plot with code failed");
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/plots", new { fieldId = richFieldId, name = "Otro", areaHectares = 1m, code = " cli - campo - lote " }), HttpStatusCode.Conflict, "Duplicate code") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/plots/{samplePlot.GetProperty("id").GetGuid()}", new { name = "Plot", areaHectares = 2.5m, code = "Cli - Campo - Lote", revision = 1 }), HttpStatusCode.Conflict, "Duplicate code") ||
+            await Count("plots") != 2 || !Absent((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/plots?fieldId={fieldId}"))![0], "code"))
+            throw new Exception("Duplicate plot code changed stored records");
+        var oldShapePlot = await Send(HttpMethod.Put, $"/api/v1/plots/{codedPlotId}", new { name = "Lote", areaHectares = 3m, revision = 1 });
+        if (oldShapePlot.StatusCode != HttpStatusCode.OK || !Absent(await Body(oldShapePlot), "code"))
+            throw new Exception("Old-shape plot update did not replace code");
+        if (!(await Ids($"plots?fieldId={richFieldId}")).SequenceEqual([codedPlotId]) ||
+            !(await Ids($"plots?fieldId={fieldId}")).SequenceEqual([samplePlot.GetProperty("id").GetGuid()]) ||
+            (await Ids($"plots?fieldId={Guid.NewGuid()}")).Length != 0 || (await Ids("plots")).Length != 2)
+            throw new Exception("Plots filter by field mismatch");
+
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/commercial-firms", new { clientId = Guid.NewGuid(), name = "Firma" }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/commercial-firms", new { clientId = richId, name = " " }), HttpStatusCode.BadRequest) ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/commercial-firms", new { clientId = richId, name = "Firma", taxId = "123" }), HttpStatusCode.BadRequest) ||
+            await Count("commercial-firms") != 0)
+            throw new Exception("Rejected firm changed stored records");
+        var firm = await Send(HttpMethod.Post, "/api/v1/commercial-firms", new { clientId = richId, name = "Firma comercial", taxId = "30-11111111-1" });
+        var firmRow = await Body(firm);
+        var firmId = firmRow.GetProperty("id").GetGuid();
+        if (firm.StatusCode != HttpStatusCode.Created || firmRow.GetProperty("taxId").GetString() != "30111111111" || firmRow.GetProperty("clientId").GetGuid() != richId)
+            throw new Exception($"Firm create: {(int)firm.StatusCode}");
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/commercial-firms", new { clientId = id, name = " FIRMA COMERCIAL " }), HttpStatusCode.Conflict, "Duplicate name") ||
+            await Count("commercial-firms") != 1)
+            throw new Exception("Duplicate firm changed stored records");
+        // The update body has no client: a firm never moves to another client, even if one is sent.
+        var changedFirm = await Send(HttpMethod.Put, $"/api/v1/commercial-firms/{firmId}", new { clientId = id, name = "Firma comercial SA", revision = 1 });
+        if (changedFirm.StatusCode != HttpStatusCode.OK || (await Body(changedFirm)) is var changedFirmRow &&
+            (changedFirmRow.GetProperty("clientId").GetGuid() != richId || !Absent(changedFirmRow, "taxId") || changedFirmRow.GetProperty("revision").GetInt64() != 2))
+            throw new Exception("Firm update failed or moved the firm");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/commercial-firms/{firmId}", new { name = "Stale", revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/commercial-firms/{firmId}", new { name = "Firma", taxId = "1", revision = 2 }), HttpStatusCode.BadRequest) ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/commercial-firms/{Guid.NewGuid()}", new { name = "Missing", revision = 1 }), HttpStatusCode.NotFound) ||
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/commercial-firms"))![0].GetProperty("name").GetString() != "Firma comercial SA")
+            throw new Exception("Rejected firm update overwrote record");
+        if (!(await Ids($"commercial-firms?clientId={richId}")).SequenceEqual([firmId]) || (await Ids($"commercial-firms?clientId={id}")).Length != 0)
+            throw new Exception("Firms filter by client mismatch");
 
         var campaign = await Send(HttpMethod.Post, "/api/v1/campaigns", new { name = "2026-27" });
         if (campaign.StatusCode != HttpStatusCode.Created) throw new Exception("Campaign create failed");
@@ -130,6 +235,43 @@ try
         if (!await IsError(await Send(HttpMethod.Post, "/api/v1/campaigns", new { name = "2026-27" }), HttpStatusCode.Conflict, "Duplicate name") ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/campaigns"))!.Length != 1)
             throw new Exception("Duplicate campaign changed stored records");
+        var seededCrops = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/crops");
+        var soyId = seededCrops!.Single(item => item.GetProperty("name").GetString() == "Soja").GetProperty("id").GetGuid();
+        var wheatId = seededCrops!.Single(item => item.GetProperty("name").GetString() == "Trigo").GetProperty("id").GetGuid();
+        var plotCropBody = new { plotId = codedPlotId, campaignId, cropId = soyId, position = 1, role = "renta", variety = "NK 855 VIP3" };
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { position = 3 }), HttpStatusCode.BadRequest) ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { role = "cobertura" }), HttpStatusCode.BadRequest) ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { plotId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { campaignId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { cropId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            await Count("plot-crops") != 0)
+            throw new Exception("Rejected plot crop changed stored records");
+        var plotCrop = await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody);
+        var plotCropRow = await Body(plotCrop);
+        var plotCropId = plotCropRow.GetProperty("id").GetGuid();
+        if (plotCrop.StatusCode != HttpStatusCode.Created || plotCropRow.GetProperty("variety").GetString() != "NK 855 VIP3" ||
+            plotCropRow.GetProperty("position").GetInt32() != 1 || plotCropRow.GetProperty("role").GetString() != "renta")
+            throw new Exception($"Plot crop create: {(int)plotCrop.StatusCode}");
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { cropId = wheatId }), HttpStatusCode.Conflict, "Duplicate position") ||
+            await Count("plot-crops") != 1)
+            throw new Exception("Duplicate plot crop position changed stored records");
+        var serviceCrop = await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { cropId = wheatId, position = 2, role = "servicio", variety = (string?)null });
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { position = 2 }), HttpStatusCode.Conflict, "Duplicate position"))
+            throw new Exception("Third plot crop accepted");
+        if (serviceCrop.StatusCode != HttpStatusCode.Created || !Absent(await Body(serviceCrop), "variety")) throw new Exception("Second plot crop failed");
+        var changedPlotCrop = await Send(HttpMethod.Put, $"/api/v1/plot-crops/{plotCropId}", new { cropId = wheatId, role = "servicio", revision = 1 });
+        if (changedPlotCrop.StatusCode != HttpStatusCode.OK || (await Body(changedPlotCrop)) is var changedPlotCropRow &&
+            (changedPlotCropRow.GetProperty("cropId").GetGuid() != wheatId || changedPlotCropRow.GetProperty("position").GetInt32() != 1 ||
+             !Absent(changedPlotCropRow, "variety") || changedPlotCropRow.GetProperty("plotId").GetGuid() != codedPlotId))
+            throw new Exception("Plot crop update failed");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/plot-crops/{plotCropId}", new { cropId = soyId, role = "renta", revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/plot-crops/{plotCropId}", new { cropId = Guid.NewGuid(), role = "renta", revision = 2 }), HttpStatusCode.NotFound) ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/plot-crops/{plotCropId}", new { cropId = soyId, role = "cobertura", revision = 2 }), HttpStatusCode.BadRequest) ||
+            (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/plot-crops?plotId={codedPlotId}"))![0].GetProperty("cropId").GetGuid() != wheatId)
+            throw new Exception("Rejected plot crop update overwrote record");
+        if ((await Ids($"plot-crops?plotId={codedPlotId}")).Length != 2 || (await Ids($"plot-crops?plotId={samplePlot.GetProperty("id").GetGuid()}")).Length != 0 ||
+            (await Ids("plot-crops")).Length != 2)
+            throw new Exception("Plot crops filter by plot mismatch");
         var seededLabors = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/labor-types");
         if (!seededLabors!.Any(item => item.GetProperty("name").GetString() == "Pulverización terrestre" && item.GetProperty("abbreviation").GetString() == "PULV-TE"))
             throw new Exception("Seeded labor abbreviation missing");
@@ -271,7 +413,7 @@ try
             if (refused.ExitCode == 0) throw new Exception("Invalid DB password did not reject startup");
         }
         finally { if (!refused.HasExited) { refused.Kill(entireProcessTree: true); await refused.WaitForExitAsync(); } }
-        if ((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/clients")) is not { Length: 1 })
+        if ((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/clients")) is not { Length: 2 })
             throw new Exception("Rejected DB startup changed client listing");
         Console.WriteLine("PASS: private HTTP CRUD, rejection invariants and revision guards in isolated PostgreSQL");
         return 0;

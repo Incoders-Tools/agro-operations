@@ -6,33 +6,61 @@ namespace AgroOperations.Api.Persistence;
 /// <summary>One statement per mutation; revision predicates make updates atomic across processes.</summary>
 public sealed class PostgresOperationsRepository(string connectionString) : IOperationsRepository
 {
+    private const string ClientColumns = "id,name,tax_id,producers,email,phone,address,revision";
+    private const string FieldColumns = "id,client_id,name,tenure,locality,revision";
+    private const string PlotColumns = "id,field_id,name,area_hectares,code,revision";
+
     private T Execute<T>(string sql, Action<NpgsqlCommand> parameters, Func<NpgsqlDataReader, T> map)
     {
         using var connection = new NpgsqlConnection(connectionString);
         connection.Open();
         using var command = new NpgsqlCommand(sql, connection);
         parameters(command);
-        using var reader = command.ExecuteReader();
-        if (!reader.Read()) throw new DomainNotFoundException();
-        return map(reader);
+        try
+        {
+            using var reader = command.ExecuteReader();
+            if (!reader.Read()) throw new DomainNotFoundException();
+            return map(reader);
+        }
+        catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            // plots.code is the only unique value of the hierarchy.
+            throw new DomainDuplicateException("Duplicate code");
+        }
     }
 
-    private static void Add(NpgsqlCommand command, string key, object value) => command.Parameters.AddWithValue(key, value);
-    private static Client ClientRow(NpgsqlDataReader r) => new(r.GetGuid(0), r.GetString(1), r.GetInt64(2));
-    private static Field FieldRow(NpgsqlDataReader r) => new(r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.GetInt64(3));
-    private static Plot PlotRow(NpgsqlDataReader r) => new(r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.GetDecimal(3), r.GetInt64(4));
+    private static void Add(NpgsqlCommand command, string key, object? value) => command.Parameters.AddWithValue(key, value ?? DBNull.Value);
+    private static string? Text(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
+    private static Client ClientRow(NpgsqlDataReader r) =>
+        new(r.GetGuid(0), r.GetString(1), Text(r, 2), Text(r, 3), Text(r, 4), Text(r, 5), Text(r, 6), r.GetInt64(7));
+    private static Field FieldRow(NpgsqlDataReader r) => new(r.GetGuid(0), r.GetGuid(1), r.GetString(2), Text(r, 3), Text(r, 4), r.GetInt64(5));
+    private static Plot PlotRow(NpgsqlDataReader r) => new(r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.GetDecimal(3), Text(r, 4), r.GetInt64(5));
 
-    public Client CreateClient(string name) => Execute(
-        "INSERT INTO clients(id,name) VALUES (@id,@name) RETURNING id,name,revision",
-        c => { Add(c, "id", Guid.NewGuid()); Add(c, "name", name); }, ClientRow);
+    private static void Bind(NpgsqlCommand c, ClientDraft client)
+    {
+        Add(c, "name", client.Name); Add(c, "taxId", client.TaxId); Add(c, "producers", client.Producers);
+        Add(c, "email", client.Email); Add(c, "phone", client.Phone); Add(c, "address", client.Address);
+    }
+    private static void Bind(NpgsqlCommand c, FieldDraft field)
+    {
+        Add(c, "name", field.Name); Add(c, "tenure", field.Tenure); Add(c, "locality", field.Locality);
+    }
+    private static void Bind(NpgsqlCommand c, PlotDraft plot)
+    {
+        Add(c, "name", plot.Name); Add(c, "area", plot.AreaHectares); Add(c, "code", plot.Code);
+    }
 
-    public Field CreateField(Guid clientId, string name) => Execute(
-        "INSERT INTO fields(id,client_id,name) SELECT @id,id,@name FROM clients WHERE id=@parent RETURNING id,client_id,name,revision",
-        c => { Add(c, "id", Guid.NewGuid()); Add(c, "parent", clientId); Add(c, "name", name); }, FieldRow);
+    public Client CreateClient(ClientDraft client) => Execute(
+        $"INSERT INTO clients(id,name,tax_id,producers,email,phone,address) VALUES (@id,@name,@taxId,@producers,@email,@phone,@address) RETURNING {ClientColumns}",
+        c => { Add(c, "id", Guid.NewGuid()); Bind(c, client); }, ClientRow);
 
-    public Plot CreatePlot(Guid fieldId, string name, decimal areaHectares) => Execute(
-        "INSERT INTO plots(id,field_id,name,area_hectares) SELECT @id,id,@name,@area FROM fields WHERE id=@parent RETURNING id,field_id,name,area_hectares,revision",
-        c => { Add(c, "id", Guid.NewGuid()); Add(c, "parent", fieldId); Add(c, "name", name); Add(c, "area", areaHectares); }, PlotRow);
+    public Field CreateField(Guid clientId, FieldDraft field) => Execute(
+        $"INSERT INTO fields(id,client_id,name,tenure,locality) SELECT @id,id,@name,@tenure,@locality FROM clients WHERE id=@parent RETURNING {FieldColumns}",
+        c => { Add(c, "id", Guid.NewGuid()); Add(c, "parent", clientId); Bind(c, field); }, FieldRow);
+
+    public Plot CreatePlot(Guid fieldId, PlotDraft plot) => Execute(
+        $"INSERT INTO plots(id,field_id,name,area_hectares,code) SELECT @id,id,@name,@area,@code FROM fields WHERE id=@parent RETURNING {PlotColumns}",
+        c => { Add(c, "id", Guid.NewGuid()); Add(c, "parent", fieldId); Bind(c, plot); }, PlotRow);
 
     private T Update<T>(string sql, Guid id, long revision, Action<NpgsqlCommand> extra, Func<NpgsqlDataReader, T> map, Func<Guid, bool> exists)
     {
@@ -42,21 +70,28 @@ public sealed class PostgresOperationsRepository(string connectionString) : IOpe
         Add(command, "id", id);
         Add(command, "expected", revision);
         extra(command);
-        using (var reader = command.ExecuteReader())
-            if (reader.Read()) return map(reader);
+        try
+        {
+            using (var reader = command.ExecuteReader())
+                if (reader.Read()) return map(reader);
+        }
+        catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            throw new DomainDuplicateException("Duplicate code");
+        }
         if (exists(id)) throw new DomainConflictException();
         throw new DomainNotFoundException();
     }
 
-    public Client UpdateClient(Guid id, long revision, string name) => Update(
-        "UPDATE clients SET name=@name,revision=revision+1 WHERE id=@id AND revision=@expected RETURNING id,name,revision",
-        id, revision, c => Add(c, "name", name), ClientRow, key => GetClient(key) is not null);
-    public Field UpdateField(Guid id, long revision, string name) => Update(
-        "UPDATE fields SET name=@name,revision=revision+1 WHERE id=@id AND revision=@expected RETURNING id,client_id,name,revision",
-        id, revision, c => Add(c, "name", name), FieldRow, key => GetField(key) is not null);
-    public Plot UpdatePlot(Guid id, long revision, string name, decimal areaHectares) => Update(
-        "UPDATE plots SET name=@name,area_hectares=@area,revision=revision+1 WHERE id=@id AND revision=@expected RETURNING id,field_id,name,area_hectares,revision",
-        id, revision, c => { Add(c, "name", name); Add(c, "area", areaHectares); }, PlotRow, key => GetPlot(key) is not null);
+    public Client UpdateClient(Guid id, long revision, ClientDraft client) => Update(
+        $"UPDATE clients SET name=@name,tax_id=@taxId,producers=@producers,email=@email,phone=@phone,address=@address,revision=revision+1 WHERE id=@id AND revision=@expected RETURNING {ClientColumns}",
+        id, revision, c => Bind(c, client), ClientRow, key => GetClient(key) is not null);
+    public Field UpdateField(Guid id, long revision, FieldDraft field) => Update(
+        $"UPDATE fields SET name=@name,tenure=@tenure,locality=@locality,revision=revision+1 WHERE id=@id AND revision=@expected RETURNING {FieldColumns}",
+        id, revision, c => Bind(c, field), FieldRow, key => GetField(key) is not null);
+    public Plot UpdatePlot(Guid id, long revision, PlotDraft plot) => Update(
+        $"UPDATE plots SET name=@name,area_hectares=@area,code=@code,revision=revision+1 WHERE id=@id AND revision=@expected RETURNING {PlotColumns}",
+        id, revision, c => Bind(c, plot), PlotRow, key => GetPlot(key) is not null);
 
     private T? Find<T>(string sql, Guid id, Func<NpgsqlDataReader, T> map) where T : class
     {
@@ -67,21 +102,24 @@ public sealed class PostgresOperationsRepository(string connectionString) : IOpe
         using var reader = command.ExecuteReader();
         return reader.Read() ? map(reader) : null;
     }
-    public Client? GetClient(Guid id) => Find("SELECT id,name,revision FROM clients WHERE id=@id", id, ClientRow);
-    public Field? GetField(Guid id) => Find("SELECT id,client_id,name,revision FROM fields WHERE id=@id", id, FieldRow);
-    public Plot? GetPlot(Guid id) => Find("SELECT id,field_id,name,area_hectares,revision FROM plots WHERE id=@id", id, PlotRow);
+    public Client? GetClient(Guid id) => Find($"SELECT {ClientColumns} FROM clients WHERE id=@id", id, ClientRow);
+    public Field? GetField(Guid id) => Find($"SELECT {FieldColumns} FROM fields WHERE id=@id", id, FieldRow);
+    public Plot? GetPlot(Guid id) => Find($"SELECT {PlotColumns} FROM plots WHERE id=@id", id, PlotRow);
 
-    private IReadOnlyList<T> List<T>(string sql, Func<NpgsqlDataReader, T> map)
+    private IReadOnlyList<T> List<T>(string sql, Func<NpgsqlDataReader, T> map, Guid? parent = null)
     {
         using var connection = new NpgsqlConnection(connectionString);
         connection.Open();
         using var command = new NpgsqlCommand(sql, connection);
+        if (parent is { } key) Add(command, "parent", key);
         using var reader = command.ExecuteReader();
         var rows = new List<T>();
         while (reader.Read()) rows.Add(map(reader));
         return rows;
     }
-    public IReadOnlyList<Client> ListClients() => List("SELECT id,name,revision FROM clients ORDER BY name,id", ClientRow);
-    public IReadOnlyList<Field> ListFields() => List("SELECT id,client_id,name,revision FROM fields ORDER BY name,id", FieldRow);
-    public IReadOnlyList<Plot> ListPlots() => List("SELECT id,field_id,name,area_hectares,revision FROM plots ORDER BY name,id", PlotRow);
+    public IReadOnlyList<Client> ListClients() => List($"SELECT {ClientColumns} FROM clients ORDER BY name,id", ClientRow);
+    public IReadOnlyList<Field> ListFields(Guid? clientId) => List(
+        $"SELECT {FieldColumns} FROM fields {(clientId is null ? "" : "WHERE client_id=@parent ")}ORDER BY name,id", FieldRow, clientId);
+    public IReadOnlyList<Plot> ListPlots(Guid? fieldId) => List(
+        $"SELECT {PlotColumns} FROM plots {(fieldId is null ? "" : "WHERE field_id=@parent ")}ORDER BY name,id", PlotRow, fieldId);
 }

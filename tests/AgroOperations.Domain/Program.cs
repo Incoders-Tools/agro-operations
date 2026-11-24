@@ -30,62 +30,70 @@ try
         }
     }
     string[] previousMigrations = ["001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql"];
-    Migrate(builder.ConnectionString, [.. previousMigrations, "006_catalogs.sql"]);
+    Migrate(builder.ConnectionString, [.. previousMigrations, "006_catalogs.sql", "007_attributes.sql"]);
     var service = new OperationsService(new PostgresOperationsRepository(builder.ConnectionString));
     static void Check(bool condition, string label)
     {
         if (!condition) throw new Exception(label);
     }
-    static void Reject<T>(Action action, string label) where T : Exception
+    static T Rejected<T>(Action action, string label) where T : Exception
     {
-        try { action(); } catch (T) { return; }
+        try { action(); } catch (T error) { return error; }
         throw new Exception($"Expected {typeof(T).Name}: {label}");
     }
-    Reject<DomainValidationException>(() => service.CreateClient(" \t"), "blank client");
+    static void Reject<T>(Action action, string label) where T : Exception => Rejected<T>(action, label);
+    Reject<DomainValidationException>(() => service.CreateClient(new ClientDraft(" \t")), "blank client");
     Check(service.GetClient(Guid.NewGuid()) is null, "unknown client");
-    var client = service.CreateClient("Client");
-    Reject<DomainValidationException>(() => service.CreateField(client.Id, " "), "blank field");
-    Reject<DomainNotFoundException>(() => service.CreateField(Guid.NewGuid(), "Field"), "missing client");
-    var field = service.CreateField(client.Id, "Field");
-    Reject<DomainValidationException>(() => service.CreatePlot(field.Id, " ", 1), "blank plot");
-    Reject<DomainNotFoundException>(() => service.CreatePlot(Guid.NewGuid(), "Plot", 1), "missing field");
+    var client = service.CreateClient(new ClientDraft("Client"));
+    Reject<DomainValidationException>(() => service.CreateField(client.Id, new FieldDraft(" ")), "blank field");
+    Reject<DomainNotFoundException>(() => service.CreateField(Guid.NewGuid(), new FieldDraft("Field")), "missing client");
+    var field = service.CreateField(client.Id, new FieldDraft("Field"));
+    Reject<DomainValidationException>(() => service.CreatePlot(field.Id, new PlotDraft(" ", 1)), "blank plot");
+    Reject<DomainNotFoundException>(() => service.CreatePlot(Guid.NewGuid(), new PlotDraft("Plot", 1)), "missing field");
     foreach (var area in new[] { 0m, -1m, 0.00001m, 100000000m })
-        Reject<DomainValidationException>(() => service.CreatePlot(field.Id, "Plot", area), "invalid area");
-    var plot = service.CreatePlot(field.Id, "Plot", 1.2500m);
+        Reject<DomainValidationException>(() => service.CreatePlot(field.Id, new PlotDraft("Plot", area)), "invalid area");
+    var plot = service.CreatePlot(field.Id, new PlotDraft("Plot", 1.2500m));
+    Check(client is { TaxId: null, Producers: null, Email: null, Phone: null, Address: null } &&
+          field is { Tenure: null, Locality: null } && plot.Code is null, "records without attributes keep them absent");
     Check(service.ListClients().Any(item => item == client) &&
           service.ListFields().Any(item => item == field) &&
           service.ListPlots().Any(item => item == plot), "master record listings");
     Check(client.Id != Guid.Empty && field.Id != Guid.Empty && plot.Id != Guid.Empty &&
           field.ClientId == client.Id && plot.FieldId == field.Id && plot.AreaHectares == 1.2500m &&
           client.Revision == 1 && field.Revision == 1 && plot.Revision == 1, "initial hierarchy");
-    Reject<DomainValidationException>(() => service.UpdateClient(client.Id, client.Revision, " "), "blank client update");
-    Reject<DomainValidationException>(() => service.UpdateField(field.Id, field.Revision, " "), "blank field update");
-    Reject<DomainValidationException>(() => service.UpdatePlot(plot.Id, plot.Revision, " ", 2), "blank plot update");
+    Reject<DomainValidationException>(() => service.UpdateClient(client.Id, client.Revision, new ClientDraft(" ")), "blank client update");
+    Reject<DomainValidationException>(() => service.UpdateField(field.Id, field.Revision, new FieldDraft(" ")), "blank field update");
+    Reject<DomainValidationException>(() => service.UpdatePlot(plot.Id, plot.Revision, new PlotDraft(" ", 2)), "blank plot update");
     foreach (var area in new[] { 0m, -1m, 0.00001m, 100000000m })
-        Reject<DomainValidationException>(() => service.UpdatePlot(plot.Id, plot.Revision, "Changed", area), "invalid plot update");
+        Reject<DomainValidationException>(() => service.UpdatePlot(plot.Id, plot.Revision, new PlotDraft("Changed", area)), "invalid plot update");
     Check(service.GetClient(client.Id) == client && service.GetField(field.Id) == field && service.GetPlot(plot.Id) == plot, "rejected values unchanged");
-    var updatedClient = service.UpdateClient(client.Id, client.Revision, "New client");
-    var updatedField = service.UpdateField(field.Id, field.Revision, "New field");
-    var updatedPlot = service.UpdatePlot(plot.Id, plot.Revision, "New plot", 2m);
-    Reject<DomainConflictException>(() => service.UpdateClient(client.Id, client.Revision, "Stale"), "client conflict");
-    Reject<DomainConflictException>(() => service.UpdateField(field.Id, field.Revision, "Stale"), "field conflict");
-    Reject<DomainConflictException>(() => service.UpdatePlot(plot.Id, plot.Revision, "Stale", 3m), "plot conflict");
+    var updatedClient = service.UpdateClient(client.Id, client.Revision, new ClientDraft("New client"));
+    var updatedField = service.UpdateField(field.Id, field.Revision, new FieldDraft("New field"));
+    var updatedPlot = service.UpdatePlot(plot.Id, plot.Revision, new PlotDraft("New plot", 2m));
+    Reject<DomainConflictException>(() => service.UpdateClient(client.Id, client.Revision, new ClientDraft("Stale")), "client conflict");
+    Reject<DomainConflictException>(() => service.UpdateField(field.Id, field.Revision, new FieldDraft("Stale")), "field conflict");
+    Reject<DomainConflictException>(() => service.UpdatePlot(plot.Id, plot.Revision, new PlotDraft("Stale", 3m)), "plot conflict");
     Check(service.GetClient(client.Id) == updatedClient && service.GetField(field.Id) == updatedField &&
           service.GetPlot(plot.Id) == updatedPlot && updatedClient.Revision == 2 &&
           updatedField.Revision == 2 && updatedPlot.Revision == 2, "stale writes unchanged");
-    Reject<DomainNotFoundException>(() => service.UpdatePlot(Guid.NewGuid(), 1, "Missing", 1m), "missing update");
+    Reject<DomainNotFoundException>(() => service.UpdatePlot(Guid.NewGuid(), 1, new PlotDraft("Missing", 1m)), "missing update");
 
-    string Snapshot() => SnapshotOf(builder.ConnectionString);
-    string SnapshotOf(string connectionString)
+    var keptCropId = Guid.NewGuid();
+    string Snapshot() => SnapshotOf(builder.ConnectionString) + "|" + AttributeTablesOf(builder.ConnectionString);
+    // Without attributes, the snapshot ignores the 007 columns and the 007 crop seed, so it compares
+    // a schema before and after 007 by what earlier migrations stored.
+    string SnapshotOf(string connectionString, bool withAttributes = true)
     {
+        var strip = withAttributes ? "" : " - '{tax_id,producers,email,phone,address,tenure,locality,code}'::text[]";
+        var cropFilter = withAttributes ? "" : $" WHERE c.id = '{keptCropId}'";
         using var connection = new NpgsqlConnection(connectionString);
         connection.Open();
-        using var command = new NpgsqlCommand("""
+        using var command = new NpgsqlCommand($$"""
             SELECT concat_ws('|',
-              (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM clients c),
-              (SELECT coalesce(string_agg(to_jsonb(f)::text, ',' ORDER BY f.id), '') FROM fields f),
-              (SELECT coalesce(string_agg(to_jsonb(p)::text, ',' ORDER BY p.id), '') FROM plots p),
-              (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM crops c),
+              (SELECT coalesce(string_agg((to_jsonb(c){{strip}})::text, ',' ORDER BY c.id), '') FROM clients c),
+              (SELECT coalesce(string_agg((to_jsonb(f){{strip}})::text, ',' ORDER BY f.id), '') FROM fields f),
+              (SELECT coalesce(string_agg((to_jsonb(p){{strip}})::text, ',' ORDER BY p.id), '') FROM plots p),
+              (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM crops c{{cropFilter}}),
               (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM campaigns c),
               (SELECT coalesce(string_agg(to_jsonb(a)::text, ',' ORDER BY a.id), '') FROM plot_campaign_areas a),
               (SELECT coalesce(string_agg(to_jsonb(l)::text, ',' ORDER BY l.id), '') FROM labor_types l),
@@ -98,17 +106,28 @@ try
             """, connection);
         return (string)command.ExecuteScalar()!;
     }
+    string AttributeTablesOf(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("""
+            SELECT concat_ws('|',
+              (SELECT coalesce(string_agg(to_jsonb(f)::text, ',' ORDER BY f.id), '') FROM commercial_firms f),
+              (SELECT coalesce(string_agg(to_jsonb(pc)::text, ',' ORDER BY pc.id), '') FROM plot_crops pc))
+            """, connection);
+        return (string)command.ExecuteScalar()!;
+    }
     var before = Snapshot();
-    Reject<DomainNotFoundException>(() => service.CreatePlot(Guid.NewGuid(), "Orphan", 1m), "orphan plot");
+    Reject<DomainNotFoundException>(() => service.CreatePlot(Guid.NewGuid(), new PlotDraft("Orphan", 1m)), "orphan plot");
     Check(Snapshot() == before, "orphan creation changed stored rows");
-    Reject<DomainValidationException>(() => service.UpdatePlot(plot.Id, updatedPlot.Revision, "Plot", 0.00001m), "invalid precision");
+    Reject<DomainValidationException>(() => service.UpdatePlot(plot.Id, updatedPlot.Revision, new PlotDraft("Plot", 0.00001m)), "invalid precision");
     Check(Snapshot() == before, "invalid precision changed stored rows");
 
     using var gate = new Barrier(3);
     Task<Plot?> Compete(string name) => Task.Run(() =>
     {
         gate.SignalAndWait();
-        try { return service.UpdatePlot(plot.Id, updatedPlot.Revision, name, 3m); }
+        try { return service.UpdatePlot(plot.Id, updatedPlot.Revision, new PlotDraft(name, 3m)); }
         catch (DomainConflictException error)
         {
             Check(error.Message == "Stale revision", "wrong conflict message");
@@ -124,14 +143,22 @@ try
     Check(winner.Revision == updatedPlot.Revision + 1 && service.GetPlot(plot.Id) == winner,
           "stale contender overwrote winner");
     var crops = new CropCatalog(new PostgresCropRepository(builder.ConnectionString));
+    string[] referenceCrops = ["Trigo", "Cebada", "Avena", "Garbanzo", "Lenteja", "Colza", "Camelina", "Carinata", "Arveja verde",
+        "Arveja amarilla", "Centeno", "Triticale", "Vicia", "Nabo", "Pastura de gramíneas", "Pastura de leguminosas", "Pastura consociada",
+        "Raigrás", "Soja", "Maíz", "Maíz pisingallo", "Sorgo granífero", "Sorgo forrajero", "Sorgo silero", "Maíz silo", "Girasol",
+        "Poroto mung", "Moha"];
+    var seededCrops = crops.List();
+    Check(seededCrops.Count == referenceCrops.Length && referenceCrops.All(name => seededCrops.Any(item => item.Name == name && item.Revision == 1)),
+          "seeded reference crops");
     Reject<DomainValidationException>(() => crops.Create(" "), "blank crop");
-    var crop = crops.Create("Trigo");
+    var crop = crops.Create("Cultivo de prueba");
     Check(crop.Revision == 1 && crops.List().Any(item => item == crop), "crop creation/listing");
     var cropBefore = Snapshot();
-    Reject<DomainDuplicateException>(() => crops.Create("  TRIGO  "), "duplicate crop");
+    Reject<DomainDuplicateException>(() => crops.Create("  TRIGO  "), "duplicate seeded crop");
+    Reject<DomainDuplicateException>(() => crops.Create("  CULTIVO DE PRUEBA  "), "duplicate crop");
     Reject<DomainValidationException>(() => crops.Create(" "), "blank crop");
     Check(Snapshot() == cropBefore, "rejected crop creates changed stored rows");
-    var changedCrop = crops.Update(crop.Id, crop.Revision, "Trigo candeal");
+    var changedCrop = crops.Update(crop.Id, crop.Revision, "Cultivo de prueba candeal");
     cropBefore = Snapshot();
     Reject<DomainConflictException>(() => crops.Update(crop.Id, crop.Revision, "Stale crop"), "crop conflict");
     Reject<DomainNotFoundException>(() => crops.Update(Guid.NewGuid(), 1, "Wheat"), "missing crop");
@@ -297,7 +324,137 @@ try
     Reject<DomainNotFoundException>(() => inputs.Update(Guid.NewGuid(), 1, inputDraft), "missing input");
     Check(Snapshot() == inputsBefore, "stale input write changed stored rows");
 
+    // 007: client attributes. CUIT and email follow the contractor rules.
+    var clientDraft = new ClientDraft(" Cliente con datos ", " 30-12345678-9 ", " Productor Uno, Productor Dos ", " cliente@example.test ",
+        " 0000 000000 ", " Calle ficticia 1 ");
+    var attributesBefore = Snapshot();
+    foreach (var taxId in new[] { "2012345678", "201234567890", "20-1234567-8x", "20.12345678.9", "--" })
+        Reject<DomainValidationException>(() => service.CreateClient(clientDraft with { TaxId = taxId }), $"invalid client CUIT {taxId}");
+    foreach (var email in new[] { "sin-arroba", "a@b@c", "@example.test", "cliente@" })
+        Reject<DomainValidationException>(() => service.CreateClient(clientDraft with { Email = email }), $"invalid client email {email}");
+    Reject<DomainValidationException>(() => service.CreateClient(clientDraft with { Name = " " }), "blank client with attributes");
+    Check(Snapshot() == attributesBefore, "rejected client creates changed stored rows");
+    var fullClient = service.CreateClient(clientDraft);
+    Check(fullClient is { Name: "Cliente con datos", TaxId: "30123456789", Producers: "Productor Uno, Productor Dos", Email: "cliente@example.test",
+          Phone: "0000 000000", Address: "Calle ficticia 1", Revision: 1 } && service.GetClient(fullClient.Id) == fullClient &&
+          service.ListClients().Contains(fullClient), "client attributes stored");
+    attributesBefore = Snapshot();
+    Reject<DomainValidationException>(() => service.UpdateClient(fullClient.Id, fullClient.Revision, clientDraft with { TaxId = "123" }), "invalid CUIT client update");
+    Reject<DomainValidationException>(() => service.UpdateClient(fullClient.Id, fullClient.Revision, clientDraft with { Email = "a@b@c" }), "invalid email client update");
+    Check(Snapshot() == attributesBefore, "rejected client updates changed stored rows");
+    var clearedClient = service.UpdateClient(fullClient.Id, fullClient.Revision, new ClientDraft("Cliente con datos", Producers: "  "));
+    Check(clearedClient is { TaxId: null, Producers: null, Email: null, Phone: null, Address: null, Revision: 2 }, "client update replaces every attribute");
+    attributesBefore = Snapshot();
+    Reject<DomainConflictException>(() => service.UpdateClient(fullClient.Id, fullClient.Revision, clientDraft), "stale client with attributes");
+    Check(Snapshot() == attributesBefore, "stale client write changed stored rows");
+    fullClient = service.UpdateClient(fullClient.Id, clearedClient.Revision, clientDraft);
+    Check(fullClient is { TaxId: "30123456789", Revision: 3 }, "client attributes restored");
+
+    // Field tenure and locality; the fields filter returns only one client's fields.
+    attributesBefore = Snapshot();
+    foreach (var tenure in new[] { "arrendado", "alquiler fijo", "propia" })
+        Reject<DomainValidationException>(() => service.CreateField(fullClient.Id, new FieldDraft("Campo", tenure)), $"invalid tenure {tenure}");
+    Reject<DomainNotFoundException>(() => service.CreateField(Guid.NewGuid(), new FieldDraft("Campo", "propio")), "field with attributes and missing client");
+    Check(Snapshot() == attributesBefore, "rejected field creates changed stored rows");
+    var rentedField = service.CreateField(fullClient.Id, new FieldDraft(" Campo alquilado ", " Alquiler_Fijo ", " Localidad ficticia "));
+    Check(rentedField is { Name: "Campo alquilado", Tenure: "alquiler_fijo", Locality: "Localidad ficticia", Revision: 1 } &&
+          service.GetField(rentedField.Id) == rentedField, "field attributes stored");
+    attributesBefore = Snapshot();
+    Reject<DomainValidationException>(() => service.UpdateField(rentedField.Id, rentedField.Revision, new FieldDraft("Campo alquilado", "arrendado")), "invalid tenure update");
+    Check(Snapshot() == attributesBefore, "rejected field update changed stored rows");
+    rentedField = service.UpdateField(rentedField.Id, rentedField.Revision, new FieldDraft("Campo alquilado", "alquiler_porcentaje"));
+    Check(rentedField is { Tenure: "alquiler_porcentaje", Locality: null, Revision: 2 }, "field update replaces every attribute");
+    attributesBefore = Snapshot();
+    Reject<DomainConflictException>(() => service.UpdateField(rentedField.Id, 1, new FieldDraft("Stale", "propio")), "stale field with attributes");
+    Check(Snapshot() == attributesBefore, "stale field write changed stored rows");
+    var ownField = service.CreateField(fullClient.Id, new FieldDraft("Campo propio", "propio"));
+    Check(service.ListFields(fullClient.Id).Select(item => item.Id).Order().SequenceEqual(new[] { rentedField.Id, ownField.Id }.Order()) &&
+          service.ListFields(client.Id).Select(item => item.Id).SequenceEqual([field.Id]) && service.ListFields(Guid.NewGuid()).Count == 0 &&
+          service.ListFields().Count == 3, "fields filtered by client");
+
+    // Plot code: optional, trimmed and unique without regard to case; many plots may have none.
+    var codedPlot = service.CreatePlot(ownField.Id, new PlotDraft(" Lote 1 ", 10m, " CLI - CAMPO - LOTE 1 "));
+    Check(codedPlot is { Name: "Lote 1", Code: "CLI - CAMPO - LOTE 1", Revision: 1 } && service.GetPlot(codedPlot.Id) == codedPlot, "plot code stored");
+    attributesBefore = Snapshot();
+    Check(Rejected<DomainDuplicateException>(() => service.CreatePlot(ownField.Id, new PlotDraft("Lote 2", 5m, " cli - campo - lote 1 ")), "duplicate plot code")
+          .Message == "Duplicate code", "duplicate plot code message");
+    Reject<DomainValidationException>(() => service.CreatePlot(ownField.Id, new PlotDraft("Lote 2", 5m, new string('X', 41))), "plot code over 40 characters");
+    Check(Snapshot() == attributesBefore, "rejected plot creates changed stored rows");
+    var blankCodePlot = service.CreatePlot(ownField.Id, new PlotDraft("Lote 2", 5m, "  "));
+    var noCodePlot = service.CreatePlot(ownField.Id, new PlotDraft("Lote 3", 5m));
+    Check(blankCodePlot.Code is null && noCodePlot.Code is null, "plots without code");
+    attributesBefore = Snapshot();
+    Reject<DomainDuplicateException>(() => service.UpdatePlot(blankCodePlot.Id, blankCodePlot.Revision, new PlotDraft("Lote 2", 5m, "Cli - Campo - Lote 1")), "update to duplicate plot code");
+    Check(Snapshot() == attributesBefore, "rejected plot code update changed stored rows");
+    var uncodedPlot = service.UpdatePlot(codedPlot.Id, codedPlot.Revision, new PlotDraft("Lote 1", 10m));
+    var recodedPlot = service.UpdatePlot(blankCodePlot.Id, blankCodePlot.Revision, new PlotDraft("Lote 2", 5m, "cli - campo - lote 1"));
+    Check(uncodedPlot is { Code: null, Revision: 2 } && recodedPlot is { Code: "cli - campo - lote 1", Revision: 2 }, "plot code replaced and reused");
+    Check(service.ListPlots(ownField.Id).Select(item => item.Id).Order().SequenceEqual(new[] { codedPlot.Id, blankCodePlot.Id, noCodePlot.Id }.Order()) &&
+          service.ListPlots(field.Id).Select(item => item.Id).SequenceEqual([plot.Id]) && service.ListPlots(Guid.NewGuid()).Count == 0 &&
+          service.ListPlots().Count == 4, "plots filtered by field");
+
+    // Commercial firms belong to one client; names are unique across every client.
+    var firms = new CommercialFirmCatalog(new PostgresCommercialFirmRepository(builder.ConnectionString));
+    attributesBefore = Snapshot();
+    Reject<DomainValidationException>(() => firms.Create(fullClient.Id, " ", null), "blank firm");
+    Reject<DomainValidationException>(() => firms.Create(fullClient.Id, "Firma", "123"), "invalid firm CUIT");
+    Reject<DomainNotFoundException>(() => firms.Create(Guid.NewGuid(), "Firma", null), "firm with missing client");
+    Check(Snapshot() == attributesBefore, "rejected firm creates changed stored rows");
+    var firm = firms.Create(fullClient.Id, " Firma comercial ", " 30-11111111-1 ");
+    Check(firm is { Name: "Firma comercial", TaxId: "30111111111", Revision: 1 } && firm.ClientId == fullClient.Id && firms.List().Contains(firm), "firm creation/listing");
+    var secondFirm = firms.Create(fullClient.Id, "Otra firma", null);
+    var otherClientFirm = firms.Create(client.Id, "Firma de otro cliente", null);
+    attributesBefore = Snapshot();
+    Reject<DomainDuplicateException>(() => firms.Create(client.Id, " FIRMA COMERCIAL ", null), "duplicate firm across clients");
+    Reject<DomainDuplicateException>(() => firms.Update(secondFirm.Id, secondFirm.Revision, "firma comercial", null), "rename to duplicate firm");
+    Reject<DomainValidationException>(() => firms.Update(firm.Id, firm.Revision, "Firma comercial", "1"), "invalid firm CUIT update");
+    Check(Snapshot() == attributesBefore, "rejected firm writes changed stored rows");
+    var changedFirm = firms.Update(firm.Id, firm.Revision, "Firma comercial", null);
+    Check(changedFirm is { TaxId: null, Revision: 2 } && changedFirm.ClientId == fullClient.Id, "firm update");
+    attributesBefore = Snapshot();
+    Reject<DomainConflictException>(() => firms.Update(firm.Id, firm.Revision, "Stale", null), "stale firm");
+    Reject<DomainNotFoundException>(() => firms.Update(Guid.NewGuid(), 1, "Missing", null), "missing firm");
+    Check(Snapshot() == attributesBefore, "stale firm write changed stored rows");
+    Check(firms.List(fullClient.Id).Select(item => item.Id).Order().SequenceEqual(new[] { firm.Id, secondFirm.Id }.Order()) &&
+          firms.List(client.Id).Single() == otherClientFirm && firms.List().Count == 3, "firms filtered by client");
+
+    // Plot crops: up to two per plot and campaign, each renta or servicio, with an optional hybrid or variety.
+    var plotCrops = new PlotCropService(new PostgresPlotCropRepository(builder.ConnectionString));
+    var wheat = crops.List().Single(item => item.Name == "Trigo");
+    var soy = crops.List().Single(item => item.Name == "Soja");
+    attributesBefore = Snapshot();
+    foreach (short position in new short[] { 0, 3, -1 })
+        Reject<DomainValidationException>(() => plotCrops.Create(plot.Id, campaign.Id, soy.Id, position, "renta", null), $"invalid position {position}");
+    foreach (var role in new[] { "cobertura", " ", "rentas" })
+        Reject<DomainValidationException>(() => plotCrops.Create(plot.Id, campaign.Id, soy.Id, 1, role, null), $"invalid role {role}");
+    Reject<DomainNotFoundException>(() => plotCrops.Create(Guid.NewGuid(), campaign.Id, soy.Id, 1, "renta", null), "plot crop with missing plot");
+    Reject<DomainNotFoundException>(() => plotCrops.Create(plot.Id, Guid.NewGuid(), soy.Id, 1, "renta", null), "plot crop with missing campaign");
+    Reject<DomainNotFoundException>(() => plotCrops.Create(plot.Id, campaign.Id, Guid.NewGuid(), 1, "renta", null), "plot crop with missing crop");
+    Check(Snapshot() == attributesBefore, "rejected plot crop creates changed stored rows");
+    var firstCrop = plotCrops.Create(plot.Id, campaign.Id, wheat.Id, 1, " Servicio ", "  ");
+    var secondCrop = plotCrops.Create(plot.Id, campaign.Id, soy.Id, 2, "renta", " NK 855 VIP3 ");
+    Check(firstCrop is { Position: 1, Role: "servicio", Variety: null, Revision: 1 } && firstCrop.CropId == wheat.Id &&
+          secondCrop is { Position: 2, Role: "renta", Variety: "NK 855 VIP3" } && plotCrops.List().Contains(secondCrop), "plot crop creation/listing");
+    attributesBefore = Snapshot();
+    Check(Rejected<DomainDuplicateException>(() => plotCrops.Create(plot.Id, campaign.Id, soy.Id, 1, "renta", null), "duplicate plot crop position")
+          .Message == "Duplicate position", "duplicate position message");
+    Check(Snapshot() == attributesBefore, "rejected duplicate position changed stored rows");
+    var otherPlotCrop = plotCrops.Create(codedPlot.Id, campaign.Id, soy.Id, 1, "renta", null);
+    var changedCropRow = plotCrops.Update(firstCrop.Id, firstCrop.Revision, soy.Id, "renta", "Variedad ficticia");
+    Check(changedCropRow is { Position: 1, Role: "renta", Variety: "Variedad ficticia", Revision: 2 } && changedCropRow.CropId == soy.Id &&
+          changedCropRow.PlotId == plot.Id && changedCropRow.CampaignId == campaign.Id, "plot crop update");
+    attributesBefore = Snapshot();
+    Reject<DomainNotFoundException>(() => plotCrops.Update(firstCrop.Id, changedCropRow.Revision, Guid.NewGuid(), "renta", null), "plot crop update to missing crop");
+    Reject<DomainValidationException>(() => plotCrops.Update(firstCrop.Id, changedCropRow.Revision, soy.Id, "cobertura", null), "plot crop update with invalid role");
+    Reject<DomainConflictException>(() => plotCrops.Update(firstCrop.Id, firstCrop.Revision, wheat.Id, "servicio", null), "stale plot crop");
+    Reject<DomainNotFoundException>(() => plotCrops.Update(Guid.NewGuid(), 1, wheat.Id, "servicio", null), "missing plot crop");
+    Check(Snapshot() == attributesBefore, "rejected plot crop updates changed stored rows");
+    Check(plotCrops.List(plot.Id).Select(item => item.Id).SequenceEqual([firstCrop.Id, secondCrop.Id]) &&
+          plotCrops.List(codedPlot.Id).Single() == otherPlotCrop && plotCrops.List(Guid.NewGuid()).Count == 0 && plotCrops.List().Count == 3,
+          "plot crops filtered by plot");
+
     // Database constraints mirror the domain rules for writers that bypass the services.
+    var sqlBefore = Snapshot();
     RejectSql("UPDATE labor_types SET abbreviation = 'ABCDEFGHIJKLM'", "labor abbreviation length");
     RejectSql("UPDATE contractors SET tax_id = '20-12345678-9'", "contractor CUIT digits");
     RejectSql("UPDATE contractors SET email = 'a@b@c'", "contractor email");
@@ -305,7 +462,13 @@ try
     RejectSql("UPDATE inputs SET mix_order = 21", "input mix order");
     RejectSql("UPDATE inputs SET dose_min = 9, dose_max = 1", "input dose range");
     RejectSql("UPDATE inputs SET dose_min = 0", "input positive dose");
-    Check(Snapshot() == inputsBefore, "rejected SQL writes changed stored rows");
+    RejectSql("UPDATE clients SET tax_id = '30-12345678-9'", "client CUIT digits");
+    RejectSql("UPDATE clients SET email = 'a@b@c'", "client email");
+    RejectSql("UPDATE fields SET tenure = 'arrendado'", "field tenure");
+    RejectSql("UPDATE plots SET code = ' padded '", "plot code trimmed");
+    RejectSql("UPDATE plot_crops SET position = 3", "plot crop position");
+    RejectSql("UPDATE plot_crops SET role = 'cobertura'", "plot crop role");
+    Check(Snapshot() == sqlBefore, "rejected SQL writes changed stored rows");
 
     var provenance = new ImportProvenanceService(new PostgresImportRecordRepository(builder.ConnectionString));
     var contractorRecord = provenance.RecordOnce("contractor", contractor.Id, "fixture:contractors:1", "{}");
@@ -328,7 +491,7 @@ try
             INSERT INTO clients(id,name) VALUES ('{{client.Id}}','Client');
             INSERT INTO fields(id,client_id,name) VALUES ('{{field.Id}}','{{client.Id}}','Field');
             INSERT INTO plots(id,field_id,name,area_hectares) VALUES ('{{plot.Id}}','{{field.Id}}','Plot',1);
-            INSERT INTO crops(id,name) VALUES ('{{crop.Id}}','Trigo');
+            INSERT INTO crops(id,name) VALUES ('{{keptCropId}}','TRIGO');
             INSERT INTO campaigns(id,name) VALUES ('{{campaign.Id}}','2026-27');
             INSERT INTO plot_campaign_areas(id,plot_id,campaign_id,area_hectares) VALUES ('{{plotArea.Id}}','{{plot.Id}}','{{campaign.Id}}',1);
             INSERT INTO labor_types(id,name) VALUES ('{{keptLaborId}}','siembra GRUESA'), ('{{discoLaborId}}','DISCO');
@@ -358,11 +521,33 @@ try
         using var keep = new NpgsqlCommand($"UPDATE labor_types SET abbreviation = 'DSC' WHERE id = '{discoLaborId}'", connection);
         keep.ExecuteNonQuery();
     }
-    var rerunBefore = SnapshotOf(seedBuilder.ConnectionString);
+    var rerunBefore = SnapshotOf(seedBuilder.ConnectionString, withAttributes: false);
     Migrate(seedBuilder.ConnectionString, "006_catalogs.sql");
-    Check(SnapshotOf(seedBuilder.ConnectionString) == rerunBefore, "rerunning 006 changed stored rows");
+    Check(SnapshotOf(seedBuilder.ConnectionString, withAttributes: false) == rerunBefore, "rerunning 006 changed stored rows");
 
-    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy, crops, campaigns, labors, stages, contractors, inputs, plot campaign areas and recipes with concurrent revisions");
+    // 007 on a database that already holds rows in every earlier table, including a same-name crop.
+    using (var connection = new NpgsqlConnection(seedBuilder.ConnectionString))
+    {
+        connection.Open();
+        using var existing = new NpgsqlCommand($"INSERT INTO inputs(id,commercial_name,unit) VALUES ('{Guid.NewGuid()}','Producto','l')", connection);
+        existing.ExecuteNonQuery();
+    }
+    var earlierRows = SnapshotOf(seedBuilder.ConnectionString, withAttributes: false);
+    Migrate(seedBuilder.ConnectionString, "007_attributes.sql");
+    Check(SnapshotOf(seedBuilder.ConnectionString, withAttributes: false) == earlierRows, "007 changed rows stored by earlier migrations");
+    var existingOperations = new OperationsService(new PostgresOperationsRepository(seedBuilder.ConnectionString));
+    var existingCrops = new CropCatalog(new PostgresCropRepository(seedBuilder.ConnectionString)).List();
+    Check(existingOperations.GetClient(client.Id) is { TaxId: null, Producers: null, Email: null, Phone: null, Address: null } &&
+          existingOperations.GetField(field.Id) is { Tenure: null, Locality: null } && existingOperations.GetPlot(plot.Id) is { Code: null },
+          "007 leaves new attributes of existing rows absent");
+    Check(existingCrops.Count == referenceCrops.Length && existingCrops.Single(item => item.Id == keptCropId) is { Name: "TRIGO", Revision: 1 } &&
+          referenceCrops.All(name => existingCrops.Any(item => string.Equals(item.Name, name, StringComparison.OrdinalIgnoreCase))),
+          "crop seed kept the same-name crop and added the rest");
+    rerunBefore = SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString);
+    Migrate(seedBuilder.ConnectionString, "007_attributes.sql");
+    Check(SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString) == rerunBefore, "rerunning 007 changed stored rows");
+
+    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas and recipes with concurrent revisions");
     return 0;
 }
 finally

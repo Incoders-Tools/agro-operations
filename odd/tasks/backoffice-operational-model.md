@@ -38,7 +38,7 @@ verbatim but never contain real client, contractor or product values; those exis
 ## Tasks
 - T1 (S1, S2 rename) inline: form field wrapper grid; "Tipos de labor" → "Labores". | done (commit: this one; visual check in T8)
 - T2 (S2, S3, S6) worker: migration 006 (labor abbreviation, stages, contractors, inputs) + seeds, domain, HTTP, tests. | done (commit: catalogs)
-- T3 (S4, S7) worker: migration 007 (client/firm/field/plot/crop attributes), domain, HTTP, tests.
+- T3 (S4, S7) worker: migration 007 (client/firm/field/plot/crop attributes), domain, HTTP, tests. | done (commit: attributes)
 - T4 (S5) worker: migration 008 work orders, numbering, cancel, lines, totals, dose warnings, HTTP, tests.
 - T5 (S1, S3, S4, S6, S7) worker: backoffice UI for hierarchy and attribute forms, contractors, inputs.
 - T6 (S5) worker: OT create/list/detail/cancel UI.

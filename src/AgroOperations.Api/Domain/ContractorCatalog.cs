@@ -14,25 +14,8 @@ public interface IContractorRepository
 public sealed class ContractorCatalog(IContractorRepository repository)
 {
     private static ContractorDraft Validated(ContractorDraft draft) => new(
-        CatalogText.Required(draft.Name, "Name"), TaxId(draft.TaxId), CatalogText.Optional(draft.Phone),
-        Email(draft.Email), CatalogText.Optional(draft.Notes), draft.OwnEquipment);
-
-    // The CUIT is stored as its 11 digits; hyphens and spaces are the only accepted separators.
-    private static string? TaxId(string? value)
-    {
-        if (CatalogText.Optional(value) is not { } taxId) return null;
-        var digits = taxId.Replace("-", "").Replace(" ", "");
-        return digits.Length == 11 && digits.All(char.IsAsciiDigit)
-            ? digits : throw new DomainValidationException("CUIT must have 11 digits");
-    }
-
-    private static string? Email(string? value)
-    {
-        if (CatalogText.Optional(value) is not { } email) return null;
-        var at = email.IndexOf('@');
-        return at > 0 && at < email.Length - 1 && email.IndexOf('@', at + 1) < 0
-            ? email : throw new DomainValidationException("Email must contain a single @ with text on both sides");
-    }
+        CatalogText.Required(draft.Name, "Name"), CatalogText.TaxId(draft.TaxId), CatalogText.Optional(draft.Phone),
+        CatalogText.Email(draft.Email), CatalogText.Optional(draft.Notes), draft.OwnEquipment);
 
     public Contractor Create(ContractorDraft contractor) => repository.Create(Validated(contractor));
     public Contractor Update(Guid id, long revision, ContractorDraft contractor) => repository.Update(id, revision, Validated(contractor));
