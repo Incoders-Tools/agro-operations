@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.mjs';
 import { RecordDetail, RecordForm, RecordList, SectionHeader } from './records.jsx';
+import SoilAnalysesPanel from './soil-analyses.jsx';
 import { clientCounts, entities, fieldMoveGroups, fieldPlotCount, moveNotice, optionLabel, plotCropDetail, rowLabel, tenures } from './schema.mjs';
 
 const children = { clients: 'fields', fields: 'plots', plots: 'plot-crops' };
@@ -92,7 +93,7 @@ export default function ClientsSection({ identity }) {
 
   return <>
     <SectionHeader identity={identity} title="Clientes" count={level ? undefined : rows.clients.length}
-      description="Aquí administras cada cliente con sus firmas comerciales y sus campos; cada campo, con sus lotes; cada lote, con sus cultivos por campaña." />
+      description="Aquí administras cada cliente con sus firmas comerciales y sus campos; cada campo, con sus lotes; cada lote, con sus cultivos por campaña y sus análisis de suelo." />
     <nav className="bo-breadcrumb" aria-label="Ubicación"><ol>
       <li><button type="button" onClick={() => go({ clientId: null, fieldId: null, plotId: null })} aria-current={!level ? 'page' : undefined}>Clientes</button></li>
       {client && <li><button type="button" onClick={() => go({ clientId: client.id, fieldId: null, plotId: null })} aria-current={level === 'clients' ? 'page' : undefined}>{client.name}</button></li>}
@@ -136,6 +137,7 @@ export default function ClientsSection({ identity }) {
           label={row => `${nameOf(rows.campaigns, row.campaignId)} · ${row.position} · ${nameOf(rows.crops, row.cropId)}`}
           detail={plotCropDetail}
           empty="Este lote aún no tiene cultivos cargados por campaña." />
+        <SoilAnalysesPanel key={plot.id} plot={plot} campaigns={rows.campaigns} csrfToken={identity.csrfToken} />
       </>}
     </div>
       <RecordForm key={`${target.entity}-${target.record?.id ?? 'new'}-${formKey}`} entity={target.entity} record={target.record}

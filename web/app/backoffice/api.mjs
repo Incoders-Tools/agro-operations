@@ -22,6 +22,9 @@ const required = {
   'Dose unit': 'La unidad de dosis es obligatoria.',
   Reason: 'Indica el motivo de la cancelación.',
   'Issued on': 'La fecha es obligatoria.',
+  'Sampled on': 'La fecha de muestreo es obligatoria.',
+  'Analyzed on': 'La fecha de análisis es obligatoria.',
+  Parameter: 'Cada resultado necesita su parámetro.',
 };
 
 const validations = {
@@ -44,6 +47,15 @@ const validations = {
   "Every plot must belong to the firm's client": 'Todos los lotes deben ser de campos del cliente de la firma.',
   'Yield must be zero or positive and fit numeric(12,2)': 'El rendimiento debe ser cero o positivo.',
   'Website must be a single address without spaces': 'El sitio web no puede tener espacios.',
+  // Soil and seed analyses (S1, S2).
+  'Sampling method must be promedio or estaciones': 'Elige un método de muestreo válido.',
+  'At least one result is required': 'Carga al menos un resultado del análisis.',
+  'Each result needs a station when sampling by stations': 'Cada resultado necesita su estación cuando el muestreo es por estaciones.',
+  'Percentages must be between 0 and 100': 'Los porcentajes deben estar entre 0 y 100.',
+  'Seed fractions add up to more than 100': 'Germinadas, anormales, muertas y duras suman más de 100 % en un tratamiento.',
+  'Laboratory must be a soil laboratory': 'Elige un laboratorio de suelos.',
+  'Laboratory must be a seed laboratory': 'Elige un laboratorio de semillas.',
+  'Map link must be a single address without spaces': 'El enlace al shape o KML no puede tener espacios.',
 };
 
 // Messages that list the accepted values end with that list, so they match by prefix.

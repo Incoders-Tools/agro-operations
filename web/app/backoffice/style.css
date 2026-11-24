@@ -91,3 +91,29 @@
 @media(max-width:560px){.bo-list li button.bo-open{order:3}}
 /* Contractor website link in list rows (catalogs.jsx). */
 .bo-list li small a{color:var(--brand-primary);overflow-wrap:anywhere}
+/* Soil and seed analyses (soil-analyses.jsx, seed-analyses.jsx): full-width forms, result lines, history, calculator. */
+.bo-analysis-form{position:static;max-height:none;overflow:visible}
+.bo-soil-line{display:grid;grid-template-columns:minmax(150px,1.6fr) repeat(3,minmax(90px,.8fr)) auto;gap:14px;align-items:end;border-top:1px solid var(--brand-line-soft);padding-top:12px}
+.bo-soil-stations{grid-template-columns:minmax(150px,1.6fr) repeat(4,minmax(80px,.8fr)) auto}
+.bo-link:disabled{color:var(--brand-muted);cursor:not-allowed;text-decoration:none}
+.bo-cell-note{display:block;margin-top:4px;font-size:12px;color:var(--brand-muted);white-space:pre-line}
+.bo-cell-note a{color:var(--brand-primary)}
+.bo-history{display:grid;gap:18px}
+.bo-calculator{display:grid;gap:16px}
+.bo-calculator h2{margin:0}
+.bo-calculator .bo-field input,.bo-calculator .bo-field select{width:100%;padding:12px;border:1px solid var(--brand-line);background:var(--brand-paper);color:var(--brand-ink);border-radius:3px;font:inherit}
+.bo-calculator .bo-field label{font-size:13px;font-weight:700}
+.bo-calculator .bo-context{margin:0;font-size:13px;color:var(--brand-muted)}
+.bo-results{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:0}
+.bo-results>div{border:1px solid var(--brand-line-soft);background:var(--brand-paper);padding:14px;display:grid;gap:6px;min-width:0}
+.bo-results dt{font-size:12px;font-weight:700;color:var(--brand-muted)}
+.bo-results dd{margin:0;font-family:var(--brand-font);font-size:22px;color:var(--brand-ink);overflow-wrap:anywhere}
+.bo-list ul.bo-missing{list-style:disc;padding-left:20px;margin:0;font-size:13px;color:var(--brand-muted);display:grid;gap:4px}
+.bo-list ul.bo-missing li{display:list-item;border:0;padding:0}
+.bo-formulas{border-top:1px solid var(--brand-line-soft);padding-top:12px;font-size:13px;color:var(--brand-muted)}
+.bo-formulas p{margin:0 0 8px}
+.bo-list .bo-formulas ul{list-style:none;padding:0;margin:0;display:grid;gap:6px}
+.bo-list .bo-formulas li{display:block;border:0;padding:0}
+.bo-formulas code{font-family:var(--brand-font-text);color:var(--brand-ink);background:var(--brand-tint);padding:2px 6px;border-radius:3px;overflow-wrap:anywhere}
+@media(max-width:950px){.bo-soil-line,.bo-soil-stations{grid-template-columns:repeat(2,minmax(0,1fr))}.bo-soil-line>.bo-field:first-child{grid-column:1/-1}}
+@media(max-width:560px){.bo-soil-line,.bo-soil-stations{grid-template-columns:1fr;border:1px solid var(--brand-line-soft);padding:14px;background:var(--brand-paper)}.bo-soil-line>*{grid-column:1/-1}}
