@@ -24,8 +24,8 @@ Owner round of 2026-11-24 after using the new modules. UI only (web/app/backoffi
   content until loaded (no clickable stale form/list), including Insumos.
 
 ## Tasks
-- T1 (S1-S5) worker: combobox component + adoption everywhere, focus, sticky sidebar, loading states, tests.
-- T2: browser verification at 1280/390, push to main.
+- T1 (S1-S5) worker: combobox component + adoption everywhere, focus, sticky sidebar, loading states, tests. | done 7dd109c
+- T2: browser verification at 1280/390, push to main. | done
 
 ## Log
 - L1 (owner, 2026-11-24, verbatim): "Perfecto dejamos ahi las preguntas y algunos ajustes de diseo. 1. Casi se pisan
@@ -40,3 +40,8 @@ Owner round of 2026-11-24 after using the new modules. UI only (web/app/backoffi
 - L2 (evidence): screenshots show the h1 with line-height 1 so "Ó" rises into the kicker; "Buscar cliente" text box
   plus a separate "Cliente" select; the sidebar ending mid-page with the form scrolled. The OT plots list is already
   one filter field plus checkboxes (multi-select) and stays that way.
+- L3 (T2 evidence, browser on real data, read-only, 1280 and 390 px): Insumos shows a "Cargando" status right after
+  the switch; title glyphs sit 18-19 px below the kicker; OT client combobox: typing filters, ArrowDown moves
+  aria-activedescendant, Enter chooses and closes (aria-expanded false), Escape restores the chosen label, no "Buscar
+  cliente" field left; labor arrows skip category headers; "Agregar insumo" focuses bo-wo-line-<key>-input; desktop
+  sidebar stays at top 0 with logout visible after scrolling 2,000 px; 0 label overlaps, no overflow, no page errors.
