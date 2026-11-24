@@ -1,13 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
 import { Field } from './field.jsx';
 import { RecordDetail, SectionHeader } from './records.jsx';
-import { optionLabel, rowLabel, searchRecords } from './schema.mjs';
+import { fieldPlotCount, optionLabel, rowLabel, searchRecords } from './schema.mjs';
 import {
-  displayDate, doseRange, emptyOrder, exceedsPlot, lineTotal, newLine, orderFromRecord, orderLabel, orderPayload, plotCropPrefill,
-  statuses, workedTotal,
+  clientFirms, displayDate, doseRange, emptyOrder, exceedsPlot, fieldNames, lineTotal, newLine, orderFromRecord, orderLabel, orderPayload,
+  orderQuery, plotCropPrefill, plotGroups, statuses, workedTotal,
 } from './work-orders.mjs';
 
 // Catalogs the list, form and detail resolve ids against; firms come back with their next work order number.
@@ -15,6 +15,12 @@ const references = ['commercial-firms', 'clients', 'fields', 'labor-types', 'sta
 const byId = (rows, id) => rows.find(row => row.id === id);
 const laborLabel = labor => labor ? (labor.abbreviation ? `${labor.name} (${labor.abbreviation})` : labor.name) : 'Sin referencia';
 const nameOf = (rows, id) => byId(rows, id)?.name;
+const printHref = id => `/backoffice/work-orders/${encodeURIComponent(id)}/print`;
+
+// Opens the print view in a new tab, so the list or detail keeps its state.
+function PrintLink({ id, label }) {
+  return <a className="bo-print-link" href={printHref(id)} target="_blank" rel="noopener" aria-label={label}>Imprimir / PDF</a>;
+}
 
 function Readout({ label, children }) {
   return <div className="bo-readout"><span>{label}</span><output>{children}</output></div>;
@@ -36,21 +42,29 @@ function doseWarning(range, input) {
 }
 
 // Alta and edit of one OT, in the order of the workbook `Orden` sheet. The number always comes from the server.
+// The form starts from the client (S4); its plots may come from any of its fields (S3).
 function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
   const [form, setForm] = useState(() => record ? orderFromRecord(record) : emptyOrder());
-  const [fieldPlots, setFieldPlots] = useState([]);
+  const [clientTerm, setClientTerm] = useState('');
+  const [plotTerm, setPlotTerm] = useState('');
+  const [clientPlots, setClientPlots] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const firm = byId(refs['commercial-firms'], form.firmId);
-  const client = firm && byId(refs.clients, firm.clientId);
+  // Editing keeps the firm, so the client follows from it.
+  const clientId = record ? firm?.clientId ?? '' : form.clientId;
+  const client = byId(refs.clients, clientId);
+  const fields = clientId ? refs.fields.filter(row => row.clientId === clientId) : [];
+  const fieldKey = fields.map(row => row.id).join(',');
   const set = changes => setForm(current => ({ ...current, ...changes }));
 
   useEffect(() => {
     let active = true;
-    if (!form.fieldId) { setFieldPlots([]); return undefined; }
-    api(`plots?fieldId=${form.fieldId}`).then(rows => { if (active) setFieldPlots(rows); }).catch(cause => { if (active) setError(cause.message); });
+    if (!fieldKey) { setClientPlots([]); return undefined; }
+    Promise.all(fieldKey.split(',').map(fieldId => api(`plots?fieldId=${fieldId}`)))
+      .then(lists => { if (active) setClientPlots(lists.flat()); }).catch(cause => { if (active) setError(cause.message); });
     return () => { active = false; };
-  }, [form.fieldId]);
+  }, [fieldKey]);
 
   // With a campaign and a single plot, the crop and variety start from that plot's first crop of the campaign.
   function prefill(next) {
@@ -63,10 +77,9 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
         ? { ...current, ...crop } : current);
     }).catch(cause => setError(cause.message));
   }
-  function chooseFirm(firmId) {
-    const clientId = byId(refs['commercial-firms'], firmId)?.clientId;
-    const keepsField = byId(refs.fields, form.fieldId)?.clientId === clientId;
-    set(keepsField ? { firmId } : { firmId, fieldId: '', plots: [] });
+  function chooseClient(next) {
+    set({ clientId: next, firmId: clientFirms(refs['commercial-firms'], next).preselected, plots: [] });
+    setPlotTerm('');
   }
   function togglePlot(plot, checked) {
     const plots = checked ? [...form.plots, { plotId: plot.id, worked: String(plot.areaHectares) }] : form.plots.filter(row => row.plotId !== plot.id);
@@ -89,16 +102,27 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
   }
 
   const options = (rows, label = row => row.name) => rows.map(row => ({ value: row.id, label: label(row) }));
-  const firmOptions = options(refs['commercial-firms'], row => `${row.name} · ${nameOf(refs.clients, row.clientId) ?? 'Sin cliente'}`);
-  const fields = firm ? refs.fields.filter(row => row.clientId === firm.clientId) : [];
+  const foundClients = searchRecords('clients', refs.clients, clientTerm);
+  const clientOptions = options(client && !foundClients.includes(client) ? [client, ...foundClients] : foundClients);
+  const { firms } = clientFirms(refs['commercial-firms'], clientId);
+  const groups = plotGroups(fields, clientPlots, plotTerm);
+  const shownPlots = groups.reduce((sum, group) => sum + group.plots.length, 0);
   const total = workedTotal(form.plots);
   const ready = refs['commercial-firms'].length && refs['labor-types'].length && refs.contractors.length;
+  const firmHint = firm ? `Se emitirá con el Nº ${firm.nextWorkOrderNumber}.`
+    : client && !firms.length ? 'Este cliente aún no tiene firmas comerciales. Créala en Clientes.' : undefined;
 
   return <section className="bo-editor bo-order-form"><h2>{record ? `Editar orden ${orderLabel(firm, record.number)}` : 'Nueva orden de trabajo'}</h2>
     <form onSubmit={save}>
       {record ? <p className="bo-context">Firma {firm?.name ?? 'Sin referencia'} · cliente {client?.name ?? 'Sin referencia'}. La firma y el número no cambian.</p>
-        : <Select id="bo-wo-firm" label="Firma comercial" value={form.firmId} onChange={chooseFirm} options={firmOptions}
-          placeholder="Selecciona una firma" hint={firm ? `Cliente ${client?.name ?? 'sin referencia'}. Se emitirá con el Nº ${firm.nextWorkOrderNumber}.` : undefined} />}
+        : <div className="bo-pair">
+          <Field id="bo-wo-client-search" label="Buscar cliente" optional hint={`${foundClients.length} de ${refs.clients.length}`}>{hintId =>
+            <input id="bo-wo-client-search" type="search" value={clientTerm} aria-describedby={hintId} onChange={event => setClientTerm(event.target.value)} />}</Field>
+          <Select id="bo-wo-client" label="Cliente" value={clientId} onChange={chooseClient} options={clientOptions}
+            placeholder={foundClients.length ? 'Selecciona un cliente' : 'Sin coincidencias'} />
+          <Select id="bo-wo-firm" label="Firma comercial" value={form.firmId} disabled={!client} onChange={firmId => set({ firmId })}
+            options={options(firms)} placeholder={client ? 'Selecciona una firma' : 'Primero elige el cliente'} hint={firmHint} />
+        </div>}
       <Field id="bo-wo-date" label="Fecha">
         <input id="bo-wo-date" type="date" value={form.issuedOn} required onChange={event => set({ issuedOn: event.target.value })} /></Field>
       <Select id="bo-wo-labor" label="Labor" value={form.laborTypeId} onChange={laborTypeId => set({ laborTypeId })}
@@ -107,27 +131,32 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
         options={options(refs.stages)} placeholder="Sin indicar" />
       <Select id="bo-wo-contractor" label="Contratista" value={form.contractorId} onChange={contractorId => set({ contractorId })}
         options={options(refs.contractors)} placeholder="Selecciona un contratista" />
-      <Select id="bo-wo-field" label="Campo" value={form.fieldId} disabled={!firm} onChange={fieldId => set({ fieldId, plots: [] })}
-        options={options(fields)} placeholder={firm ? 'Selecciona un campo' : 'Primero elige la firma'}
-        hint={firm && !fields.length ? 'El cliente de esta firma aún no tiene campos.' : undefined} />
-
-      <fieldset className="bo-group"><legend>Lotes</legend>
-        {!form.fieldId ? <p className="bo-muted">Elige un campo para ver sus lotes.</p> : !fieldPlots.length ? <p className="bo-muted">Este campo aún no tiene lotes.</p> :
-          <div className="bo-plots">{fieldPlots.map(plot => {
-            const chosen = form.plots.find(row => row.plotId === plot.id);
-            const id = `bo-wo-plot-${plot.id}`;
-            return <div key={plot.id} className={chosen ? 'bo-plot bo-plot-on' : 'bo-plot'}>
-              <Field id={id} label={rowLabel('plots', plot)} hint={`Superficie ${plot.areaHectares} ha`} check>{hintId =>
-                <input id={id} type="checkbox" checked={Boolean(chosen)} aria-describedby={hintId} onChange={event => togglePlot(plot, event.target.checked)} />}</Field>
-              {chosen && <>
-                <Field id={`${id}-worked`} label="ha a trabajar">
-                  <input id={`${id}-worked`} type="number" min="0.0001" max="99999999.9999" step="0.0001" required value={chosen.worked}
-                    onChange={event => setWorked(plot.id, event.target.value)} /></Field>
-                {exceedsPlot(chosen.worked, plot.areaHectares) && <p className="bo-warning" role="status">⚠ Supera la superficie del lote ({plot.areaHectares} ha).</p>}
-              </>}
-            </div>;
-          })}</div>}
-        <p className="bo-total">Total a trabajar: <strong>{total} ha</strong></p>
+      <fieldset className="bo-group"><legend>Campos y lotes</legend>
+        {!client ? <p className="bo-muted">Elige un cliente para ver sus campos y lotes.</p>
+          : !fields.length ? <p className="bo-muted">Este cliente aún no tiene campos. Cárgalos en Clientes.</p> : <>
+            <Field id="bo-wo-plot-filter" label="Filtrar campos y lotes" optional
+              hint={`${shownPlots} de ${clientPlots.length} lotes a la vista · ${form.plots.length} seleccionados. Busca por campo, lote o código.`}>{hintId =>
+                <input id="bo-wo-plot-filter" type="search" value={plotTerm} aria-describedby={hintId} onChange={event => setPlotTerm(event.target.value)} />}</Field>
+            {!groups.length ? <p className="bo-muted">Sin coincidencias para “{plotTerm}”.</p> : groups.map(({ field, plots }) =>
+              <section key={field.id} className="bo-field-group" aria-labelledby={`bo-wo-group-${field.id}`}>
+                <h3 id={`bo-wo-group-${field.id}`}>{field.name} <small>{fieldPlotCount(clientPlots, field.id)}</small></h3>
+                {!plots.length ? <p className="bo-muted">Este campo aún no tiene lotes.</p> : <div className="bo-plots">{plots.map(plot => {
+                  const chosen = form.plots.find(row => row.plotId === plot.id);
+                  const id = `bo-wo-plot-${plot.id}`;
+                  return <div key={plot.id} className={chosen ? 'bo-plot bo-plot-on' : 'bo-plot'}>
+                    <Field id={id} label={rowLabel('plots', plot)} hint={`Superficie ${plot.areaHectares} ha`} check>{hintId =>
+                      <input id={id} type="checkbox" checked={Boolean(chosen)} aria-describedby={hintId} onChange={event => togglePlot(plot, event.target.checked)} />}</Field>
+                    {chosen && <>
+                      <Field id={`${id}-worked`} label="ha a trabajar">
+                        <input id={`${id}-worked`} type="number" min="0.0001" max="99999999.9999" step="0.0001" required value={chosen.worked}
+                          onChange={event => setWorked(plot.id, event.target.value)} /></Field>
+                      {exceedsPlot(chosen.worked, plot.areaHectares) && <p className="bo-warning" role="status">⚠ Supera la superficie del lote ({plot.areaHectares} ha).</p>}
+                    </>}
+                  </div>;
+                })}</div>}
+              </section>)}
+          </>}
+        <p className="bo-total" role="status">Total a trabajar: <strong>{total} ha</strong> en {form.plots.length} {form.plots.length === 1 ? 'lote' : 'lotes'}</p>
       </fieldset>
 
       <Select id="bo-wo-campaign" label="Campaña" optional value={form.campaignId} options={options(refs.campaigns)} placeholder="Sin indicar"
@@ -170,7 +199,7 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
       <Field id="bo-wo-engineer" label="Ingeniero responsable" optional>
         <input id="bo-wo-engineer" type="text" maxLength={200} value={form.responsibleEngineer} onChange={event => set({ responsibleEngineer: event.target.value })} /></Field>
       {error && <p className="bo-error" role="alert">{error}</p>}
-      {!ready && <p>Primero crea firmas comerciales, labores y contratistas.</p>}
+      {!ready && <p>Primero crea clientes, labores y contratistas.</p>}
       <div className="bo-actions"><button type="submit" disabled={busy || !ready}>{busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Emitir orden'}</button>
         <button type="button" onClick={onCancel}>Cancelar</button></div>
     </form></section>;
@@ -189,7 +218,8 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
     try {
       const loaded = await api(`work-orders/${id}`);
       setOrder(loaded);
-      setPlots(await api(`plots?fieldId=${loaded.fieldId}`));
+      const fieldIds = [...new Set(loaded.plots.map(row => row.fieldId))];
+      setPlots((await Promise.all(fieldIds.map(fieldId => api(`plots?fieldId=${fieldId}`)))).flat());
     } catch (cause) { setError(cause.message); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
@@ -209,11 +239,13 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
     {error ? <p className="bo-error" role="alert">{error}</p> : <p role="status">Cargando orden…</p>}</section>;
   const firm = byId(refs['commercial-firms'], order.firmId);
   const issued = order.status === 'emitida';
+  const fieldIds = [...new Set(order.plots.map(row => row.fieldId))];
   return <div className="bo-stack">
     <div className="bo-section-head"><button type="button" className="bo-link" onClick={onBack}>← Volver al listado</button>
-      {issued && <div><button type="button" onClick={() => onEdit(order)}>Editar</button>
-        <button type="button" onClick={() => { setAction('complete'); setError(''); }}>Marcar realizada</button>
-        <button type="button" onClick={() => { setAction('cancel'); setError(''); }}>Cancelar orden</button></div>}</div>
+      <div><PrintLink id={order.id} label={`Imprimir o guardar en PDF la orden ${orderLabel(firm, order.number)}`} />
+        {issued && <><button type="button" onClick={() => onEdit(order)}>Editar</button>
+          <button type="button" onClick={() => { setAction('complete'); setError(''); }}>Marcar realizada</button>
+          <button type="button" onClick={() => { setAction('cancel'); setError(''); }}>Cancelar orden</button></>}</div></div>
     {error && <p className="bo-error" role="alert">{error}</p>}
     {action && <section className="bo-editor"><h2>{action === 'cancel' ? 'Cancelar orden' : 'Marcar como realizada'}</h2>
       <form onSubmit={close}>
@@ -227,16 +259,17 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
       ['Estado', optionLabel(statuses, order.status)], ['Fecha', displayDate(order.issuedOn)],
       ['Firma comercial', firm?.name], ['Cliente', firm && nameOf(refs.clients, firm.clientId)],
       ['Labor', laborLabel(byId(refs['labor-types'], order.laborTypeId))], ['Etapa', nameOf(refs.stages, order.stageId)],
-      ['Contratista', nameOf(refs.contractors, order.contractorId)], ['Campo', nameOf(refs.fields, order.fieldId)],
+      ['Contratista', nameOf(refs.contractors, order.contractorId)], ['Campos', fieldNames(refs.fields, fieldIds)],
       ['Campaña', nameOf(refs.campaigns, order.campaignId)], ['Cultivo', nameOf(refs.crops, order.cropId)], ['Variedad o híbrido', order.variety],
       ['Ingeniero responsable', order.responsibleEngineer], ['Observaciones', order.observations],
       ...(order.status === 'cancelada' ? [['Motivo de la cancelación', order.cancelReason]] : []),
     ]} />
     <section className="bo-list"><h2>Lotes</h2>
-      <table className="bo-table"><thead><tr><th>Lote</th><th>Superficie</th><th>ha a trabajar</th></tr></thead>
+      <table className="bo-table"><thead><tr><th>Campo</th><th>Lote</th><th>Superficie</th><th>ha a trabajar</th></tr></thead>
         <tbody>{order.plots.map(row => {
           const plot = byId(plots, row.plotId);
-          return <tr key={row.plotId}><td data-label="Lote">{plot ? rowLabel('plots', plot) : 'Sin referencia'}</td>
+          return <tr key={row.plotId}><td data-label="Campo">{nameOf(refs.fields, row.fieldId) ?? 'Sin referencia'}</td>
+            <td data-label="Lote">{plot ? rowLabel('plots', plot) : 'Sin referencia'}</td>
             <td data-label="Superficie">{row.areaHectares} ha</td>
             <td data-label="ha a trabajar">{row.workedAreaHectares} ha
               {row.workedAreaExceedsPlot && <span className="bo-warning-inline">⚠ Supera la superficie del lote</span>}</td></tr>;
@@ -255,11 +288,13 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
   </div>;
 }
 
-// Work orders (S5): list with firm and status filters, alta, detail, edit, complete and cancel.
+// Work orders (S5): list with search, firm and status filters, alta, detail, edit, complete, cancel and print.
 export default function WorkOrdersSection({ identity }) {
   const [refs, setRefs] = useState(() => Object.fromEntries(references.map(key => [key, []])));
   const [orders, setOrders] = useState([]);
-  const [filters, setFilters] = useState({ firmId: '', status: '' });
+  const [filters, setFilters] = useState({ firmId: '', status: '', q: '' });
+  const [term, setTerm] = useState('');
+  const request = useRef(0);
   // view: { mode: 'list' } | { mode: 'detail', id } | { mode: 'form', record }
   const [view, setView] = useState({ mode: 'list' });
   const [notice, setNotice] = useState('');
@@ -269,13 +304,21 @@ export default function WorkOrdersSection({ identity }) {
     try { setRefs(Object.fromEntries(await Promise.all(references.map(async key => [key, await api(key)])))); }
     catch (cause) { setError(cause.message); }
   }, []);
+  // Only the latest request updates the list, so a slow earlier search cannot overwrite a newer one.
   const loadOrders = useCallback(async () => {
-    const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString();
-    try { setOrders(await api(query ? `work-orders?${query}` : 'work-orders')); setError(''); }
-    catch (cause) { setError(cause.message); }
+    const current = ++request.current;
+    try {
+      const rows = await api(orderQuery(filters));
+      if (current === request.current) { setOrders(rows); setError(''); }
+    } catch (cause) { if (current === request.current) setError(cause.message); }
   }, [filters]);
   useEffect(() => { loadRefs(); }, [loadRefs]);
   useEffect(() => { loadOrders(); }, [loadOrders]);
+  // The search is sent 300 ms after the last keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => setFilters(current => current.q === term ? current : { ...current, q: term }), 300);
+    return () => clearTimeout(timer);
+  }, [term]);
 
   function saved(order, edited) {
     const firm = byId(refs['commercial-firms'], order.firmId);
@@ -300,13 +343,15 @@ export default function WorkOrdersSection({ identity }) {
         <button type="button" onClick={() => show({ mode: 'form', record: null })}>Nueva orden</button>
         <button type="button" onClick={() => { setNotice(''); loadOrders(); loadRefs(); }}>Actualizar</button></div></div>
       <div className="bo-filters">
+        <Field id="bo-wo-filter-q" label="Buscar" optional hint="Número, firma, campo, lote o código de lote.">{hintId =>
+          <input id="bo-wo-filter-q" type="search" value={term} aria-describedby={hintId} onChange={event => setTerm(event.target.value)} />}</Field>
         <Select id="bo-wo-filter-firm" label="Firma" required={false} value={filters.firmId} options={firmOptions} placeholder="Todas"
           onChange={firmId => setFilters(current => ({ ...current, firmId }))} />
         <Select id="bo-wo-filter-status" label="Estado" required={false} value={filters.status} options={statuses} placeholder="Todos"
           onChange={status => setFilters(current => ({ ...current, status }))} />
       </div>
-      {!orders.length ? <p className="bo-empty">{filters.firmId || filters.status ? 'Ninguna orden coincide con los filtros.' : 'Aún no hay órdenes de trabajo. Emite la primera con “Nueva orden”.'}</p> :
-        <table className="bo-table bo-orders"><thead><tr><th>Nº</th><th>Fecha</th><th>Firma</th><th>Labor</th><th>Campo</th><th>Estado</th></tr></thead>
+      {!orders.length ? <p className="bo-empty">{filters.firmId || filters.status || filters.q.trim() ? 'Ninguna orden coincide con la búsqueda o los filtros.' : 'Aún no hay órdenes de trabajo. Emite la primera con “Nueva orden”.'}</p> :
+        <table className="bo-table bo-orders"><thead><tr><th>Nº</th><th>Fecha</th><th>Firma</th><th>Labor</th><th>Campos</th><th>Estado</th><th><span className="bo-sr">Acciones</span></th></tr></thead>
           <tbody>{orders.map(order => {
             const firm = byId(refs['commercial-firms'], order.firmId);
             return <tr key={order.id}>
@@ -314,8 +359,9 @@ export default function WorkOrdersSection({ identity }) {
               <td data-label="Fecha">{displayDate(order.issuedOn)}</td>
               <td data-label="Firma">{firm?.name ?? 'Sin referencia'}</td>
               <td data-label="Labor">{laborLabel(byId(refs['labor-types'], order.laborTypeId))}</td>
-              <td data-label="Campo">{nameOf(refs.fields, order.fieldId) ?? 'Sin referencia'}</td>
+              <td data-label="Campos">{fieldNames(refs.fields, order.fieldIds)}</td>
               <td data-label="Estado"><span className={`bo-status bo-status-${order.status}`}>{optionLabel(statuses, order.status)}</span></td>
+              <td data-label="PDF"><PrintLink id={order.id} label={`Imprimir o guardar en PDF la orden ${orderLabel(firm, order.number)}`} /></td>
             </tr>;
           })}</tbody></table>}
     </section>}

@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import Backoffice from './workspace.jsx';
+import './brand.css';
 import './style.css';
 
 export const dynamic = 'force-dynamic';

@@ -1,0 +1,60 @@
+/* Printable OT (print.jsx). Colours and fonts come only from brand.css (S6). */
+.ot-page{min-height:100vh;background:var(--brand-canvas);color:var(--brand-ink);font-family:var(--brand-font-text);padding:24px clamp(12px,4vw,48px) 48px}
+.ot-toolbar{max-width:210mm;margin:0 auto 18px;display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px}
+.ot-toolbar button{border:0;border-radius:3px;padding:12px 18px;background:var(--brand-primary);color:var(--brand-paper);font:inherit;font-weight:700;cursor:pointer}
+.ot-toolbar a,.ot-message a{color:var(--brand-primary);text-decoration:underline;padding:8px 4px}
+.ot-toolbar small{flex-basis:100%;font-size:12px;color:var(--brand-muted)}
+.ot-toolbar button:focus-visible,.ot-toolbar a:focus-visible,.ot-message a:focus-visible{outline:3px solid var(--brand-accent);outline-offset:3px}
+.ot-message{max-width:210mm;margin:0 auto;background:var(--brand-surface);border:1px solid var(--brand-line);padding:24px;line-height:1.6}
+.ot-sheet{position:relative;max-width:210mm;margin:0 auto;background:var(--brand-paper);border:1px solid var(--brand-line);padding:14mm 12mm;display:grid;gap:14px;font-size:13px;line-height:1.45}
+.ot-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;border-bottom:3px solid var(--brand-primary);padding-bottom:10px}
+.ot-head h1{font-family:var(--brand-font);font-size:26px;letter-spacing:.04em;margin:0;color:var(--brand-ink)}
+.ot-mark{margin:0;font-family:var(--brand-font);font-size:12px;letter-spacing:.12em;color:var(--brand-primary)}
+.ot-mark span{color:var(--brand-accent);font-size:18px}
+.ot-void{margin:0;border:3px solid var(--brand-danger);color:var(--brand-danger);padding:10px 14px;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px}
+.ot-void strong{font-family:var(--brand-font);font-size:24px;letter-spacing:.2em}
+.ot-cancelled::after{content:'ANULADA';position:absolute;top:42%;left:50%;transform:translate(-50%,-50%) rotate(-24deg);font-family:var(--brand-font);font-size:clamp(48px,14vw,110px);letter-spacing:.15em;color:var(--brand-danger);opacity:.13;pointer-events:none;white-space:nowrap}
+.ot-row{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:12px}
+.ot-box,.ot-section{border:1px solid var(--brand-line);padding:10px 12px;min-width:0;overflow-wrap:anywhere}
+.ot-box h2,.ot-section h2{font-family:var(--brand-font);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--brand-primary);margin:0 0 4px}
+.ot-box p,.ot-section p{margin:0}
+.ot-number h2:not(:first-child){margin-top:8px}
+.ot-strong{font-weight:700;font-size:14px}
+.ot-big{font-family:var(--brand-font);font-size:28px;line-height:1.1;font-weight:700}
+.ot-sub{color:var(--brand-muted)}
+.ot-table{width:100%;border-collapse:collapse}
+.ot-table th,.ot-table td{border:1px solid var(--brand-line);padding:6px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+.ot-table thead th{font-family:var(--brand-font);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-primary);background:var(--brand-tint)}
+.ot-table tfoot th,.ot-table tfoot td{font-weight:700;border-top:2px solid var(--brand-ink)}
+.ot-table .ot-num{text-align:right;white-space:nowrap}
+.ot-section .ot-table{margin-top:6px}
+.ot-tag{display:inline-block;margin-left:8px;border:1px solid var(--brand-ink);padding:0 6px;font-size:11px;font-weight:700;letter-spacing:.04em}
+.ot-note{font-size:12px;color:var(--brand-muted);margin-top:6px!important}
+.ot-notes{white-space:pre-line;min-height:3em}
+.ot-foot{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;align-items:end;border-top:1px solid var(--brand-line);padding-top:12px}
+.ot-foot p{margin:0 0 4px}
+.ot-warning{font-family:var(--brand-font);font-weight:700;letter-spacing:.06em}
+.ot-sign{border:1px solid var(--brand-line);min-height:80px;display:flex;align-items:flex-end;justify-content:center;padding:8px}
+.ot-sign span{border-top:1px solid var(--brand-ink);padding-top:4px;width:80%;text-align:center;font-size:12px}
+.ot-box,.ot-section,.ot-foot,.ot-void,.ot-table tr{break-inside:avoid}
+.ot-table thead{display:table-header-group}
+@media(max-width:560px){
+  .ot-sheet{padding:16px 12px;font-size:12px}
+  .ot-row,.ot-foot{grid-template-columns:1fr}
+  .ot-head h1{font-size:21px}
+  .ot-table th,.ot-table td{padding:5px 4px}
+}
+@page{size:A4 portrait;margin:12mm 12mm 14mm}
+@media print{
+  html,body,.ot-page{background:var(--brand-paper)!important}
+  .ot-page{padding:0;min-height:0}
+  .ot-toolbar{display:none}
+  .ot-sheet{max-width:none;border:0;padding:0;font-size:11pt}
+  .ot-row{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}
+  .ot-foot{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
+  .ot-table thead th{background:transparent}
+  .ot-sheet,.ot-sheet *{color:var(--brand-ink)}
+  .ot-void,.ot-void *,.ot-cancelled::after{color:var(--brand-danger)}
+  .ot-head{border-bottom-color:var(--brand-ink)}
+  .ot-box,.ot-section,.ot-table th,.ot-table td,.ot-sign{border-color:var(--brand-ink)}
+}

@@ -48,8 +48,11 @@ export function RecordForm({ entity, record, parent, optionSets, csrfToken, onSa
     </form></section>;
 }
 
-// A panel listing records. `onSelect` makes the row open its children; `onEdit` adds an "Editar" action.
-export function RecordList({ entity, title, rows, selectedId, onSelect, onEdit, onRefresh, onNew, newLabel, searchable, empty, label, detail }) {
+// A panel listing records. `onSelect` makes the row open its children and `selectLabel` adds that as a visible action;
+// `onEdit` adds an "Editar" action.
+export function RecordList({
+  entity, title, rows, selectedId, onSelect, selectLabel, onEdit, onRefresh, onNew, newLabel, searchable, empty, label, detail, description,
+}) {
   const [term, setTerm] = useState('');
   const meta = entities[entity] ?? {};
   const shown = searchable ? searchRecords(entity, rows, term) : rows;
@@ -59,6 +62,7 @@ export function RecordList({ entity, title, rows, selectedId, onSelect, onEdit, 
     <div className="bo-section-head"><h2>{title ?? meta.title}</h2><div>
       {onNew && <button type="button" onClick={onNew}>{newLabel}</button>}
       {onRefresh && <button type="button" onClick={onRefresh}>Actualizar</button>}</div></div>
+    {description && <p className="bo-list-note">{description}</p>}
     {searchable && rows.length > 0 && <div className="bo-search"><Field id={`bo-search-${entity}`} label="Buscar"
       hint={`${shown.length} de ${rows.length}`}>{hintId =>
         <input id={`bo-search-${entity}`} type="search" value={term} aria-describedby={hintId} onChange={event => setTerm(event.target.value)} />}</Field></div>}
@@ -68,6 +72,8 @@ export function RecordList({ entity, title, rows, selectedId, onSelect, onEdit, 
         return <li key={row.id} className={row.id === selectedId ? 'bo-current' : undefined}>
           {onSelect ? <button type="button" className="bo-row" aria-current={row.id === selectedId ? 'true' : undefined} onClick={() => onSelect(row)}>{text}</button>
             : <div className="bo-row">{text}</div>}
+          {onSelect && selectLabel && <button type="button" className="bo-open" onClick={() => onSelect(row)}
+            aria-label={`${selectLabel}: ${primary(row)}`}>{selectLabel}</button>}
           {onEdit && <button type="button" onClick={() => onEdit(row)} aria-label={`Editar ${primary(row)}`}>Editar</button>}</li>;
       })}</ul>}
   </section>;

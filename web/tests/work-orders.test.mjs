@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 import { errorMessage } from '../app/backoffice/api.mjs';
 import { formFor, payloadFor } from '../app/backoffice/schema.mjs';
 import {
-  displayDate, doseRange, emptyOrder, exceedsPlot, lineTotal, orderFromRecord, orderLabel, orderPayload, plotCropPrefill, todayIso, workedTotal,
+  clientFirms, cropLabel, displayDate, documentTitle, doseRange, emptyOrder, exceedsPlot, fieldNames, lineTotal, orderFromRecord, orderLabel,
+  orderPayload, orderQuery, plotCropPrefill, plotGroups, productLabel, todayIso, workedTotal,
 } from '../app/backoffice/work-orders.mjs';
 
 const generic = 'Revisa los datos e intenta de nuevo.';
 
 const form = {
   ...emptyOrder('2026-11-23'),
-  firmId: 'f1', laborTypeId: 'l1', stageId: '', contractorId: 'c1', fieldId: 'fd1', campaignId: '', cropId: 'cr1',
+  clientId: 'cl1', firmId: 'f1', laborTypeId: 'l1', stageId: '', contractorId: 'c1', campaignId: '', cropId: 'cr1',
   variety: '  Variedad ficticia 2 ', observations: ' ', responsibleEngineer: ' Ing. Demo ',
   plots: [{ plotId: 'p1', worked: '10.5' }, { plotId: 'p2', worked: '4' }],
   lines: [{ key: 1, inputId: 'i1', dose: '1.25', term: 'gli' }, { key: 2, inputId: '', dose: '', term: '' }],
@@ -23,12 +24,14 @@ test('an empty order starts today with no plots and one blank input line', () =>
   assert.equal(order.lines.length, 1);
   assert.equal(order.lines[0].inputId, '');
   assert.equal(order.firmId, '');
+  assert.equal(order.clientId, '');
+  assert.equal('fieldId' in order, false);
   assert.equal(todayIso(new Date(2026, 0, 5, 23, 30)), '2026-01-05');
 });
 
-test('create payload carries the firm, trims text, nulls empty optionals and skips blank lines', () => {
+test('create payload carries the firm, never a field or the client, trims text, nulls empty optionals and skips blank lines', () => {
   assert.deepEqual(orderPayload(form), {
-    firmId: 'f1', issuedOn: '2026-11-23', laborTypeId: 'l1', stageId: null, contractorId: 'c1', fieldId: 'fd1',
+    firmId: 'f1', issuedOn: '2026-11-23', laborTypeId: 'l1', stageId: null, contractorId: 'c1',
     campaignId: null, cropId: 'cr1', variety: 'Variedad ficticia 2', observations: null, responsibleEngineer: 'Ing. Demo',
     plots: [{ plotId: 'p1', workedAreaHectares: 10.5 }, { plotId: 'p2', workedAreaHectares: 4 }],
     lines: [{ inputId: 'i1', dosePerHectare: 1.25 }],
@@ -40,18 +43,21 @@ test('update payload sends the revision and never the firm or number', () => {
   assert.equal(payload.revision, 3);
   assert.equal('firmId' in payload, false);
   assert.equal('number' in payload, false);
+  assert.equal('fieldId' in payload, false);
+  assert.equal('clientId' in payload, false);
   assert.equal(payload.issuedOn, null);
 });
 
 test('form state from a stored order keeps plots, worked areas and lines in order', () => {
   const record = {
-    id: 'w1', firmId: 'f1', number: 12, issuedOn: '2026-10-01', laborTypeId: 'l1', stageId: null, contractorId: 'c1', fieldId: 'fd1',
+    id: 'w1', firmId: 'f1', number: 12, issuedOn: '2026-10-01', laborTypeId: 'l1', stageId: null, contractorId: 'c1',
     campaignId: 'k1', cropId: null, variety: null, observations: 'Obs', responsibleEngineer: null, status: 'emitida', revision: 2,
-    plots: [{ plotId: 'p1', areaHectares: 10, workedAreaHectares: 9.5, workedAreaExceedsPlot: false }],
+    plots: [{ plotId: 'p1', fieldId: 'fd1', areaHectares: 10, workedAreaHectares: 9.5, workedAreaExceedsPlot: false }],
     lines: [{ id: 'x', position: 1, inputId: 'i1', dosePerHectare: 0.8, unit: 'l', total: 7.6, doseOutOfRange: false }],
   };
   const state = orderFromRecord(record);
   assert.equal(state.firmId, 'f1');
+  assert.equal('fieldId' in state, false);
   assert.equal(state.stageId, '');
   assert.equal(state.campaignId, 'k1');
   assert.equal(state.observations, 'Obs');
@@ -125,8 +131,7 @@ test('work order API messages map to Spanish', () => {
     'El total de cada insumo debe ser mayor que cero y tener hasta 4 decimales.');
   assert.equal(errorMessage(400, { error: 'Reason is required' }), 'Indica el motivo de la cancelación.');
   assert.equal(errorMessage(400, { error: 'Issued on is required' }), 'La fecha es obligatoria.');
-  assert.equal(errorMessage(400, { error: "Field must belong to the firm's client" }), 'El campo debe pertenecer al cliente de la firma.');
-  assert.equal(errorMessage(400, { error: "Every plot must belong to the work order's field" }), 'Todos los lotes deben pertenecer al campo elegido.');
+  assert.equal(errorMessage(400, { error: "Every plot must belong to the firm's client" }), 'Todos los lotes deben ser de campos del cliente de la firma.');
   assert.equal(errorMessage(400, { error: 'Status must be one of: emitida, realizada, cancelada' }), 'Elige un estado válido.');
   assert.equal(errorMessage(400, { error: 'Next number must be greater than 41' }), 'El próximo número debe ser mayor que 41.');
   assert.equal(errorMessage(400, { error: 'Next number must be greater than x' }), generic);
@@ -140,4 +145,73 @@ test('firm next work order number is sent only on edit, empty keeps the stored o
   assert.deepEqual(payloadFor('commercial-firms', { ...firm, nextWorkOrderNumber: ' ' }, { revision: 3 }),
     { name: 'Firma', taxId: null, nextWorkOrderNumber: null, revision: 3 });
   assert.equal(formFor('commercial-firms', { name: 'F', taxId: null, nextWorkOrderNumber: 7, revision: 1 }).nextWorkOrderNumber, '7');
+});
+
+const fields = [
+  { id: 'fb', clientId: 'cl1', name: 'San Benito' },
+  { id: 'fa', clientId: 'cl1', name: 'El Álamo' },
+  { id: 'fc', clientId: 'cl1', name: 'Vacío' },
+];
+const plots = [
+  { id: 'p3', fieldId: 'fb', code: 'SB-02', name: 'Bajo', areaHectares: 20 },
+  { id: 'p1', fieldId: 'fa', code: 'EA-01', name: 'Norte', areaHectares: 40 },
+  { id: 'p2', fieldId: 'fa', code: null, name: 'Sur', areaHectares: 35.5 },
+  { id: 'p4', fieldId: 'fb', code: 'SB-01', name: 'Loma', areaHectares: 12 },
+];
+const shape = groups => groups.map(group => [group.field.id, group.plots.map(plot => plot.id)]);
+
+test('plots are grouped by field in field name order, with every field of the client', () => {
+  assert.deepEqual(shape(plotGroups(fields, plots, '')), [['fa', ['p1', 'p2']], ['fb', ['p4', 'p3']], ['fc', []]]);
+});
+
+test('the plot filter matches field name or plot name or code, ignoring case and accents', () => {
+  assert.deepEqual(shape(plotGroups(fields, plots, 'alamo')), [['fa', ['p1', 'p2']]]);
+  assert.deepEqual(shape(plotGroups(fields, plots, 'sb-01')), [['fb', ['p4']]]);
+  assert.deepEqual(shape(plotGroups(fields, plots, 'SUR')), [['fa', ['p2']]]);
+  assert.deepEqual(plotGroups(fields, plots, 'nada'), []);
+  assert.equal(plotGroups(fields, plots, '   ').length, 3);
+});
+
+test('the total worked area adds plots of different fields', () => {
+  const chosen = [{ plotId: 'p1', worked: '40' }, { plotId: 'p3', worked: '19.75' }, { plotId: 'p4', worked: '0.25' }];
+  assert.equal(workedTotal(chosen), '60');
+  assert.equal(lineTotal('1.5', workedTotal(chosen)), '90');
+});
+
+test('a client offers only its firms and preselects the only one', () => {
+  const firms = [{ id: 'f1', clientId: 'cl1' }, { id: 'f2', clientId: 'cl2' }, { id: 'f3', clientId: 'cl2' }];
+  assert.deepEqual(clientFirms(firms, 'cl1'), { firms: [firms[0]], preselected: 'f1' });
+  assert.deepEqual(clientFirms(firms, 'cl2'), { firms: [firms[1], firms[2]], preselected: '' });
+  assert.deepEqual(clientFirms(firms, 'cl9'), { firms: [], preselected: '' });
+  assert.deepEqual(clientFirms(firms, ''), { firms: [], preselected: '' });
+});
+
+test('the list query sends the search with the firm and status filters', () => {
+  assert.equal(orderQuery({ firmId: '', status: '', q: '' }), 'work-orders');
+  assert.equal(orderQuery({ firmId: 'f1', status: 'emitida', q: '' }), 'work-orders?firmId=f1&status=emitida');
+  assert.equal(orderQuery({ firmId: '', status: '', q: '  lote norte ' }), 'work-orders?q=lote+norte');
+  assert.equal(orderQuery({ firmId: 'f1', status: '', q: '12' }), 'work-orders?firmId=f1&q=12');
+  assert.equal(orderQuery({ firmId: '', status: '', q: 'a&b' }), 'work-orders?q=a%26b');
+});
+
+test('list rows name the fields of the order from its field ids', () => {
+  assert.equal(fieldNames(fields, ['fa', 'fb']), 'El Álamo, San Benito');
+  assert.equal(fieldNames(fields, ['fa', 'gone']), 'El Álamo, Sin referencia');
+  assert.equal(fieldNames(fields, []), 'Sin campos');
+  assert.equal(fieldNames(fields, undefined), 'Sin campos');
+});
+
+test('the print title is the document file name, so Guardar como PDF proposes it', () => {
+  assert.equal(documentTitle({ fileName: 'FIRMA DEMO_ORDEN_12_EL ALAMO_(Norte)_PULV-TE_3-nov', number: 12 }),
+    'FIRMA DEMO_ORDEN_12_EL ALAMO_(Norte)_PULV-TE_3-nov');
+  assert.equal(documentTitle({ fileName: '  ', number: 12 }), 'ORDEN_12');
+  assert.equal(documentTitle(null), 'Orden de trabajo');
+});
+
+test('print labels join crop and variety, and product, formulation and mix order', () => {
+  assert.equal(cropLabel({ cropName: 'Soja', variety: 'Variedad ficticia' }), 'Soja · Variedad ficticia');
+  assert.equal(cropLabel({ cropName: 'Soja', variety: null }), 'Soja');
+  assert.equal(cropLabel({ cropName: null, variety: null }), 'Sin indicar');
+  assert.equal(productLabel({ inputName: 'Producto Uno', formulation: 'SC', mixOrder: 2 }), 'Producto Uno SC · orden de mezcla 2');
+  assert.equal(productLabel({ inputName: 'Producto Dos', formulation: null, mixOrder: null }), 'Producto Dos');
 });

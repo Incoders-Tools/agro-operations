@@ -1,0 +1,19 @@
+/* Brand tokens (S6): the only place that names colours and fonts for the print view and the newer backoffice styles.
+   A future brand manual (Q16) replaces these values; the current ones are the site palette. */
+:root{
+  --brand-primary:#226a64;
+  --brand-primary-dark:#183a3d;
+  --brand-accent:#c79340;
+  --brand-ink:#17363c;
+  --brand-muted:#5e7574;
+  --brand-line:#bdcec6;
+  --brand-line-soft:#d7e0da;
+  --brand-surface:#f8faf7;
+  --brand-canvas:#e7eeea;
+  --brand-paper:#ffffff;
+  --brand-tint:#e6efe9;
+  --brand-danger:#813c24;
+  --brand-danger-soft:#f3e3dd;
+  --brand-font:Bahnschrift,'Segoe UI',sans-serif;
+  --brand-font-text:'Segoe UI',Arial,sans-serif;
+}

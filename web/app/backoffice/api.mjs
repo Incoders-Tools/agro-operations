@@ -41,8 +41,7 @@ const validations = {
   'Each plot can appear only once': 'Cada lote puede aparecer una sola vez.',
   'Worked area must be positive and fit numeric(12,4)': 'Las ha a trabajar deben ser mayores que cero y tener hasta 4 decimales.',
   'Line total must be positive and fit numeric(14,4)': 'El total de cada insumo debe ser mayor que cero y tener hasta 4 decimales.',
-  "Field must belong to the firm's client": 'El campo debe pertenecer al cliente de la firma.',
-  "Every plot must belong to the work order's field": 'Todos los lotes deben pertenecer al campo elegido.',
+  "Every plot must belong to the firm's client": 'Todos los lotes deben ser de campos del cliente de la firma.',
 };
 
 // Messages that list the accepted values end with that list, so they match by prefix.

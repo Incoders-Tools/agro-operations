@@ -150,7 +150,7 @@ export function formFor(entity, record) {
   }));
 }
 
-const fold = text => String(text ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+export const fold = text => String(text ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
 export function searchRecords(entity, rows, term) {
   const needle = fold(term).trim();
@@ -158,3 +158,13 @@ export function searchRecords(entity, rows, term) {
   const keys = entities[entity].search ?? ['name'];
   return rows.filter(row => keys.some(key => fold(row[key]).includes(needle)));
 }
+
+const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+/** "N campos · M lotes" of one client, from every field and plot. */
+export function clientCounts(fields, plots, clientId) {
+  const own = new Set(fields.filter(field => field.clientId === clientId).map(field => field.id));
+  return `${count(own.size, 'campo', 'campos')} · ${count(plots.filter(plot => own.has(plot.fieldId)).length, 'lote', 'lotes')}`;
+}
+
+export const fieldPlotCount = (plots, fieldId) => count(plots.filter(plot => plot.fieldId === fieldId).length, 'lote', 'lotes');

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.mjs';
 import { RecordDetail, RecordForm, RecordList, SectionHeader } from './records.jsx';
-import { optionLabel, roles, rowLabel, tenures } from './schema.mjs';
+import { clientCounts, entities, fieldPlotCount, optionLabel, roles, rowLabel, tenures } from './schema.mjs';
 
 const children = { clients: 'fields', fields: 'plots', plots: 'plot-crops' };
 
@@ -14,6 +14,8 @@ export default function ClientsSection({ identity }) {
   // editor: { entity, record } for an explicit edit or "new" target; null shows the default "new child" form.
   const [editor, setEditor] = useState(null);
   const [formKey, setFormKey] = useState(0);
+  // Every field and plot, only to count them on the client and field rows (S1).
+  const [totals, setTotals] = useState({ fields: [], plots: [] });
   const [error, setError] = useState('');
 
   const load = useCallback(async (entity, query) => {
@@ -22,7 +24,13 @@ export default function ClientsSection({ identity }) {
       setRows(current => ({ ...current, [entity]: list }));
     } catch (cause) { setError(cause.message); }
   }, []);
-  useEffect(() => { load('clients'); load('crops'); load('campaigns'); }, [load]);
+  const loadTotals = useCallback(async () => {
+    try {
+      const [fields, plots] = await Promise.all([api('fields'), api('plots')]);
+      setTotals({ fields, plots });
+    } catch (cause) { setError(cause.message); }
+  }, []);
+  useEffect(() => { load('clients'); load('crops'); load('campaigns'); loadTotals(); }, [load, loadTotals]);
   useEffect(() => {
     if (!path.clientId) return;
     load('commercial-firms', `clientId=${path.clientId}`); load('fields', `clientId=${path.clientId}`);
@@ -45,6 +53,7 @@ export default function ClientsSection({ identity }) {
   }
   function open(entity, record = null) { setEditor({ entity, record }); setFormKey(key => key + 1); setError(''); }
   function reloadFor(entity) {
+    if (entity === 'clients' || entity === 'fields' || entity === 'plots') loadTotals();
     if (entity === 'clients') return load('clients');
     if (entity === 'commercial-firms' || entity === 'fields') return load(entity, `clientId=${path.clientId}`);
     if (entity === 'plots') return load('plots', `fieldId=${path.fieldId}`);
@@ -72,7 +81,7 @@ export default function ClientsSection({ identity }) {
 
   return <>
     <SectionHeader identity={identity} title="Clientes" count={level ? undefined : rows.clients.length}
-      description="Cada cliente tiene sus firmas comerciales y sus campos; cada campo, sus lotes; cada lote, sus cultivos por campaña." />
+      description="Aquí administras cada cliente con sus firmas comerciales y sus campos; cada campo, con sus lotes; cada lote, con sus cultivos por campaña." />
     <nav className="bo-breadcrumb" aria-label="Ubicación"><ol>
       <li><button type="button" onClick={() => go({ clientId: null, fieldId: null, plotId: null })} aria-current={!level ? 'page' : undefined}>Clientes</button></li>
       {client && <li><button type="button" onClick={() => go({ clientId: client.id, fieldId: null, plotId: null })} aria-current={level === 'clients' ? 'page' : undefined}>{client.name}</button></li>}
@@ -82,7 +91,9 @@ export default function ClientsSection({ identity }) {
     {error && <p className="bo-error" role="alert">{error}</p>}
     <div className="bo-columns"><div className="bo-stack">
       {!level && <RecordList entity="clients" rows={rows.clients} searchable onRefresh={refresh('clients')}
-        onSelect={row => go({ clientId: row.id, fieldId: null, plotId: null })} onEdit={row => open('clients', row)}
+        onSelect={row => go({ clientId: row.id, fieldId: null, plotId: null })} selectLabel="Ver campos y lotes" onEdit={row => open('clients', row)}
+        detail={row => [clientCounts(totals.fields, totals.plots, row.id), entities.clients.detail(row)].filter(Boolean).join(' · ')}
+        description="Abre un cliente para ver y cargar sus firmas comerciales, sus campos y los lotes de cada campo."
         empty="Aún no hay clientes. Crea el primero desde el formulario." />}
       {level === 'clients' && <>
         <RecordDetail title="Datos del cliente" onEdit={() => open('clients', client)} items={[
@@ -92,13 +103,16 @@ export default function ClientsSection({ identity }) {
           onNew={() => open('commercial-firms')} newLabel="Nueva firma" onEdit={row => open('commercial-firms', row)}
           empty="Este cliente aún no tiene firmas comerciales." />
         <RecordList entity="fields" rows={rows.fields} onRefresh={refresh('fields')}
-          onSelect={row => go({ clientId: client.id, fieldId: row.id, plotId: null })} onEdit={row => open('fields', row)}
+          onSelect={row => go({ clientId: client.id, fieldId: row.id, plotId: null })} selectLabel="Ver lotes" onEdit={row => open('fields', row)}
+          detail={row => [entities.fields.detail(row), fieldPlotCount(totals.plots, row.id)].filter(Boolean).join(' · ')}
+          description={`Los campos de ${client.name} y sus lotes se administran aquí: crea un campo con “Nuevo campo” y ábrelo para cargar sus lotes.`}
           onNew={() => open('fields')} newLabel="Nuevo campo" empty="Este cliente aún no tiene campos." />
       </>}
       {level === 'fields' && <>
         <RecordDetail title="Datos del campo" onEdit={() => open('fields', field)} items={[
           ['Nombre', field.name], ['Tenencia', field.tenure && optionLabel(tenures, field.tenure)], ['Localidad', field.locality]]} />
         <RecordList entity="plots" rows={rows.plots} onRefresh={refresh('plots')}
+          description={`Los lotes del campo ${field.name}. Cada lote se puede elegir en una orden de trabajo del cliente.`}
           onSelect={row => go({ ...path, plotId: row.id })} onEdit={row => open('plots', row)}
           onNew={() => open('plots')} newLabel="Nuevo lote" empty="Este campo aún no tiene lotes." />
       </>}

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { errorMessage } from '../app/backoffice/api.mjs';
-import { payloadFor, formFor, searchRecords } from '../app/backoffice/schema.mjs';
+import { clientCounts, fieldPlotCount, payloadFor, formFor, searchRecords } from '../app/backoffice/schema.mjs';
 
 const stale = 'Otra persona modificó este registro. Actualiza antes de guardar.';
 const generic = 'Revisa los datos e intenta de nuevo.';
@@ -108,4 +108,15 @@ test('search matches name or active ingredient ignoring case and accents', () =>
   assert.deepEqual(searchRecords('inputs', rows, 'DOS').map(row => row.id), [2]);
   assert.deepEqual(searchRecords('inputs', rows, 'terapico').map(row => row.id), [3]);
   assert.equal(searchRecords('inputs', rows, '  ').length, 3);
+});
+
+test('client rows count their fields and plots, field rows their plots', () => {
+  const fields = [{ id: 'f1', clientId: 'c1' }, { id: 'f2', clientId: 'c1' }, { id: 'f3', clientId: 'c2' }];
+  const plots = [{ fieldId: 'f1' }, { fieldId: 'f1' }, { fieldId: 'f2' }, { fieldId: 'f3' }];
+  assert.equal(clientCounts(fields, plots, 'c1'), '2 campos · 3 lotes');
+  assert.equal(clientCounts(fields, plots, 'c2'), '1 campo · 1 lote');
+  assert.equal(clientCounts(fields, plots, 'c9'), '0 campos · 0 lotes');
+  assert.equal(fieldPlotCount(plots, 'f1'), '2 lotes');
+  assert.equal(fieldPlotCount(plots, 'f3'), '1 lote');
+  assert.equal(fieldPlotCount(plots, 'f9'), '0 lotes');
 });

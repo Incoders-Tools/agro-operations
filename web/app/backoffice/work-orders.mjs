@@ -1,5 +1,7 @@
 // Pure work order (OT) helpers: form state, request payloads and the live totals shown before the server stores them.
 
+import { fold } from './schema.mjs';
+
 export const statuses = [
   { value: 'emitida', label: 'Emitida' },
   { value: 'realizada', label: 'Realizada' },
@@ -15,7 +17,7 @@ export const todayIso = (date = new Date()) => `${date.getFullYear()}-${pad(date
 
 export function emptyOrder(today = todayIso()) {
   return {
-    firmId: '', issuedOn: today, laborTypeId: '', stageId: '', contractorId: '', fieldId: '', plots: [],
+    clientId: '', firmId: '', issuedOn: today, laborTypeId: '', stageId: '', contractorId: '', plots: [],
     campaignId: '', cropId: '', variety: '', observations: '', responsibleEngineer: '', lines: [newLine()],
   };
 }
@@ -23,7 +25,7 @@ export function emptyOrder(today = todayIso()) {
 const text = value => value == null ? '' : String(value);
 
 export function orderFromRecord(record) {
-  const header = ['firmId', 'issuedOn', 'laborTypeId', 'stageId', 'contractorId', 'fieldId', 'campaignId', 'cropId', 'variety',
+  const header = ['firmId', 'issuedOn', 'laborTypeId', 'stageId', 'contractorId', 'campaignId', 'cropId', 'variety',
     'observations', 'responsibleEngineer'];
   return {
     ...Object.fromEntries(header.map(key => [key, text(record[key])])),
@@ -38,11 +40,12 @@ const optional = value => {
 };
 
 // Create sends the firm (the server takes the number from it); update sends the revision and never the firm.
+// The client only narrows the form and there is no field: each plot belongs to its own field.
 export function orderPayload(form, { revision } = {}) {
   const payload = revision === undefined ? { firmId: form.firmId } : {};
   Object.assign(payload, {
     issuedOn: optional(form.issuedOn), laborTypeId: form.laborTypeId, stageId: optional(form.stageId), contractorId: form.contractorId,
-    fieldId: form.fieldId, campaignId: optional(form.campaignId), cropId: optional(form.cropId), variety: optional(form.variety),
+    campaignId: optional(form.campaignId), cropId: optional(form.cropId), variety: optional(form.variety),
     observations: optional(form.observations), responsibleEngineer: optional(form.responsibleEngineer),
     plots: form.plots.map(plot => ({ plotId: plot.plotId, workedAreaHectares: Number(text(plot.worked).trim()) })),
     lines: form.lines.filter(line => line.inputId).map(line => ({ inputId: line.inputId, dosePerHectare: Number(text(line.dose).trim()) })),
@@ -101,6 +104,60 @@ export function plotCropPrefill(plotCrops, campaignId) {
 }
 
 export const orderLabel = (firm, number) => firm ? `${firm.name} Nº ${number}` : `Nº ${number}`;
+
+/** The firms of a client; with exactly one, it is preselected. */
+export function clientFirms(firms, clientId) {
+  const own = clientId ? firms.filter(firm => firm.clientId === clientId) : [];
+  return { firms: own, preselected: own.length === 1 ? own[0].id : '' };
+}
+
+const byName = (a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
+// Plots without a code go after the coded ones.
+const byCode = (a, b) => Number(!a.code) - Number(!b.code) || text(a.code).localeCompare(text(b.code), 'es', { numeric: true }) || byName(a, b);
+
+/**
+ * The client's fields in name order, each with its plots in code order. A term keeps the whole field when it matches
+ * the field name, otherwise only the plots whose name or code match; fields left without plots are dropped.
+ */
+export function plotGroups(fields, plots, term) {
+  const needle = fold(term).trim();
+  const matches = value => fold(value).includes(needle);
+  return [...fields].sort(byName).flatMap(field => {
+    const own = plots.filter(plot => plot.fieldId === field.id).sort(byCode);
+    if (!needle) return [{ field, plots: own }];
+    const shown = matches(field.name) ? own : own.filter(plot => matches(plot.name) || matches(plot.code));
+    return shown.length ? [{ field, plots: shown }] : [];
+  });
+}
+
+/** The list request: search text, firm and status, each only when set. */
+export function orderQuery({ firmId, status, q }) {
+  const params = new URLSearchParams();
+  if (firmId) params.set('firmId', firmId);
+  if (status) params.set('status', status);
+  if (text(q).trim()) params.set('q', text(q).trim());
+  const query = params.toString();
+  return query ? `work-orders?${query}` : 'work-orders';
+}
+
+/** Names of a summary's fieldIds, in the order the API gives them. */
+export function fieldNames(fields, fieldIds) {
+  if (!fieldIds?.length) return 'Sin campos';
+  return fieldIds.map(id => fields.find(field => field.id === id)?.name ?? 'Sin referencia').join(', ');
+}
+
+/** The browser proposes document.title as the PDF name, so the title is the API's workbook-pattern file name. */
+export function documentTitle(document) {
+  if (!document) return 'Orden de trabajo';
+  return text(document.fileName).trim() || `ORDEN_${document.number}`;
+}
+
+export const cropLabel = document => [document.cropName, document.variety].filter(Boolean).join(' · ') || 'Sin indicar';
+
+export function productLabel(line) {
+  const name = line.formulation ? `${line.inputName} ${line.formulation}` : line.inputName;
+  return line.mixOrder ? `${name} · orden de mezcla ${line.mixOrder}` : name;
+}
 
 /** ISO date (yyyy-mm-dd) as dd/mm/yyyy. */
 export const displayDate = iso => /^\d{4}-\d{2}-\d{2}$/.test(text(iso)) ? iso.split('-').reverse().join('/') : text(iso);

@@ -74,3 +74,18 @@
 .bo-table tr{display:grid;gap:4px;border-top:1px solid #d7e0da;padding:10px 0}.bo-table td{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px;border:0;padding:2px 0}
 .bo-table td::before{content:attr(data-label);font-size:12px;font-weight:700;color:#3d5c58}}
 .bo-table td>.bo-warning-inline{grid-column:2}
+/* Client-first OT form, plots grouped by field, list actions (colours from brand.css). */
+.bo-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.bo-pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px;align-items:start}
+.bo-field-group{display:grid;gap:12px;border-top:1px solid var(--brand-line-soft);padding-top:14px;min-width:0}
+.bo-field-group h3{font-family:var(--brand-font);font-size:16px;margin:0;color:var(--brand-ink);overflow-wrap:anywhere}
+.bo-field-group h3 small{font-size:12px;font-weight:400;color:var(--brand-muted);margin-left:6px}
+.bo-group input[type=search]{width:100%;padding:12px;border:1px solid var(--brand-line);background:var(--brand-paper);color:var(--brand-ink);border-radius:3px;font:inherit}
+.bo-filters .bo-field input{width:100%;padding:12px;border:1px solid var(--brand-line);background:var(--brand-paper);color:var(--brand-ink);border-radius:3px;font:inherit}
+.bo-list-note{font-size:13px;line-height:1.6;color:var(--brand-muted);margin:-8px 0 18px}
+.bo-list li button.bo-open{border:1px solid var(--brand-primary);border-radius:3px;color:var(--brand-primary);text-decoration:none;padding:7px 12px;white-space:nowrap;font-weight:700}
+.bo-list li button.bo-open:hover{background:var(--brand-tint)}
+.bo-print-link{color:var(--brand-primary);padding:8px;white-space:nowrap;text-decoration:underline}
+.bo-table .bo-print-link{padding:0}
+.bo-app a:focus-visible{outline:3px solid var(--brand-accent);outline-offset:3px}
+@media(max-width:560px){.bo-list li button.bo-open{order:3}}
