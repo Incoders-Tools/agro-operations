@@ -71,8 +71,8 @@ yet. Public repository: no client values. The API contract below is binding for 
 ## Tasks
 - T1 (S3, S4) worker: migration 011 providers, contacts, client links, prices, quote comparisons + API + tests. | done
 - T2 (S1, S2) worker, parallel with T1: UI for soil analyses (plot level), seed analyses section, calculator. | done (commit: analyses UI; API round trip in T5)
-- T3 (S1, S2) worker: migration 012 soil and seed analyses + API + tests.
-- T4 (S3, S4) worker, parallel with T3: UI for providers, contacts, client links, prices, quote comparison.
+- T3 (S1, S2) worker: migration 012 soil and seed analyses + API + tests. | done
+- T4 (S3, S4) worker, parallel with T3: UI for providers, contacts, client links, prices, quote comparison. | done
 - T5: launcher 011-012, engineer questions, docs, real DB apply, browser check, push.
 
 ## Log

@@ -31,7 +31,7 @@ try
     }
     string[] previousMigrations = ["001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql"];
     Migrate(builder.ConnectionString, [.. previousMigrations, "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql",
-        "010_reference_alignment.sql", "011_providers_and_quotes.sql"]);
+        "010_reference_alignment.sql", "011_providers_and_quotes.sql", "012_analyses.sql"]);
     var service = new OperationsService(new PostgresOperationsRepository(builder.ConnectionString));
     static void Check(bool condition, string label)
     {
@@ -1143,6 +1143,167 @@ try
     }
     Check(tied.Total == 16.6665m, "tied quote total");
 
+    // 012: soil analyses per plot and campaign with their results, and seed analyses per client, crop and variety.
+    string AnalysisStateOf(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("""
+            SELECT concat_ws('|',
+              (SELECT coalesce(string_agg(to_jsonb(a)::text, ',' ORDER BY a.id), '') FROM soil_analyses a),
+              (SELECT coalesce(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id), '') FROM soil_analysis_results r),
+              (SELECT coalesce(string_agg(to_jsonb(s)::text, ',' ORDER BY s.id), '') FROM seed_analyses s))
+            """, connection);
+        return (string)command.ExecuteScalar()!;
+    }
+    string AnalysisState() => AnalysisStateOf(builder.ConnectionString);
+    var soil = new SoilAnalysisService(new PostgresSoilAnalysisRepository(builder.ConnectionString));
+    var seeds = new SeedAnalysisService(new PostgresSeedAnalysisRepository(builder.ConnectionString));
+    var soilLab = providers.Create(new ProviderDraft("Laboratorio de suelos", "laboratorio_suelos", null, null, null, null, null));
+    var earlierCampaign = campaigns.Create("2025-26");
+    var soilDraft = new SoilAnalysisDraft(campaign.Id, new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 10), soilLab.Id, " Promedio ", "  ",
+        " https://maps.example.test/lote.kml ", null,
+        [new SoilResultDraft(" pH ", 6.2m, "  ", " 0-20 cm ", null), new SoilResultDraft("Fósforo extractable (P Bray)", 12.5m, "ppm", "0-20 cm", null)]);
+    var stationsDraft = soilDraft with { SamplingMethod = "ESTACIONES", SamplingDetail = "Tres estaciones georreferenciadas",
+        Results = [new SoilResultDraft("Materia orgánica", 2.8m, "%", null, "E1"), new SoilResultDraft("Materia orgánica", 3.1m, "%", null, " E2 ")] };
+    var analysisState = AnalysisState();
+    void SoilRejected(SoilAnalysisDraft draft, string message, string label) =>
+        Check(Rejected<DomainValidationException>(() => soil.Create(plot.Id, draft), label).Message == message, $"{label} message");
+    SoilRejected(soilDraft with { SampledOn = null }, "Sampled on is required", "soil analysis without sampling date");
+    SoilRejected(soilDraft with { CampaignId = null }, "Campaign is required", "soil analysis without campaign");
+    foreach (var method in new[] { null, " ", "lote", "estacion" })
+        SoilRejected(soilDraft with { SamplingMethod = method }, "Sampling method must be promedio or estaciones", $"sampling method {method}");
+    foreach (var mapLink in new[] { "https://maps.example.test/a b.kml", new string('m', 301) })
+        SoilRejected(soilDraft with { MapLink = mapLink }, "Map link must be a single address without spaces", "invalid map link");
+    SoilRejected(soilDraft with { Results = [] }, "At least one result is required", "soil analysis without results");
+    SoilRejected(soilDraft with { Results = null }, "At least one result is required", "soil analysis with absent results");
+    SoilRejected(soilDraft with { Results = [new SoilResultDraft(" ", 1m, null, null, null)] }, "Parameter is required", "result without parameter");
+    SoilRejected(soilDraft with { Results = [new SoilResultDraft("pH", null, null, null, null)] }, "Value is required", "result without value");
+    foreach (var value in new[] { 0.00001m, 10000000000m, -10000000000m })
+        SoilRejected(soilDraft with { Results = [new SoilResultDraft("pH", value, null, null, null)] }, "Value must fit numeric(14,4)", $"result value {value}");
+    SoilRejected(soilDraft with { Results = [new SoilResultDraft(new string('p', 101), 1m, null, null, null)] }, "Parameter must be at most 100 characters", "long parameter");
+    SoilRejected(soilDraft with { Results = [new SoilResultDraft("pH", 1m, new string('u', 31), null, null)] }, "Unit must be at most 30 characters", "long unit");
+    SoilRejected(soilDraft with { Results = [new SoilResultDraft("pH", 1m, null, new string('d', 31), null)] }, "Depth must be at most 30 characters", "long depth");
+    SoilRejected(soilDraft with { Results = [new SoilResultDraft("pH", 1m, null, null, new string('s', 61))] }, "Station must be at most 60 characters", "long station");
+    SoilRejected(stationsDraft with { Results = [new SoilResultDraft("pH", 6m, null, null, "E1"), new SoilResultDraft("pH", 6.1m, null, null, " ")] },
+        "Each result needs a station when sampling by stations", "station missing on one result");
+    SoilRejected(soilDraft with { LaboratoryId = changedLab.Id }, "Laboratory must be a soil laboratory", "seed laboratory on a soil analysis");
+    SoilRejected(soilDraft with { LaboratoryId = provider.Id }, "Laboratory must be a soil laboratory", "input supplier on a soil analysis");
+    Reject<DomainNotFoundException>(() => soil.Create(plot.Id, soilDraft with { LaboratoryId = Guid.NewGuid() }), "soil analysis with a missing laboratory");
+    Reject<DomainNotFoundException>(() => soil.Create(Guid.NewGuid(), soilDraft), "soil analysis of a missing plot");
+    Reject<DomainNotFoundException>(() => soil.Create(plot.Id, soilDraft with { CampaignId = Guid.NewGuid() }), "soil analysis of a missing campaign");
+    Check(AnalysisState() == analysisState, "rejected soil analysis creates changed stored rows");
+    var soilAnalysis = soil.Create(plot.Id, soilDraft);
+    Check(soilAnalysis is { SamplingMethod: "promedio", SamplingDetail: null, MapLink: "https://maps.example.test/lote.kml", Notes: null, Revision: 1 } &&
+          soilAnalysis.PlotId == plot.Id && soilAnalysis.CampaignId == campaign.Id && soilAnalysis.LaboratoryId == soilLab.Id &&
+          soilAnalysis.SampledOn == new DateOnly(2026, 9, 1) && soilAnalysis.AnalyzedOn == new DateOnly(2026, 9, 10) &&
+          soilAnalysis.Results is [{ Position: 1, Parameter: "pH", Value: 6.2m, Unit: null, Depth: "0-20 cm", Station: null },
+              { Position: 2, Parameter: "Fósforo extractable (P Bray)", Value: 12.5m, Unit: "ppm", Station: null }], "soil analysis creation with a blank unit stored as absent");
+    var stored = soil.Get(soilAnalysis.Id)!;
+    Check(stored with { Results = soilAnalysis.Results } == soilAnalysis && stored.Results.SequenceEqual(soilAnalysis.Results) && soil.Get(Guid.NewGuid()) is null,
+          "soil analysis read");
+    var stationAnalysis = soil.Create(plot.Id, stationsDraft with { CampaignId = earlierCampaign.Id, SampledOn = new DateOnly(2025, 9, 1), AnalyzedOn = null, LaboratoryId = null });
+    Check(stationAnalysis is { SamplingMethod: "estaciones", SamplingDetail: "Tres estaciones georreferenciadas", LaboratoryId: null, AnalyzedOn: null } &&
+          stationAnalysis.Results is [{ Station: "E1", Unit: "%", Depth: null }, { Station: "E2", Value: 3.1m }], "soil analysis by stations");
+    var sameDayAnalysis = soil.Create(plot.Id, soilDraft with { AnalyzedOn = new DateOnly(2026, 9, 5), Results = [new SoilResultDraft("Zinc", 0m, "ppm", null, null)] });
+    var otherPlotAnalysis = soil.Create(codedPlot.Id, soilDraft with { Results = [new SoilResultDraft("Boro", -0.5m, null, null, null)] });
+    Check(otherPlotAnalysis.Results is [{ Value: -0.5m }], "negative result value");
+    Check(soil.List(plot.Id).Select(item => item.Id).SequenceEqual([soilAnalysis.Id, sameDayAnalysis.Id, stationAnalysis.Id]) &&
+          soil.List(plot.Id).Select(item => item.Results.Count).SequenceEqual([2, 1, 2]) && soil.List(plot.Id)[2].Results[1].Station == "E2" &&
+          soil.List(codedPlot.Id).Select(item => item.Id).SequenceEqual([otherPlotAnalysis.Id]) && soil.List().Count == 4 && soil.List(Guid.NewGuid()).Count == 0,
+          "soil analyses list newest first across campaigns with their results");
+    analysisState = AnalysisState();
+    Reject<DomainConflictException>(() => soil.Update(soilAnalysis.Id, 0, stationsDraft), "stale soil analysis");
+    Reject<DomainNotFoundException>(() => soil.Update(Guid.NewGuid(), 1, stationsDraft), "missing soil analysis");
+    Check(Rejected<DomainValidationException>(() => soil.Update(soilAnalysis.Id, 1, stationsDraft with { Results = [new SoilResultDraft("pH", 6m, null, null, null)] }),
+          "update without station").Message == "Each result needs a station when sampling by stations", "station update message");
+    Check(Rejected<DomainValidationException>(() => soil.Update(soilAnalysis.Id, 1, stationsDraft with { LaboratoryId = changedLab.Id }), "update to a seed laboratory").Message ==
+          "Laboratory must be a soil laboratory", "laboratory update message");
+    Check(Rejected<DomainValidationException>(() => soil.Update(soilAnalysis.Id, 1, stationsDraft with { Results = [] }), "update without results").Message ==
+          "At least one result is required", "results update message");
+    Reject<DomainNotFoundException>(() => soil.Update(soilAnalysis.Id, 1, stationsDraft with { CampaignId = Guid.NewGuid() }), "update to a missing campaign");
+    Reject<DomainNotFoundException>(() => soil.Update(soilAnalysis.Id, 1, stationsDraft with { LaboratoryId = Guid.NewGuid() }), "update to a missing laboratory");
+    Check(AnalysisState() == analysisState, "rejected soil analysis updates changed stored rows and results");
+    var replacedAnalysis = soil.Update(soilAnalysis.Id, 1, stationsDraft with { CampaignId = earlierCampaign.Id, LaboratoryId = null, MapLink = null, Notes = " Nota ",
+        Results = [new SoilResultDraft("Nitratos (N-NO3)", 18m, "ppm", "0-60 cm", "E3")] });
+    Check(replacedAnalysis is { SamplingMethod: "estaciones", LaboratoryId: null, MapLink: null, Notes: "Nota", Revision: 2 } && replacedAnalysis.PlotId == plot.Id &&
+          replacedAnalysis.CampaignId == earlierCampaign.Id && replacedAnalysis.Results is [{ Position: 1, Parameter: "Nitratos (N-NO3)", Station: "E3", Depth: "0-60 cm" }] &&
+          replacedAnalysis.Results[0].Id != soilAnalysis.Results[0].Id && soil.Get(soilAnalysis.Id)!.Results.SequenceEqual(replacedAnalysis.Results),
+          "soil analysis update replaces the header and its results and keeps the plot");
+    using (var connection = new NpgsqlConnection(builder.ConnectionString))
+    {
+        connection.Open();
+        using var count = new NpgsqlCommand("SELECT count(*) FROM soil_analysis_results", connection);
+        Check((long)count.ExecuteScalar()! == 5, "replaced results removed");
+    }
+    RejectSql($"UPDATE soil_analyses SET sampling_method = 'lote' WHERE id = '{soilAnalysis.Id}'", "sampling method check");
+    RejectSql($"UPDATE soil_analyses SET map_link = 'a b' WHERE id = '{soilAnalysis.Id}'", "map link check");
+    RejectSql($"UPDATE soil_analyses SET sampling_detail = ' ' WHERE id = '{soilAnalysis.Id}'", "sampling detail blank check");
+    RejectSql($"UPDATE soil_analysis_results SET parameter = repeat('p', 101) WHERE analysis_id = '{soilAnalysis.Id}'", "parameter length check");
+    RejectSql($"UPDATE soil_analysis_results SET unit = ' ' WHERE analysis_id = '{soilAnalysis.Id}'", "unit blank check");
+    RejectSql($"UPDATE soil_analysis_results SET station = repeat('s', 61) WHERE analysis_id = '{soilAnalysis.Id}'", "station length check");
+
+    var seedDraft = new SeedAnalysisDraft(client.Id, crop.Id, " Variedad ficticia ", campaign.Id, new DateOnly(2026, 8, 1), changedLab.Id, 152.3456m,
+        90m, 5m, 3m, 2m, 85.5m, 7m, 5m, 2.5m, 80m, "  ");
+    analysisState = AnalysisState();
+    void SeedRejected(SeedAnalysisDraft draft, string message, string label) =>
+        Check(Rejected<DomainValidationException>(() => seeds.Create(draft), label).Message == message, $"{label} message");
+    SeedRejected(seedDraft with { ClientId = null }, "Client is required", "seed analysis without client");
+    SeedRejected(seedDraft with { CropId = null }, "Crop is required", "seed analysis without crop");
+    SeedRejected(seedDraft with { AnalyzedOn = null }, "Analyzed on is required", "seed analysis without date");
+    foreach (var weight in new[] { 0m, -1m, 0.00001m, 1000000m })
+        SeedRejected(seedDraft with { ThousandSeedWeightG = weight }, "Thousand seed weight must be positive and fit numeric(10,4)", $"thousand seed weight {weight}");
+    SeedAnalysisDraft[] outOfRange = [seedDraft with { GerminationTreatedPct = 100.01m }, seedDraft with { AbnormalTreatedPct = -0.01m }, seedDraft with { DeadTreatedPct = 101m },
+        seedDraft with { HardTreatedPct = -1m }, seedDraft with { GerminationUntreatedPct = 100.5m }, seedDraft with { AbnormalUntreatedPct = -2m },
+        seedDraft with { DeadUntreatedPct = 200m }, seedDraft with { HardUntreatedPct = -0.5m }, seedDraft with { VigorPct = 100.01m }];
+    foreach (var draft in outOfRange) SeedRejected(draft, "Percentages must be between 0 and 100", "percentage out of range");
+    SeedRejected(seedDraft with { VigorPct = 33.333m }, "Percentages must have at most two decimals", "percentage with three decimals");
+    SeedRejected(seedDraft with { HardTreatedPct = 2.01m }, "Seed fractions add up to more than 100", "treated fractions over 100");
+    SeedRejected(seedDraft with { GerminationUntreatedPct = 95m, AbnormalUntreatedPct = null, DeadUntreatedPct = 5.01m, HardUntreatedPct = null },
+        "Seed fractions add up to more than 100", "untreated present fractions over 100");
+    SeedRejected(seedDraft with { LaboratoryId = soilLab.Id }, "Laboratory must be a seed laboratory", "soil laboratory on a seed analysis");
+    SeedRejected(seedDraft with { LaboratoryId = provider.Id }, "Laboratory must be a seed laboratory", "input supplier on a seed analysis");
+    Reject<DomainNotFoundException>(() => seeds.Create(seedDraft with { LaboratoryId = Guid.NewGuid() }), "seed analysis with a missing laboratory");
+    Reject<DomainNotFoundException>(() => seeds.Create(seedDraft with { ClientId = Guid.NewGuid() }), "seed analysis of a missing client");
+    Reject<DomainNotFoundException>(() => seeds.Create(seedDraft with { CropId = Guid.NewGuid() }), "seed analysis of a missing crop");
+    Reject<DomainNotFoundException>(() => seeds.Create(seedDraft with { CampaignId = Guid.NewGuid() }), "seed analysis of a missing campaign");
+    Check(AnalysisState() == analysisState, "rejected seed analysis creates changed stored rows");
+    var seedAnalysis = seeds.Create(seedDraft);
+    Check(seedAnalysis is { Variety: "Variedad ficticia", ThousandSeedWeightG: 152.3456m, GerminationTreatedPct: 90m, AbnormalTreatedPct: 5m, DeadTreatedPct: 3m,
+          HardTreatedPct: 2m, GerminationUntreatedPct: 85.5m, AbnormalUntreatedPct: 7m, DeadUntreatedPct: 5m, HardUntreatedPct: 2.5m, VigorPct: 80m, Notes: null, Revision: 1 } &&
+          seedAnalysis.ClientId == client.Id && seedAnalysis.CropId == crop.Id && seedAnalysis.CampaignId == campaign.Id && seedAnalysis.LaboratoryId == changedLab.Id &&
+          seedAnalysis.AnalyzedOn == new DateOnly(2026, 8, 1) && seeds.Get(seedAnalysis.Id) == seedAnalysis && seeds.Get(Guid.NewGuid()) is null,
+          "seed analysis creation with fractions adding up to exactly 100");
+    var otherSeedCrop = crops.Create("Cultivo de semilla");
+    var emptySeed = seeds.Create(new SeedAnalysisDraft(client.Id, otherSeedCrop.Id, null, null,
+        new DateOnly(2026, 8, 15), null, null, null, null, null, null, null, null, null, null, null, null));
+    Check(emptySeed is { Variety: null, CampaignId: null, LaboratoryId: null, ThousandSeedWeightG: null, GerminationTreatedPct: null, VigorPct: null, Revision: 1 },
+          "seed analysis without measured values");
+    var fullClientSeed = seeds.Create(seedDraft with { ClientId = fullClient.Id, AnalyzedOn = new DateOnly(2026, 7, 1), VigorPct = 100m, GerminationTreatedPct = 0m });
+    Check(seeds.List().Select(item => item.Id).SequenceEqual([emptySeed.Id, seedAnalysis.Id, fullClientSeed.Id]) &&
+          seeds.List(client.Id).Select(item => item.Id).SequenceEqual([emptySeed.Id, seedAnalysis.Id]) &&
+          seeds.List(null, crop.Id).Select(item => item.Id).SequenceEqual([seedAnalysis.Id, fullClientSeed.Id]) &&
+          seeds.List(client.Id, crop.Id).Select(item => item.Id).SequenceEqual([seedAnalysis.Id]) && seeds.List(Guid.NewGuid()).Count == 0,
+          "seed analyses filter by client and crop, newest first");
+    analysisState = AnalysisState();
+    Reject<DomainConflictException>(() => seeds.Update(seedAnalysis.Id, 0, seedDraft), "stale seed analysis");
+    Reject<DomainNotFoundException>(() => seeds.Update(Guid.NewGuid(), 1, seedDraft), "missing seed analysis");
+    Check(Rejected<DomainValidationException>(() => seeds.Update(seedAnalysis.Id, 1, seedDraft with { DeadTreatedPct = 3.5m }), "update over 100").Message ==
+          "Seed fractions add up to more than 100", "fraction update message");
+    Check(Rejected<DomainValidationException>(() => seeds.Update(seedAnalysis.Id, 1, seedDraft with { LaboratoryId = soilLab.Id }), "update to a soil laboratory").Message ==
+          "Laboratory must be a seed laboratory", "seed laboratory update message");
+    Reject<DomainNotFoundException>(() => seeds.Update(seedAnalysis.Id, 1, seedDraft with { CropId = Guid.NewGuid() }), "update to a missing crop");
+    Check(AnalysisState() == analysisState, "rejected seed analysis updates changed stored rows");
+    var changedSeed = seeds.Update(seedAnalysis.Id, 1, seedDraft with { Variety = null, CampaignId = null, LaboratoryId = null, ThousandSeedWeightG = null,
+        GerminationTreatedPct = null, AbnormalTreatedPct = null, Notes = " Sin curasemilla repetido " });
+    Check(changedSeed is { Variety: null, CampaignId: null, LaboratoryId: null, ThousandSeedWeightG: null, GerminationTreatedPct: null, AbnormalTreatedPct: null,
+          DeadTreatedPct: 3m, Notes: "Sin curasemilla repetido", Revision: 2 } && seeds.Get(seedAnalysis.Id) == changedSeed, "seed analysis update replaces");
+    RejectSql($"UPDATE seed_analyses SET vigor_pct = 100.5 WHERE id = '{seedAnalysis.Id}'", "vigor range check");
+    RejectSql($"UPDATE seed_analyses SET germination_untreated_pct = 90, dead_untreated_pct = 20 WHERE id = '{seedAnalysis.Id}'", "untreated fraction sum check");
+    RejectSql($"UPDATE seed_analyses SET germination_treated_pct = 99, hard_treated_pct = 2 WHERE id = '{seedAnalysis.Id}'", "treated fraction sum check");
+    RejectSql($"UPDATE seed_analyses SET thousand_seed_weight_g = 0 WHERE id = '{seedAnalysis.Id}'", "thousand seed weight check");
+    RejectSql($"UPDATE seed_analyses SET variety = ' ' WHERE id = '{seedAnalysis.Id}'", "variety blank check");
+
     // 006 on a database that already holds rows in every earlier table, including a same-name labor.
     Migrate(seedBuilder.ConnectionString, previousMigrations);
     var keptLaborId = Guid.NewGuid();
@@ -1404,7 +1565,38 @@ try
     Check(EarlierStateOf(seedBuilder.ConnectionString) + "|" + ProviderStateOf(seedBuilder.ConnectionString) + "|" + ConstraintsOf(seedBuilder.ConnectionString) == rerunBefore,
           "rerunning 011 changed stored rows or constraints");
 
-    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas, recipes and work orders with concurrent revisions and numbering, across fields, search, print documents, default client firms, the 010 reference alignment, and the 011 providers, contacts, client links, prices and quote comparisons");
+    // 012 on a database with rows in every earlier table keeps them and their constraints; a rerun over its own rows changes nothing.
+    string ConstraintsBefore012(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("""
+            SELECT string_agg(conrelid::regclass::text || ':' || conname || ':' || pg_get_constraintdef(oid), ',' ORDER BY conrelid::regclass::text, conname)
+            FROM pg_constraint WHERE connamespace = current_schema()::regnamespace
+              AND conrelid::regclass::text NOT IN ('soil_analyses','soil_analysis_results','seed_analyses')
+            """, connection);
+        return (string)command.ExecuteScalar()!;
+    }
+    string StateBefore012(string connectionString) => SnapshotOf(connectionString) + "|" + AttributeTablesOf(connectionString) + "|" +
+        WorkOrderStateOf(connectionString) + "|" + ProviderStateOf(connectionString) + "|" + ConstraintsBefore012(connectionString);
+    var before012 = StateBefore012(seedBuilder.ConnectionString);
+    Migrate(seedBuilder.ConnectionString, "012_analyses.sql");
+    Check(StateBefore012(seedBuilder.ConnectionString) == before012, "012 changed rows or constraints of earlier tables");
+    var seedSoil = new SoilAnalysisService(new PostgresSoilAnalysisRepository(seedBuilder.ConnectionString));
+    var seedSeeds = new SeedAnalysisService(new PostgresSeedAnalysisRepository(seedBuilder.ConnectionString));
+    var seedSoilLab = seedProviders.Create(new ProviderDraft("Laboratorio 012", "laboratorio_suelos", null, null, null, null, null));
+    var seedSeedLab = seedProviders.Create(new ProviderDraft("Semillas 012", "laboratorio_semillas", null, null, null, null, null));
+    seedSoil.Create(plot.Id, new SoilAnalysisDraft(campaign.Id, new DateOnly(2026, 9, 1), null, seedSoilLab.Id, "estaciones", null, "https://maps.example.test/012.kml", null,
+        [new SoilResultDraft("pH", 6m, null, "0-20 cm", "E1")]));
+    seedSeeds.Create(new SeedAnalysisDraft(client.Id, keptCropId, "Variedad 012", campaign.Id, new DateOnly(2026, 8, 1), seedSeedLab.Id, 40m,
+        90m, 5m, 3m, 2m, null, null, null, null, 75m, null));
+    rerunBefore = EarlierStateOf(seedBuilder.ConnectionString) + "|" + ProviderStateOf(seedBuilder.ConnectionString) + "|" + AnalysisStateOf(seedBuilder.ConnectionString) + "|" +
+        ConstraintsOf(seedBuilder.ConnectionString);
+    Migrate(seedBuilder.ConnectionString, "012_analyses.sql");
+    Check(EarlierStateOf(seedBuilder.ConnectionString) + "|" + ProviderStateOf(seedBuilder.ConnectionString) + "|" + AnalysisStateOf(seedBuilder.ConnectionString) + "|" +
+          ConstraintsOf(seedBuilder.ConnectionString) == rerunBefore, "rerunning 012 changed stored rows or constraints");
+
+    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas, recipes and work orders with concurrent revisions and numbering, across fields, search, print documents, default client firms, the 010 reference alignment, the 011 providers, contacts, client links, prices and quote comparisons, and the 012 soil and seed analyses");
     return 0;
 }
 finally

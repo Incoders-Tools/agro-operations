@@ -22,7 +22,7 @@ try
     using (var db = new NpgsqlConnection(scoped.ConnectionString))
     {
         db.Open();
-        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql", "010_reference_alignment.sql", "011_providers_and_quotes.sql" })
+        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql", "010_reference_alignment.sql", "011_providers_and_quotes.sql", "012_analyses.sql" })
         {
             var file = Path.Combine(root, "src", "AgroOperations.Api", "Persistence", "Migrations", name);
             using var migration = new NpgsqlCommand(File.ReadAllText(file), db);
@@ -965,6 +965,128 @@ try
             !(await Ids("quote-comparisons?status=abierta")).SequenceEqual([comparisonId, otherComparisonId]) || (await Ids("quote-comparisons?status=decidida")).Length != 0 ||
             !(await Ids($"quote-comparisons?clientId={richId}&status=abierta")).SequenceEqual([otherComparisonId]))
             throw new Exception("Comparisons filter mismatch");
+
+        // 012: soil analyses per plot and campaign with their results, seed analyses per client and crop.
+        string[] analysisReads = ["soil-analyses", $"soil-analyses?plotId={unknownId}", $"soil-analyses/{unknownId}", "seed-analyses",
+            $"seed-analyses?clientId={unknownId}&cropId={unknownId}", $"seed-analyses/{unknownId}"];
+        (HttpMethod Method, string Path)[] analysisWrites = [(HttpMethod.Post, "soil-analyses"), (HttpMethod.Put, $"soil-analyses/{unknownId}"),
+            (HttpMethod.Post, "seed-analyses"), (HttpMethod.Put, $"seed-analyses/{unknownId}")];
+        async Task<string> AnalysisState() => await client.GetStringAsync("/api/v1/soil-analyses") + "|" + await client.GetStringAsync("/api/v1/seed-analyses");
+        using (var anonymous = new HttpClient { BaseAddress = client.BaseAddress })
+        {
+            foreach (var route in analysisReads)
+                if ((await anonymous.GetAsync($"/api/v1/{route}")).StatusCode != HttpStatusCode.Unauthorized)
+                    throw new Exception($"Anonymous GET {route} accessible");
+            foreach (var (method, path) in analysisWrites)
+                using (var request = new HttpRequestMessage(method, $"/api/v1/{path}") { Content = JsonContent.Create(new { revision = 1 }) })
+                    if ((await anonymous.SendAsync(request)).StatusCode != HttpStatusCode.Unauthorized)
+                        throw new Exception($"Anonymous {method} {path} accessible");
+        }
+        var soilLabId = (await Body(await Send(HttpMethod.Post, "/api/v1/providers", new { name = "Laboratorio de suelos", kind = "laboratorio_suelos" }))).GetProperty("id").GetGuid();
+        var earlierCampaignId = (await Body(await Send(HttpMethod.Post, "/api/v1/campaigns", new { name = "2025-26" }))).GetProperty("id").GetGuid();
+        var soilBody = new { plotId = codedPlotId, campaignId, sampledOn = (string?)"2026-09-01", analyzedOn = (string?)"2026-09-10", laboratoryId = (Guid?)soilLabId,
+            samplingMethod = (string?)"promedio", samplingDetail = (string?)null, mapLink = (string?)"https://maps.example.test/lote.kml", notes = (string?)null,
+            results = new object[] { new { parameter = "pH", value = 6.2m, unit = "  ", depth = "0-20 cm", station = (string?)null },
+                new { parameter = "Fósforo extractable (P Bray)", value = 12.5m, unit = "ppm", depth = "0-20 cm", station = (string?)null } }, revision = 1L };
+        var seedBody = new { clientId = id, cropId = soyId, variety = (string?)"Variedad ficticia", campaignId = (Guid?)campaignId, analyzedOn = (string?)"2026-08-01",
+            laboratoryId = (Guid?)labId, thousandSeedWeightG = (decimal?)152.3456m, germinationTreatedPct = (decimal?)90m, abnormalTreatedPct = (decimal?)5m,
+            deadTreatedPct = (decimal?)3m, hardTreatedPct = (decimal?)2m, germinationUntreatedPct = (decimal?)null, abnormalUntreatedPct = (decimal?)null,
+            deadUntreatedPct = (decimal?)null, hardUntreatedPct = (decimal?)null, vigorPct = (decimal?)80m, notes = (string?)null, revision = 1L };
+        var noAnalyses = await AnalysisState();
+        foreach (var (method, path) in analysisWrites)
+            using (var request = new HttpRequestMessage(method, $"/api/v1/{path}") { Content = JsonContent.Create(path.StartsWith("soil") ? (object)soilBody : seedBody) })
+                if ((await client.SendAsync(request)).StatusCode != HttpStatusCode.Forbidden)
+                    throw new Exception($"{method} {path} accepted without CSRF");
+        if (await AnalysisState() != noAnalyses) throw new Exception("Analysis writes without CSRF changed stored records");
+        var stationsResults = new object[] { new { parameter = "Materia orgánica", value = 2.8m, unit = "%", station = "E1" }, new { parameter = "Materia orgánica", value = 3.1m, unit = "%", station = " " } };
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody with { samplingMethod = "lote" }), HttpStatusCode.BadRequest, "Sampling method must be promedio or estaciones") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody with { results = new object[0] }), HttpStatusCode.BadRequest, "At least one result is required") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody with { samplingMethod = "estaciones", results = stationsResults }), HttpStatusCode.BadRequest,
+                "Each result needs a station when sampling by stations") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody with { mapLink = "https://maps.example.test/a b.kml" }), HttpStatusCode.BadRequest,
+                "Map link must be a single address without spaces") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody with { laboratoryId = labId }), HttpStatusCode.BadRequest, "Laboratory must be a soil laboratory") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody with { sampledOn = null }), HttpStatusCode.BadRequest, "Sampled on is required") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody with { results = new object[] { new { parameter = " ", value = 1m } } }), HttpStatusCode.BadRequest,
+                "Parameter is required") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody with { laboratoryId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody with { plotId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await client.GetAsync($"/api/v1/soil-analyses/{Guid.NewGuid()}"), HttpStatusCode.NotFound) ||
+            await AnalysisState() != noAnalyses)
+            throw new Exception("Rejected soil analyses changed stored records");
+        var soilResponse = await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody);
+        var soilRow = await Body(soilResponse);
+        var soilId = soilRow.GetProperty("id").GetGuid();
+        var soilResults = soilRow.GetProperty("results");
+        if (soilResponse.StatusCode != HttpStatusCode.Created || soilRow.GetProperty("plotId").GetGuid() != codedPlotId || soilRow.GetProperty("campaignId").GetGuid() != campaignId ||
+            soilRow.GetProperty("sampledOn").GetString() != "2026-09-01" || soilRow.GetProperty("analyzedOn").GetString() != "2026-09-10" ||
+            soilRow.GetProperty("laboratoryId").GetGuid() != soilLabId || soilRow.GetProperty("samplingMethod").GetString() != "promedio" || !Absent(soilRow, "samplingDetail", "notes") ||
+            soilRow.GetProperty("mapLink").GetString() != "https://maps.example.test/lote.kml" || soilRow.GetProperty("revision").GetInt64() != 1 || soilResults.GetArrayLength() != 2 ||
+            soilResults[0].GetProperty("parameter").GetString() != "pH" || soilResults[0].GetProperty("value").GetDecimal() != 6.2m || !Absent(soilResults[0], "unit", "station") ||
+            soilResults[0].GetProperty("depth").GetString() != "0-20 cm" || soilResults[1].GetProperty("unit").GetString() != "ppm" || soilResults[0].GetProperty("id").GetGuid() == Guid.Empty)
+            throw new Exception($"Soil analysis create: {(int)soilResponse.StatusCode} {soilRow}");
+        var olderSoilId = (await Body(await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody with { campaignId = earlierCampaignId, sampledOn = "2025-09-01", analyzedOn = null,
+            laboratoryId = null, samplingMethod = "estaciones", results = new object[] { new { parameter = "Materia orgánica", value = 2.8m, unit = "%", station = "E1" } } }))).GetProperty("id").GetGuid();
+        var otherPlotSoilId = (await Body(await Send(HttpMethod.Post, "/api/v1/soil-analyses", soilBody with { plotId = samplePlotId }))).GetProperty("id").GetGuid();
+        var plotSoil = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/soil-analyses?plotId={codedPlotId}");
+        if (!plotSoil!.Select(item => item.GetProperty("id").GetGuid()).SequenceEqual([soilId, olderSoilId]) || plotSoil[0].GetProperty("results").GetArrayLength() != 2 ||
+            plotSoil[1].GetProperty("results")[0].GetProperty("station").GetString() != "E1" || plotSoil[1].GetProperty("campaignId").GetGuid() != earlierCampaignId ||
+            !(await Ids($"soil-analyses?plotId={samplePlotId}")).SequenceEqual([otherPlotSoilId]) || (await Ids("soil-analyses")).Length != 3 ||
+            (await Ids($"soil-analyses?plotId={Guid.NewGuid()}")).Length != 0 ||
+            (await client.GetFromJsonAsync<JsonElement>($"/api/v1/soil-analyses/{soilId}")).GetProperty("results").GetArrayLength() != 2)
+            throw new Exception("Soil analyses list or read mismatch");
+        // An analysis never changes plot: a plotId sent on update is ignored, and the results are replaced.
+        var replacedSoil = await Send(HttpMethod.Put, $"/api/v1/soil-analyses/{soilId}", soilBody with { plotId = samplePlotId, samplingMethod = "estaciones", laboratoryId = null,
+            results = new object[] { new { parameter = "Nitratos (N-NO3)", value = 18m, unit = "ppm", depth = "0-60 cm", station = "E3" } }, revision = 1L });
+        if (replacedSoil.StatusCode != HttpStatusCode.OK || (await Body(replacedSoil)) is var replacedSoilRow && (replacedSoilRow.GetProperty("plotId").GetGuid() != codedPlotId ||
+            replacedSoilRow.GetProperty("samplingMethod").GetString() != "estaciones" || !Absent(replacedSoilRow, "laboratoryId") ||
+            replacedSoilRow.GetProperty("revision").GetInt64() != 2 || replacedSoilRow.GetProperty("results").GetArrayLength() != 1 ||
+            replacedSoilRow.GetProperty("results")[0].GetProperty("station").GetString() != "E3"))
+            throw new Exception("Soil analysis update failed, moved the analysis or kept old results");
+        var analysesBefore = await AnalysisState();
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/soil-analyses/{soilId}", soilBody with { revision = 1L }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/soil-analyses/{soilId}", soilBody with { samplingMethod = "estaciones", revision = 2 }), HttpStatusCode.BadRequest,
+                "Each result needs a station when sampling by stations") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/soil-analyses/{soilId}", soilBody with { laboratoryId = labId, revision = 2 }), HttpStatusCode.BadRequest,
+                "Laboratory must be a soil laboratory") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/soil-analyses/{Guid.NewGuid()}", soilBody with { revision = 1L }), HttpStatusCode.NotFound, "Record not found") ||
+            await AnalysisState() != analysesBefore)
+            throw new Exception("Rejected soil analysis updates changed stored records");
+
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/seed-analyses", seedBody with { vigorPct = 100.5m }), HttpStatusCode.BadRequest, "Percentages must be between 0 and 100") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/seed-analyses", seedBody with { hardTreatedPct = 2.5m }), HttpStatusCode.BadRequest, "Seed fractions add up to more than 100") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/seed-analyses", seedBody with { laboratoryId = soilLabId }), HttpStatusCode.BadRequest, "Laboratory must be a seed laboratory") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/seed-analyses", seedBody with { analyzedOn = null }), HttpStatusCode.BadRequest, "Analyzed on is required") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/seed-analyses", seedBody with { laboratoryId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/seed-analyses", seedBody with { cropId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await client.GetAsync($"/api/v1/seed-analyses/{Guid.NewGuid()}"), HttpStatusCode.NotFound) ||
+            await AnalysisState() != analysesBefore)
+            throw new Exception("Rejected seed analyses changed stored records");
+        var seedResponse = await Send(HttpMethod.Post, "/api/v1/seed-analyses", seedBody);
+        var seedRow = await Body(seedResponse);
+        var seedId = seedRow.GetProperty("id").GetGuid();
+        if (seedResponse.StatusCode != HttpStatusCode.Created || seedRow.GetProperty("clientId").GetGuid() != id || seedRow.GetProperty("cropId").GetGuid() != soyId ||
+            seedRow.GetProperty("variety").GetString() != "Variedad ficticia" || seedRow.GetProperty("analyzedOn").GetString() != "2026-08-01" ||
+            seedRow.GetProperty("laboratoryId").GetGuid() != labId || seedRow.GetProperty("thousandSeedWeightG").GetDecimal() != 152.3456m ||
+            seedRow.GetProperty("germinationTreatedPct").GetDecimal() != 90m || seedRow.GetProperty("vigorPct").GetDecimal() != 80m ||
+            !Absent(seedRow, "germinationUntreatedPct", "abnormalUntreatedPct", "deadUntreatedPct", "hardUntreatedPct", "notes") || seedRow.GetProperty("revision").GetInt64() != 1)
+            throw new Exception($"Seed analysis create: {(int)seedResponse.StatusCode} {seedRow}");
+        var wheatSeedId = (await Body(await Send(HttpMethod.Post, "/api/v1/seed-analyses", new { clientId = richId, cropId = wheatId, analyzedOn = "2026-07-01" }))).GetProperty("id").GetGuid();
+        if ((await client.GetFromJsonAsync<JsonElement>($"/api/v1/seed-analyses/{seedId}")).GetProperty("id").GetGuid() != seedId ||
+            !(await Ids("seed-analyses")).SequenceEqual([seedId, wheatSeedId]) || !(await Ids($"seed-analyses?clientId={richId}")).SequenceEqual([wheatSeedId]) ||
+            !(await Ids($"seed-analyses?cropId={soyId}")).SequenceEqual([seedId]) || (await Ids($"seed-analyses?clientId={id}&cropId={wheatId}")).Length != 0)
+            throw new Exception("Seed analyses filter or read mismatch");
+        var changedSeed = await Send(HttpMethod.Put, $"/api/v1/seed-analyses/{seedId}", seedBody with { cropId = wheatId, laboratoryId = null, germinationTreatedPct = null, revision = 1L });
+        if (changedSeed.StatusCode != HttpStatusCode.OK || (await Body(changedSeed)) is var changedSeedRow && (changedSeedRow.GetProperty("cropId").GetGuid() != wheatId ||
+            !Absent(changedSeedRow, "laboratoryId", "germinationTreatedPct") || changedSeedRow.GetProperty("revision").GetInt64() != 2))
+            throw new Exception("Seed analysis update failed");
+        analysesBefore = await AnalysisState();
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/seed-analyses/{seedId}", seedBody with { revision = 1L }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/seed-analyses/{seedId}", seedBody with { deadTreatedPct = -1m, revision = 2 }), HttpStatusCode.BadRequest,
+                "Percentages must be between 0 and 100") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/seed-analyses/{Guid.NewGuid()}", seedBody with { revision = 1L }), HttpStatusCode.NotFound, "Record not found") ||
+            await AnalysisState() != analysesBefore)
+            throw new Exception("Rejected seed analysis updates changed stored records");
 
         using (var anonymous = new HttpClient { BaseAddress = client.BaseAddress })
             if ((await anonymous.GetAsync("/api/v1/import-records")).StatusCode != HttpStatusCode.Unauthorized)

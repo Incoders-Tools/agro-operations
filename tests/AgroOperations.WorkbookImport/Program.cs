@@ -30,7 +30,7 @@ try
     {
         connection.Open();
         foreach (var file in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql",
-                     "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql", "010_reference_alignment.sql", "011_providers_and_quotes.sql" })
+                     "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql", "010_reference_alignment.sql", "011_providers_and_quotes.sql", "012_analyses.sql" })
         {
             using var command = new NpgsqlCommand(File.ReadAllText(Path.Combine(migrations, file)), connection);
             command.ExecuteNonQuery();

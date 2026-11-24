@@ -30,6 +30,8 @@ public static class BackofficeRoutes
         var workOrders = new WorkOrderService(new PostgresWorkOrderRepository(connectionString));
         var providers = new ProviderService(new PostgresProviderRepository(connectionString));
         var comparisons = new QuoteComparisonService(new PostgresQuoteComparisonRepository(connectionString));
+        var soilAnalyses = new SoilAnalysisService(new PostgresSoilAnalysisRepository(connectionString));
+        var seedAnalyses = new SeedAnalysisService(new PostgresSeedAnalysisRepository(connectionString));
         var protectedRoutes = local.MapGroup("").RequireAuthorization().AddEndpointFilter(async (context, next) =>
         {
             if (HttpMethods.IsGet(context.HttpContext.Request.Method)) return await next(context);
@@ -93,6 +95,17 @@ public static class BackofficeRoutes
         // Quotes replace their lines on update; an omitted providerId keeps the current provider.
         protectedRoutes.MapPost("/quote-comparisons/{id:guid}/quotes", (Guid id, QuoteInput input) => Create(() => comparisons.AddQuote(id, input.Draft())));
         protectedRoutes.MapPut("/quotes/{id:guid}", (Guid id, RevisionQuoteInput input) => Change(() => comparisons.UpdateQuote(id, input.Revision, input.Draft())));
+        // Soil analyses: every campaign of the plot, newest sampling first, each with its results; without a plot, every analysis.
+        protectedRoutes.MapGet("/soil-analyses", (Guid? plotId) => Results.Json(soilAnalyses.List(plotId)));
+        protectedRoutes.MapGet("/soil-analyses/{id:guid}", (Guid id) => Item(soilAnalyses.Get(id)));
+        protectedRoutes.MapPost("/soil-analyses", (SoilAnalysisInput input) => Create(() => soilAnalyses.Create(input.PlotId, input.Draft())));
+        // Writes replace the results. An analysis never changes plot: a plotId sent on update is ignored.
+        protectedRoutes.MapPut("/soil-analyses/{id:guid}", (Guid id, RevisionSoilAnalysisInput input) => Change(() => soilAnalyses.Update(id, input.Revision, input.Draft())));
+        // Seed analyses: both filters are optional and combine; newest analysis first.
+        protectedRoutes.MapGet("/seed-analyses", (Guid? clientId, Guid? cropId) => Results.Json(seedAnalyses.List(clientId, cropId)));
+        protectedRoutes.MapGet("/seed-analyses/{id:guid}", (Guid id) => Item(seedAnalyses.Get(id)));
+        protectedRoutes.MapPost("/seed-analyses", (SeedAnalysisInput input) => Create(() => seedAnalyses.Create(input.Draft())));
+        protectedRoutes.MapPut("/seed-analyses/{id:guid}", (Guid id, RevisionSeedAnalysisInput input) => Change(() => seedAnalyses.Update(id, input.Revision, input.Draft())));
         protectedRoutes.MapGet("/clients/{id:guid}", (Guid id) => Item(operations.GetClient(id)));
         protectedRoutes.MapGet("/fields/{id:guid}", (Guid id) => Item(operations.GetField(id)));
         protectedRoutes.MapGet("/plots/{id:guid}", (Guid id) => Item(operations.GetPlot(id)));
@@ -257,6 +270,31 @@ public static class BackofficeRoutes
     public sealed record RevisionQuoteInput(Guid? ProviderId, DateOnly? ReceivedOn, string? Currency, string? Notes, QuoteLineDraft[]? Lines, long Revision)
     {
         public QuoteDraft Draft() => new(ProviderId, ReceivedOn, Currency, Notes, Lines);
+    }
+    public sealed record SoilAnalysisInput(Guid PlotId, Guid? CampaignId, DateOnly? SampledOn, DateOnly? AnalyzedOn, Guid? LaboratoryId, string? SamplingMethod,
+        string? SamplingDetail, string? MapLink, string? Notes, SoilResultDraft[]? Results)
+    {
+        public SoilAnalysisDraft Draft() => new(CampaignId, SampledOn, AnalyzedOn, LaboratoryId, SamplingMethod, SamplingDetail, MapLink, Notes, Results);
+    }
+    public sealed record RevisionSoilAnalysisInput(Guid? CampaignId, DateOnly? SampledOn, DateOnly? AnalyzedOn, Guid? LaboratoryId, string? SamplingMethod,
+        string? SamplingDetail, string? MapLink, string? Notes, SoilResultDraft[]? Results, long Revision)
+    {
+        public SoilAnalysisDraft Draft() => new(CampaignId, SampledOn, AnalyzedOn, LaboratoryId, SamplingMethod, SamplingDetail, MapLink, Notes, Results);
+    }
+    public sealed record SeedAnalysisInput(Guid? ClientId, Guid? CropId, string? Variety, Guid? CampaignId, DateOnly? AnalyzedOn, Guid? LaboratoryId,
+        decimal? ThousandSeedWeightG, decimal? GerminationTreatedPct, decimal? AbnormalTreatedPct, decimal? DeadTreatedPct, decimal? HardTreatedPct,
+        decimal? GerminationUntreatedPct, decimal? AbnormalUntreatedPct, decimal? DeadUntreatedPct, decimal? HardUntreatedPct, decimal? VigorPct, string? Notes)
+    {
+        public SeedAnalysisDraft Draft() => new(ClientId, CropId, Variety, CampaignId, AnalyzedOn, LaboratoryId, ThousandSeedWeightG, GerminationTreatedPct,
+            AbnormalTreatedPct, DeadTreatedPct, HardTreatedPct, GerminationUntreatedPct, AbnormalUntreatedPct, DeadUntreatedPct, HardUntreatedPct, VigorPct, Notes);
+    }
+    public sealed record RevisionSeedAnalysisInput(Guid? ClientId, Guid? CropId, string? Variety, Guid? CampaignId, DateOnly? AnalyzedOn, Guid? LaboratoryId,
+        decimal? ThousandSeedWeightG, decimal? GerminationTreatedPct, decimal? AbnormalTreatedPct, decimal? DeadTreatedPct, decimal? HardTreatedPct,
+        decimal? GerminationUntreatedPct, decimal? AbnormalUntreatedPct, decimal? DeadUntreatedPct, decimal? HardUntreatedPct, decimal? VigorPct, string? Notes,
+        long Revision)
+    {
+        public SeedAnalysisDraft Draft() => new(ClientId, CropId, Variety, CampaignId, AnalyzedOn, LaboratoryId, ThousandSeedWeightG, GerminationTreatedPct,
+            AbnormalTreatedPct, DeadTreatedPct, HardTreatedPct, GerminationUntreatedPct, AbnormalUntreatedPct, DeadUntreatedPct, HardUntreatedPct, VigorPct, Notes);
     }
     public sealed record InputInput(string CommercialName, string? ActiveIngredient, string? Concentration, string? Formulation, short? MixOrder,
         string? Category, string Unit, decimal? DoseMin, decimal? DoseMax, decimal? ReferenceCost, bool HollowCone)
