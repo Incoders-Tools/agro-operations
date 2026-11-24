@@ -21,6 +21,9 @@ public static class BackofficeRoutes
         var laborTypes = new LaborTypeCatalog(new PostgresLaborTypeRepository(connectionString));
         var plotAreas = new PlotCampaignAreaService(new PostgresPlotCampaignAreaRepository(connectionString));
         var recipes = new RecipeService(new PostgresRecipeRepository(connectionString));
+        var stages = new StageCatalog(new PostgresStageRepository(connectionString));
+        var contractors = new ContractorCatalog(new PostgresContractorRepository(connectionString));
+        var inputs = new InputCatalog(new PostgresInputRepository(connectionString));
         var provenance = new ImportProvenanceService(new PostgresImportRecordRepository(connectionString));
         var protectedRoutes = local.MapGroup("").RequireAuthorization().AddEndpointFilter(async (context, next) =>
         {
@@ -36,6 +39,9 @@ public static class BackofficeRoutes
         protectedRoutes.MapGet("/crops", () => Results.Json(crops.List()));
         protectedRoutes.MapGet("/campaigns", () => Results.Json(campaigns.List()));
         protectedRoutes.MapGet("/labor-types", () => Results.Json(laborTypes.List()));
+        protectedRoutes.MapGet("/stages", () => Results.Json(stages.List()));
+        protectedRoutes.MapGet("/contractors", () => Results.Json(contractors.List()));
+        protectedRoutes.MapGet("/inputs", () => Results.Json(inputs.List()));
         protectedRoutes.MapGet("/plot-campaign-areas", () => Results.Json(plotAreas.List()));
         protectedRoutes.MapGet("/recipes", () => Results.Json(recipes.List()));
         protectedRoutes.MapGet("/recipe-lines", () => Results.Json(recipes.ListLines()));
@@ -48,7 +54,10 @@ public static class BackofficeRoutes
         protectedRoutes.MapPost("/plots", (PlotInput input) => Create(() => operations.CreatePlot(input.FieldId, input.Name, input.AreaHectares)));
         protectedRoutes.MapPost("/crops", (NameInput input) => Create(() => crops.Create(input.Name)));
         protectedRoutes.MapPost("/campaigns", (NameInput input) => Create(() => campaigns.Create(input.Name)));
-        protectedRoutes.MapPost("/labor-types", (NameInput input) => Create(() => laborTypes.Create(input.Name)));
+        protectedRoutes.MapPost("/labor-types", (LaborInput input) => Create(() => laborTypes.Create(input.Name, input.Abbreviation)));
+        protectedRoutes.MapPost("/stages", (StageInput input) => Create(() => stages.Create(input.Name, input.SortOrder)));
+        protectedRoutes.MapPost("/contractors", (ContractorInput input) => Create(() => contractors.Create(input.Draft())));
+        protectedRoutes.MapPost("/inputs", (InputInput input) => Create(() => inputs.Create(input.Draft())));
         protectedRoutes.MapPost("/plot-campaign-areas", (PlotCampaignAreaInput input) =>
             Create(() => plotAreas.Create(input.PlotId, input.CampaignId, input.AreaHectares)));
         protectedRoutes.MapPost("/recipes", (RecipeInput input) =>
@@ -60,7 +69,11 @@ public static class BackofficeRoutes
         protectedRoutes.MapPut("/plots/{id:guid}", (Guid id, RevisionPlotInput input) => Change(() => operations.UpdatePlot(id, input.Revision, input.Name, input.AreaHectares)));
         protectedRoutes.MapPut("/crops/{id:guid}", (Guid id, RevisionNameInput input) => Change(() => crops.Update(id, input.Revision, input.Name)));
         protectedRoutes.MapPut("/campaigns/{id:guid}", (Guid id, RevisionNameInput input) => Change(() => campaigns.Update(id, input.Revision, input.Name)));
-        protectedRoutes.MapPut("/labor-types/{id:guid}", (Guid id, RevisionNameInput input) => Change(() => laborTypes.Update(id, input.Revision, input.Name)));
+        protectedRoutes.MapPut("/labor-types/{id:guid}", (Guid id, RevisionLaborInput input) =>
+            Change(() => laborTypes.Update(id, input.Revision, input.Name, input.Abbreviation)));
+        protectedRoutes.MapPut("/stages/{id:guid}", (Guid id, RevisionStageInput input) => Change(() => stages.Update(id, input.Revision, input.Name, input.SortOrder)));
+        protectedRoutes.MapPut("/contractors/{id:guid}", (Guid id, RevisionContractorInput input) => Change(() => contractors.Update(id, input.Revision, input.Draft())));
+        protectedRoutes.MapPut("/inputs/{id:guid}", (Guid id, RevisionInputInput input) => Change(() => inputs.Update(id, input.Revision, input.Draft())));
         protectedRoutes.MapPut("/plot-campaign-areas/{id:guid}", (Guid id, RevisionAreaInput input) =>
             Change(() => plotAreas.Update(id, input.Revision, input.AreaHectares)));
         protectedRoutes.MapPut("/recipes/{id:guid}", (Guid id, RevisionRecipeInput input) =>
@@ -78,6 +91,7 @@ public static class BackofficeRoutes
         catch (DomainValidationException error) { return Results.BadRequest(new { error = error.Message }); }
         catch (DomainNotFoundException) { return Results.NotFound(new { error = "Record not found" }); }
         catch (DomainConflictException) { return Results.Conflict(new { error = "Stale revision" }); }
+        catch (DomainDuplicateException) { return Results.Conflict(new { error = "Duplicate name" }); }
     }
     public sealed record NameInput(string Name);
     public sealed record FieldInput(Guid ClientId, string Name);
@@ -90,4 +104,26 @@ public static class BackofficeRoutes
     public sealed record RevisionRecipeInput(string Stage, string TargetUse, string ResponsibleEngineer, long Revision);
     public sealed record RecipeLineInput(Guid RecipeId, string ProductName, decimal DoseValue, string DoseUnit);
     public sealed record RevisionRecipeLineInput(string ProductName, decimal DoseValue, string DoseUnit, long Revision);
+    public sealed record LaborInput(string Name, string? Abbreviation);
+    public sealed record RevisionLaborInput(string Name, string? Abbreviation, long Revision);
+    public sealed record StageInput(string Name, int SortOrder);
+    public sealed record RevisionStageInput(string Name, int SortOrder, long Revision);
+    public sealed record ContractorInput(string Name, string? TaxId, string? Phone, string? Email, string? Notes, bool OwnEquipment)
+    {
+        public ContractorDraft Draft() => new(Name, TaxId, Phone, Email, Notes, OwnEquipment);
+    }
+    public sealed record RevisionContractorInput(string Name, string? TaxId, string? Phone, string? Email, string? Notes, bool OwnEquipment, long Revision)
+    {
+        public ContractorDraft Draft() => new(Name, TaxId, Phone, Email, Notes, OwnEquipment);
+    }
+    public sealed record InputInput(string CommercialName, string? ActiveIngredient, string? Concentration, string? Formulation, short? MixOrder,
+        string? Category, string Unit, decimal? DoseMin, decimal? DoseMax, decimal? ReferenceCost, bool HollowCone)
+    {
+        public InputDraft Draft() => new(CommercialName, ActiveIngredient, Concentration, Formulation, MixOrder, Category, Unit, DoseMin, DoseMax, ReferenceCost, HollowCone);
+    }
+    public sealed record RevisionInputInput(string CommercialName, string? ActiveIngredient, string? Concentration, string? Formulation, short? MixOrder,
+        string? Category, string Unit, decimal? DoseMin, decimal? DoseMax, decimal? ReferenceCost, bool HollowCone, long Revision)
+    {
+        public InputDraft Draft() => new(CommercialName, ActiveIngredient, Concentration, Formulation, MixOrder, Category, Unit, DoseMin, DoseMax, ReferenceCost, HollowCone);
+    }
 }

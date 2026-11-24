@@ -10,19 +10,19 @@ public interface IImportRecordRepository
 }
 
 /// <summary>
-/// Traces a client/field/plot back to the exact bounded import row that created it.
+/// Traces a client/field/plot/contractor/input back to the exact bounded import row that created it.
 /// A record here never proves the underlying values are agronomically verified.
 /// </summary>
 public sealed class ImportProvenanceService(IImportRecordRepository repository)
 {
-    private static readonly string[] EntityTypes = ["client", "field", "plot"];
+    private static readonly string[] EntityTypes = ["client", "field", "plot", "contractor", "input"];
 
     public ImportRecord? Find(string entityType, Guid entityId) => repository.Find(entityType, entityId);
 
     public ImportRecord RecordOnce(string entityType, Guid entityId, string sourceReference, string rawPayloadJson)
     {
         if (Array.IndexOf(EntityTypes, entityType) < 0)
-            throw new DomainValidationException("Entity type must be client, field or plot");
+            throw new DomainValidationException("Entity type must be client, field, plot, contractor or input");
         var existing = repository.Find(entityType, entityId);
         if (existing is not null) return existing;
         return repository.Create(entityType, entityId,

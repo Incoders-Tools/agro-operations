@@ -7,6 +7,8 @@ public sealed record Plot(Guid Id, Guid FieldId, string Name, decimal AreaHectar
 public sealed class DomainValidationException(string message) : Exception(message);
 public sealed class DomainConflictException() : Exception("Stale revision");
 public sealed class DomainNotFoundException() : Exception("Record not found");
+/// <summary>A case-insensitive unique name is already taken; distinct from a stale revision.</summary>
+public sealed class DomainDuplicateException() : Exception("Duplicate name");
 
 /// <summary>Application boundary. The repository is supplied by the persistence adapter.</summary>
 public sealed class OperationsService(IOperationsRepository repository)

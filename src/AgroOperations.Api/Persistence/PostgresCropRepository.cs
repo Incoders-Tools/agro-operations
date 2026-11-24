@@ -22,7 +22,7 @@ public sealed class PostgresCropRepository(string connectionString) : ICropRepos
         }
         catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
         {
-            throw new DomainValidationException("Crop already exists");
+            throw new DomainDuplicateException();
         }
     }
 
@@ -41,7 +41,7 @@ public sealed class PostgresCropRepository(string connectionString) : ICropRepos
         }
         catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
         {
-            throw new DomainValidationException("Crop already exists");
+            throw new DomainDuplicateException();
         }
         using var exists = new NpgsqlCommand("SELECT EXISTS(SELECT 1 FROM crops WHERE id=@id)", db);
         exists.Parameters.AddWithValue("id", id);

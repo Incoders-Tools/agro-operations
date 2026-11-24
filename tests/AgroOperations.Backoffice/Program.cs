@@ -22,7 +22,7 @@ try
     using (var db = new NpgsqlConnection(scoped.ConnectionString))
     {
         db.Open();
-        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql" })
+        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql" })
         {
             var file = Path.Combine(root, "src", "AgroOperations.Api", "Persistence", "Migrations", name);
             using var migration = new NpgsqlCommand(File.ReadAllText(file), db);
@@ -57,9 +57,10 @@ try
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException) { await Task.Delay(250); }
         }
         if (health?.StatusCode != HttpStatusCode.OK) throw new Exception("Test API did not start");
-        foreach (var route in new[] { "clients", "fields", "plots", "crops", "campaigns", "labor-types", "plot-campaign-areas", "recipes", "recipe-lines" })
+        foreach (var route in new[] { "clients", "fields", "plots", "crops", "campaigns", "labor-types", "plot-campaign-areas", "recipes", "recipe-lines", "stages", "contractors", "inputs" })
             if ((await client.GetAsync($"/api/v1/{route}")).StatusCode != HttpStatusCode.Unauthorized ||
-                (await client.PostAsJsonAsync($"/api/v1/{route}", new { name = "Example" })).StatusCode != HttpStatusCode.Unauthorized)
+                (await client.PostAsJsonAsync($"/api/v1/{route}", new { name = "Example" })).StatusCode != HttpStatusCode.Unauthorized ||
+                (await client.PutAsJsonAsync($"/api/v1/{route}/{Guid.NewGuid()}", new { name = "Example", revision = 1 })).StatusCode != HttpStatusCode.Unauthorized)
                 throw new Exception($"Anonymous {route} route accessible");
         var login = await client.PostAsJsonAsync("/api/v1/session", new { password });
         if (login.StatusCode != HttpStatusCode.OK) throw new Exception("Local session unavailable");
@@ -67,12 +68,27 @@ try
         var csrf = session.RootElement.GetProperty("csrfToken").GetString()!;
         if ((await client.PostAsJsonAsync("/api/v1/clients", new { name = "Example" })).StatusCode != HttpStatusCode.Forbidden)
             throw new Exception("Business write accepted without CSRF");
+        async Task<int> Count(string route) => (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/{route}"))!.Length;
+        var catalogCounts = new Dictionary<string, int> { ["labor-types"] = 14, ["stages"] = 7, ["contractors"] = 1, ["inputs"] = 0 };
+        var catalogBody = new { name = "Example", abbreviation = "EX", sortOrder = 1, commercialName = "Example", unit = "l", revision = 1 };
+        foreach (var (route, expected) in catalogCounts)
+        {
+            var anyId = (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/{route}")) is { Length: > 0 } rows ? rows[0].GetProperty("id").GetGuid() : Guid.NewGuid();
+            if ((await client.PostAsJsonAsync($"/api/v1/{route}", catalogBody)).StatusCode != HttpStatusCode.Forbidden ||
+                (await client.PutAsJsonAsync($"/api/v1/{route}/{anyId}", catalogBody)).StatusCode != HttpStatusCode.Forbidden ||
+                await Count(route) != expected)
+                throw new Exception($"{route} write accepted without CSRF or seed count differs");
+        }
         async Task<HttpResponseMessage> Send(HttpMethod method, string path, object value)
         {
             using var request = new HttpRequestMessage(method, path) { Content = JsonContent.Create(value) };
             request.Headers.Add("X-Agro-CSRF", csrf);
             return await client.SendAsync(request);
         }
+        async Task<JsonElement> Body(HttpResponseMessage response) =>
+            JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.Clone();
+        async Task<bool> IsError(HttpResponseMessage response, HttpStatusCode status, string? error = null) =>
+            response.StatusCode == status && (error is null || (await Body(response)).GetProperty("error").GetString() == error);
         if ((await Send(HttpMethod.Post, "/api/v1/clients", new { name = " " })).StatusCode != HttpStatusCode.BadRequest ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/clients"))!.Length != 0)
             throw new Exception("Rejected client changed listing");
@@ -96,7 +112,7 @@ try
         if (plot.StatusCode != HttpStatusCode.Created) throw new Exception("Plot create failed");
         var crop = await Send(HttpMethod.Post, "/api/v1/crops", new { name = "Crop" });
         if (crop.StatusCode != HttpStatusCode.Created) throw new Exception("Crop create failed");
-        if ((await Send(HttpMethod.Post, "/api/v1/crops", new { name = " CROP " })).StatusCode != HttpStatusCode.BadRequest ||
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/crops", new { name = " CROP " }), HttpStatusCode.Conflict, "Duplicate name") ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/crops"))!.Length != 1)
             throw new Exception("Duplicate crop changed stored records");
         if ((await client.GetFromJsonAsync<JsonElement[]>("/api/v1/fields"))!.Length != 1 ||
@@ -111,13 +127,97 @@ try
         if (campaign.StatusCode != HttpStatusCode.Created) throw new Exception("Campaign create failed");
         using var campaignRow = JsonDocument.Parse(await campaign.Content.ReadAsStringAsync());
         var campaignId = campaignRow.RootElement.GetProperty("id").GetGuid();
-        if ((await Send(HttpMethod.Post, "/api/v1/campaigns", new { name = "2026-27" })).StatusCode != HttpStatusCode.BadRequest ||
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/campaigns", new { name = "2026-27" }), HttpStatusCode.Conflict, "Duplicate name") ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/campaigns"))!.Length != 1)
             throw new Exception("Duplicate campaign changed stored records");
-        var laborType = await Send(HttpMethod.Post, "/api/v1/labor-types", new { name = "Pulverización terrestre" });
+        var seededLabors = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/labor-types");
+        if (!seededLabors!.Any(item => item.GetProperty("name").GetString() == "Pulverización terrestre" && item.GetProperty("abbreviation").GetString() == "PULV-TE"))
+            throw new Exception("Seeded labor abbreviation missing");
+        var laborType = await Send(HttpMethod.Post, "/api/v1/labor-types", new { name = "Labor de prueba", abbreviation = "LAB-PRU" });
         if (laborType.StatusCode != HttpStatusCode.Created) throw new Exception("Labor type create failed");
-        using var laborTypeRow = JsonDocument.Parse(await laborType.Content.ReadAsStringAsync());
-        var laborTypeId = laborTypeRow.RootElement.GetProperty("id").GetGuid();
+        var laborTypeRow = await Body(laborType);
+        var laborTypeId = laborTypeRow.GetProperty("id").GetGuid();
+        if (laborTypeRow.GetProperty("abbreviation").GetString() != "LAB-PRU") throw new Exception("Labor abbreviation not returned");
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/labor-types", new { name = " disco ", abbreviation = "D" }), HttpStatusCode.Conflict, "Duplicate name") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/labor-types", new { name = "Labor larga", abbreviation = "ABCDEFGHIJKLM" }), HttpStatusCode.BadRequest) ||
+            await Count("labor-types") != 15)
+            throw new Exception("Rejected labor changed stored records");
+        var changedLabor = await Send(HttpMethod.Put, $"/api/v1/labor-types/{laborTypeId}", new { name = "Labor de prueba", abbreviation = "LP", revision = 1 });
+        if (changedLabor.StatusCode != HttpStatusCode.OK || (await Body(changedLabor)).GetProperty("revision").GetInt64() != 2 ||
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/labor-types"))!.Single(item => item.GetProperty("id").GetGuid() == laborTypeId)
+                .GetProperty("abbreviation").GetString() != "LP")
+            throw new Exception("Labor abbreviation did not round-trip");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/labor-types/{laborTypeId}", new { name = "Stale", abbreviation = "S", revision = 1 }), HttpStatusCode.Conflict, "Stale revision"))
+            throw new Exception("Stale labor update did not conflict");
+
+        var stages = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/stages");
+        if (!stages!.Select(item => item.GetProperty("name").GetString()).SequenceEqual(
+                ["Barbecho", "Presiembra", "Preemergencia", "Postsiembra", "Postemergencia", "Prefloración", "Postfloración"]) ||
+            stages[6].GetProperty("sortOrder").GetInt32() != 70)
+            throw new Exception("Seeded stages missing or out of order");
+        var stage = await Send(HttpMethod.Post, "/api/v1/stages", new { name = "Cosecha", sortOrder = 80 });
+        if (stage.StatusCode != HttpStatusCode.Created) throw new Exception($"Stage create: {(int)stage.StatusCode}");
+        var stageId = (await Body(stage)).GetProperty("id").GetGuid();
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/stages", new { name = " barbecho ", sortOrder = 5 }), HttpStatusCode.Conflict, "Duplicate name") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/stages", new { name = " ", sortOrder = 5 }), HttpStatusCode.BadRequest) ||
+            await Count("stages") != 8)
+            throw new Exception("Rejected stage changed stored records");
+        var changedStage = await Send(HttpMethod.Put, $"/api/v1/stages/{stageId}", new { name = "Cosecha", sortOrder = 85, revision = 1 });
+        if (changedStage.StatusCode != HttpStatusCode.OK || (await Body(changedStage)).GetProperty("sortOrder").GetInt32() != 85)
+            throw new Exception("Stage update failed");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/stages/{stageId}", new { name = "Stale", sortOrder = 1, revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/stages"))![^1].GetProperty("name").GetString() != "Cosecha")
+            throw new Exception("Stale stage update overwrote record");
+
+        var contractors = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/contractors");
+        if (contractors is not { Length: 1 } || contractors[0].GetProperty("name").GetString() != "Propio" || !contractors[0].GetProperty("ownEquipment").GetBoolean())
+            throw new Exception("Seeded own contractor missing");
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/contractors", new { name = "Contratista", taxId = "20-1234567-8x" }), HttpStatusCode.BadRequest) ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/contractors", new { name = "Contratista", email = "a@b@c" }), HttpStatusCode.BadRequest) ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/contractors", new { name = " PROPIO " }), HttpStatusCode.Conflict, "Duplicate name") ||
+            await Count("contractors") != 1)
+            throw new Exception("Rejected contractor changed stored records");
+        var contractor = await Send(HttpMethod.Post, "/api/v1/contractors",
+            new { name = "Contratista de prueba", taxId = "20-12345678-9", phone = "0000 000000", email = "contacto@example.test", ownEquipment = false });
+        if (contractor.StatusCode != HttpStatusCode.Created) throw new Exception($"Contractor create: {(int)contractor.StatusCode}");
+        var contractorRow = await Body(contractor);
+        var contractorId = contractorRow.GetProperty("id").GetGuid();
+        if (contractorRow.GetProperty("taxId").GetString() != "20123456789" || await Count("contractors") != 2)
+            throw new Exception("Contractor CUIT not normalized");
+        var changedContractor = await Send(HttpMethod.Put, $"/api/v1/contractors/{contractorId}",
+            new { name = "Contratista de prueba", taxId = "20123456789", notes = "Notas", ownEquipment = true, revision = 1 });
+        if (changedContractor.StatusCode != HttpStatusCode.OK || (await Body(changedContractor)) is var contractorChange &&
+            (contractorChange.GetProperty("notes").GetString() != "Notas" || !contractorChange.GetProperty("ownEquipment").GetBoolean()))
+            throw new Exception("Contractor update failed");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/contractors/{contractorId}", new { name = "Stale", revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/contractors/{contractorId}", new { name = "Propio", revision = 2 }), HttpStatusCode.Conflict, "Duplicate name") ||
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/contractors"))!.Single(item => item.GetProperty("id").GetGuid() == contractorId)
+                .GetProperty("name").GetString() != "Contratista de prueba")
+            throw new Exception("Rejected contractor update overwrote record");
+
+        var inputBody = new { commercialName = "Producto de prueba", activeIngredient = "Principio activo ficticio", concentration = "48%", formulation = "SC",
+            mixOrder = 3, category = "herbicida", unit = "l", doseMin = 1.5m, doseMax = 3m, referenceCost = 10.25m, hollowCone = true };
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/inputs", inputBody with { category = "semilla" }), HttpStatusCode.BadRequest) ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/inputs", inputBody with { doseMin = 4m }), HttpStatusCode.BadRequest) ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/inputs", inputBody with { unit = " " }), HttpStatusCode.BadRequest) ||
+            await Count("inputs") != 0)
+            throw new Exception("Rejected input changed stored records");
+        var input = await Send(HttpMethod.Post, "/api/v1/inputs", inputBody);
+        if (input.StatusCode != HttpStatusCode.Created) throw new Exception($"Input create: {(int)input.StatusCode}");
+        var inputRow = await Body(input);
+        var inputId = inputRow.GetProperty("id").GetGuid();
+        if (inputRow.GetProperty("doseMax").GetDecimal() != 3m || inputRow.GetProperty("mixOrder").GetInt32() != 3 || !inputRow.GetProperty("hollowCone").GetBoolean())
+            throw new Exception("Input fields not returned");
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/inputs", inputBody with { commercialName = " PRODUCTO DE PRUEBA " }), HttpStatusCode.Conflict, "Duplicate name") ||
+            await Count("inputs") != 1)
+            throw new Exception("Duplicate input changed stored records");
+        var changedInput = await Send(HttpMethod.Put, $"/api/v1/inputs/{inputId}", new { commercialName = "Producto de prueba", unit = "kg", category = "fungicida", revision = 1 });
+        if (changedInput.StatusCode != HttpStatusCode.OK || (await Body(changedInput)).GetProperty("unit").GetString() != "kg")
+            throw new Exception("Input update failed");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/inputs/{inputId}", new { commercialName = "Stale", unit = "l", revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/inputs/{inputId}", new { commercialName = "Producto de prueba", unit = "l", doseMin = 4m, doseMax = 3m, revision = 2 }), HttpStatusCode.BadRequest) ||
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/inputs"))![0].GetProperty("unit").GetString() != "kg")
+            throw new Exception("Rejected input update overwrote record");
         if ((await Send(HttpMethod.Post, "/api/v1/plot-campaign-areas", new { plotId = Guid.NewGuid(), campaignId, areaHectares = 1m })).StatusCode != HttpStatusCode.NotFound ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/plot-campaign-areas"))!.Length != 0)
             throw new Exception("Orphan plot campaign area changed stored records");
@@ -125,7 +225,7 @@ try
         var plotId = plotRow.RootElement[0].GetProperty("id").GetGuid();
         var createdArea = await Send(HttpMethod.Post, "/api/v1/plot-campaign-areas", new { plotId, campaignId, areaHectares = 2.75m });
         if (createdArea.StatusCode != HttpStatusCode.Created) throw new Exception("Plot campaign area create failed");
-        if ((await Send(HttpMethod.Post, "/api/v1/plot-campaign-areas", new { plotId, campaignId, areaHectares = 3m })).StatusCode != HttpStatusCode.BadRequest ||
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/plot-campaign-areas", new { plotId, campaignId, areaHectares = 3m }), HttpStatusCode.BadRequest) ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/plot-campaign-areas"))!.Length != 1)
             throw new Exception("Duplicate plot campaign area changed stored records");
         var recipe = await Send(HttpMethod.Post, "/api/v1/recipes",
