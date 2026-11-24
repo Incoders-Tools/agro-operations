@@ -4,4 +4,6 @@
   <Project Path="tests/AgroOperations.Domain/AgroOperations.Domain.csproj" />
   <Project Path="tests/AgroOperations.Identity/AgroOperations.Identity.csproj" />
   <Project Path="tests/AgroOperations.Backoffice/AgroOperations.Backoffice.csproj" />
+  <Project Path="tests/AgroOperations.WorkbookImport/AgroOperations.WorkbookImport.Tests.csproj" />
+  <Project Path="tools/AgroOperations.WorkbookImport/AgroOperations.WorkbookImport.csproj" />
 </Solution>
