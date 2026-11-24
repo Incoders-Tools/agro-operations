@@ -27,10 +27,29 @@ function Invoke-Compose {
 
 if (-not (Get-Command docker.exe -ErrorAction SilentlyContinue)) { throw 'Docker is required for the private local database.' }
 if (-not (Get-Command dotnet.exe -ErrorAction SilentlyContinue)) { throw '.NET SDK is required for the private local API.' }
+function Test-Docker([string[]]$arguments) {
+    # Windows PowerShell turns redirected native stderr into terminating errors under Stop.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & docker.exe @arguments 2>$null | Out-Null; return $LASTEXITCODE -eq 0 }
+    finally { $ErrorActionPreference = $previous }
+}
+function Test-DockerEngine { Test-Docker @('info', '--format', '{{.ServerVersion}}') }
+if (-not (Test-DockerEngine)) {
+    $desktop = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
+    if (-not (Test-Path -LiteralPath $desktop)) { throw 'Docker is not running and Docker Desktop was not found.' }
+    Write-Host 'Starting Docker Desktop...'
+    Start-Process -FilePath $desktop | Out-Null
+    $engine = $false
+    for ($attempt = 0; $attempt -lt 90 -and -not $engine; $attempt++) {
+        Start-Sleep -Seconds 2
+        $engine = Test-DockerEngine
+    }
+    if (-not $engine) { throw 'Docker Desktop did not become ready. Open it manually and retry.' }
+}
 if (-not (Test-Path -LiteralPath $state)) { New-Item -ItemType Directory -Path $state | Out-Null }
 if (-not (Test-Path -LiteralPath $settingsFile)) {
-    & docker.exe volume inspect "${project}_postgres_data" --format '{{.Name}}' 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
+    if (Test-Docker @('volume', 'inspect', "${project}_postgres_data", '--format', '{{.Name}}')) {
         throw 'Private database exists without local credentials. Restore the original credentials; no reset was attempted.'
     }
     $settings = [ordered]@{
@@ -78,18 +97,28 @@ function Apply-Migration([string]$file) {
 $masters = Table-Count 'public.clients,public.fields,public.plots'
 if ($masters -eq 0) { Apply-Migration '001_operations.sql' }
 elseif ($masters -ne 3) { throw 'Incomplete local master schema: inspect it before continuing; no automatic reset.' }
+function Ensure-Migration([string]$file, [string]$tables) {
+    # Additive migrations run only when none of their tables exist; partial schemas are never reset.
+    $present = Table-Count $tables
+    if ($present -eq 0) { Apply-Migration $file; Write-Host "Applied local schema migration $file." }
+    elseif ($present -ne $tables.Split(',').Count) {
+        throw "Incomplete local schema for ${file}: inspect it before continuing; no automatic reset."
+    }
+}
 if ((Table-Count 'public.crops') -eq 0) { Apply-Migration '003_crops.sql' }
 $indexSql = "SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND tablename='crops' AND indexname='crops_name_ci_idx' AND indexdef LIKE 'CREATE UNIQUE INDEX % (lower(name))'"
 $indexCount = & docker.exe compose -p $project -f $compose exec -T postgres psql -U agro_dev -d agro_operations -tAc $indexSql
 if ($LASTEXITCODE -ne 0 -or [int]$indexCount.Trim() -ne 1) {
     throw 'Incomplete local crop schema: inspect it before continuing; no automatic reset.'
 }
+Ensure-Migration '004_agronomy.sql' 'public.campaigns,public.plot_campaign_areas,public.labor_types,public.recipes,public.recipe_lines'
+Ensure-Migration '005_import_records.sql' 'public.import_records'
 
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
 $env:AGRO_LOCAL_ADMIN_EMAIL = $settings.email
 $env:AGRO_LOCAL_ADMIN_PASSWORD = $adminPassword
 $env:AGRO_LOCAL_DATABASE = "Host=127.0.0.1;Port=5433;Database=agro_operations;Username=agro_dev;Password=$databasePassword"
-Write-Host 'Protected local API at http://127.0.0.1:5081/ (no real-data UI enabled yet).'
+Write-Host 'Protected local API at http://127.0.0.1:5081/ (backoffice UI at http://127.0.0.1:3000/backoffice).'
 Write-Host 'Stop this window with Ctrl+C. PostgreSQL data remains in its private Docker volume.'
 Push-Location $root
 try {

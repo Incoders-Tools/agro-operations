@@ -2,7 +2,7 @@
 
 A .NET 10 ASP.NET Core Web API and Next.js web client for a private agronomy operations backoffice (clients, fields, plots, crops, campaigns, labor types and internal treatment recipes), backed by PostgreSQL.
 
-`GET /api/v1/health` is always public; every other route is Development-only and loopback-only while there is no staging/production deployment. See `docs/local-access-contract.md` for the temporary local administrator bootstrap and `tools/start-backoffice.ps1` to run it, `docs/domain-contract.md` and `docs/platform-contract.md` for the operations/agronomy domain, and `docs/local-preview-contract.md` for the separate login-free synthetic demo at `web/`.
+`GET /api/v1/health` is always public; every other route is Development-only and loopback-only while there is no staging/production deployment. See `docs/local-access-contract.md` for the temporary local administrator bootstrap and `tools/start-local.ps1` (the single local launcher behind `C:\shortcuts\run-agro-operations-local.bat`) to run the whole local stack, `docs/domain-contract.md` and `docs/platform-contract.md` for the operations/agronomy domain, and `docs/local-preview-contract.md` for the separate login-free synthetic demo at `web/`.
 
 ## Identity (domain layer only)
 

@@ -13,4 +13,5 @@ This is a **developer-only visual prototype** using wholly fabricated clients, f
 - T9: Implement a bounded local launcher and create the explicitly authorized local Windows Start Menu shortcut on C:, then verify it opens the preview only on loopback.
 
 ## Log
+- The Start Menu shortcut and `C:\shortcuts\run-agro-operations-local.bat` now share one launcher, `tools/start-local.ps1`, which also starts the protected local API and opens `/backoffice`; this notebook stays at `/` and still never reads customer data.
 - The original request and client source paths remain in the separate private discovery repository. This public handoff is intentionally sanitized.
