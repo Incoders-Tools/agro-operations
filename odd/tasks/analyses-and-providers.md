@@ -73,7 +73,7 @@ yet. Public repository: no client values. The API contract below is binding for 
 - T2 (S1, S2) worker, parallel with T1: UI for soil analyses (plot level), seed analyses section, calculator. | done (commit: analyses UI; API round trip in T5)
 - T3 (S1, S2) worker: migration 012 soil and seed analyses + API + tests. | done
 - T4 (S3, S4) worker, parallel with T3: UI for providers, contacts, client links, prices, quote comparison. | done
-- T5: launcher 011-012, engineer questions, docs, real DB apply, browser check, push.
+- T5: launcher 011-012, engineer questions, docs, real DB apply, browser check, push. | done
 
 ## Log
 - L1 (owner, 2026-11-24, verbatim): "arranca" — answer to "¿Arranco con alguno, o esperamos a que traigas las
@@ -82,3 +82,11 @@ yet. Public repository: no client values. The API contract below is binding for 
 - L2 (decision): one Provider entity with a kind covers client input suppliers and service providers (labs, virtual
   platforms); contractors stay separate because work orders reference them. The seeding formula, soil parameter list
   and quote taxes/currency go to the engineer questions; the calculator states its assumptions on screen.
+- L3 (T5 evidence): private DB backed up to `.local/backups/before-011-012.dump`; the launcher created the 10 new
+  tables; existing data intact (28 clients, 174 fields, 468 plots, 82 labors, 367 inputs). Browser at 1280/390 px:
+  providers section, client page, plot soil panel on real data (read-only); seed detail with calculator and a quote
+  comparison rendered from intercepted invented data (no real records written): calculator 500.000 seeds/ha, 75
+  kg/ha, 26,25 seeds/m for 320.000 plants/ha, PG 80 %, efficiency 80 %, P1000 150 g, 52,5 cm; cheapest per currency
+  and mixed-currency note shown; 0 label overlaps, no overflow, no page errors. Write round trips are covered by the
+  Domain and Backoffice suites. T3 found two UI mismatches (empty references sent as '', result field limits)
+  fixed with a RED-first web test in 0679e37.
