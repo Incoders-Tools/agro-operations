@@ -113,6 +113,8 @@ if ($LASTEXITCODE -ne 0 -or [int]$indexCount.Trim() -ne 1) {
 }
 Ensure-Migration '004_agronomy.sql' 'public.campaigns,public.plot_campaign_areas,public.labor_types,public.recipes,public.recipe_lines'
 Ensure-Migration '005_import_records.sql' 'public.import_records'
+Ensure-Migration '006_catalogs.sql' 'public.stages,public.contractors,public.inputs'
+Ensure-Migration '007_attributes.sql' 'public.commercial_firms,public.plot_crops'
 
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
 $env:AGRO_LOCAL_ADMIN_EMAIL = $settings.email
