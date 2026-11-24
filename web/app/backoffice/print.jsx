@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api, sessionEndedMessage } from './api.mjs';
-import { cropLabel, displayDate, documentTitle, productLabel } from './work-orders.mjs';
+import { cropLabel, displayDate, documentTitle, formatAmount, productLabel } from './work-orders.mjs';
 
 const plotLabel = plot => plot.plotCode ? <><strong>{plot.plotCode}</strong> <span className="ot-sub">{plot.plotName}</span></> : plot.plotName;
 
@@ -59,8 +59,8 @@ export default function WorkOrderPrint({ id }) {
         <thead><tr><th scope="col">Campo</th><th scope="col">Lote</th><th scope="col" className="ot-num">Has</th><th scope="col" className="ot-num">Has tarea</th></tr></thead>
         <tbody>{order.plots.map((plot, index) => <tr key={index}>
           <td>{plot.fieldName}</td><td>{plotLabel(plot)}</td>
-          <td className="ot-num">{plot.areaHectares}</td><td className="ot-num">{plot.workedAreaHectares}</td></tr>)}</tbody>
-        <tfoot><tr><th scope="row" colSpan={3}>Total a trabajar</th><td className="ot-num">{order.totalWorkedAreaHectares} ha</td></tr></tfoot>
+          <td className="ot-num">{formatAmount(plot.areaHectares)}</td><td className="ot-num">{formatAmount(plot.workedAreaHectares)}</td></tr>)}</tbody>
+        <tfoot><tr><th scope="row" colSpan={3}>Total a trabajar</th><td className="ot-num">{formatAmount(order.totalWorkedAreaHectares)} ha</td></tr></tfoot>
       </table>
 
       <div className="ot-row">
@@ -74,7 +74,7 @@ export default function WorkOrderPrint({ id }) {
             <thead><tr><th scope="col">Producto</th><th scope="col" className="ot-num">Dosis por ha</th><th scope="col" className="ot-num">Total</th></tr></thead>
             <tbody>{order.lines.map(line => <tr key={line.position}>
               <td>{productLabel(line)}{line.hollowCone && <span className="ot-tag">Cono hueco</span>}</td>
-              <td className="ot-num">{line.dosePerHectare} {line.unit}/ha</td><td className="ot-num">{line.total} {line.unit}</td></tr>)}</tbody>
+              <td className="ot-num">{formatAmount(line.dosePerHectare)} {line.unit}/ha</td><td className="ot-num">{formatAmount(line.total)} {line.unit}</td></tr>)}</tbody>
           </table>
           {hollow && <p className="ot-note">Los productos marcados “Cono hueco” requieren aplicación con cono hueco.</p>}</>}
       </section>

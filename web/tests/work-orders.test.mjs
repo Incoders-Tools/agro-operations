@@ -4,7 +4,7 @@ import { errorMessage } from '../app/backoffice/api.mjs';
 import { formFor, payloadFor } from '../app/backoffice/schema.mjs';
 import {
   clientFirms, cropLabel, displayDate, documentTitle, doseRange, emptyOrder, exceedsPlot, fieldNames, lineTotal, orderFromRecord, orderLabel,
-  orderPayload, orderQuery, plotCropPrefill, plotGroups, productLabel, todayIso, workedTotal,
+  formatAmount, orderPayload, orderQuery, plotCropPrefill, plotGroups, productLabel, todayIso, workedTotal,
 } from '../app/backoffice/work-orders.mjs';
 
 const generic = 'Revisa los datos e intenta de nuevo.';
@@ -214,4 +214,13 @@ test('print labels join crop and variety, and product, formulation and mix order
   assert.equal(cropLabel({ cropName: null, variety: null }), 'Sin indicar');
   assert.equal(productLabel({ inputName: 'Producto Uno', formulation: 'SC', mixOrder: 2 }), 'Producto Uno SC · orden de mezcla 2');
   assert.equal(productLabel({ inputName: 'Producto Dos', formulation: null, mixOrder: null }), 'Producto Dos');
+  assert.equal(productLabel({ inputName: 'Producto Tres 20% (7 SL)', formulation: 'SL', mixOrder: 7 }), 'Producto Tres 20% (7 SL)');
+});
+
+test('print amounts use the Argentine decimal comma like the issued orders', () => {
+  assert.equal(formatAmount(0.3), '0,3');
+  assert.equal(formatAmount(2), '2');
+  assert.equal(formatAmount(1234.5), '1.234,5');
+  assert.equal(formatAmount(11.4375), '11,4375');
+  assert.equal(formatAmount(null), '');
 });

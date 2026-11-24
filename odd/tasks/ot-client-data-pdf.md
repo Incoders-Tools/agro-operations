@@ -41,7 +41,7 @@ contractor or product values; real data lives only in the private local database
 - T3 (S1) worker: workbook import of BASEDATOS clients/fields/plots and Registros firms with next numbers; real run. | done (commit: import hierarchy; real run in T5)
 - T4 (S1, S3, S4, S5, S6) worker | done (commit: OT by client + print view): OT form by client with plots grouped by field, client list discoverability, OT
   search, print view and PDF file name.
-- T5: launcher 009, docs, browser verification, push to main.
+- T5: launcher 009, docs, browser verification, push to main. | done
 
 ## Log
 - L1 (owner, 2026-11-24, verbatim): "No veo aun que podamos desde el backoffice gestionar los campos de los clientes y
@@ -70,3 +70,11 @@ contractor or product values; real data lives only in the private local database
   are recorded as Q1-Q16 in `docs/engineer-questions.md`; behaviour follows the majority case until answered.
 - L4 (decision): the PDF is produced from a print view with the browser's "Guardar como PDF" (no new server
   dependency); a server-generated PDF can follow if OTs must be sent automatically.
+- L5 (T5 evidence): private DB backed up to `.local/backups/before-009-import.dump`; 009 applied (field_id gone). Real
+  import: 27 clients, 167 fields, 458 plots created; the earlier client, 7 fields and 10 plots matched and got their
+  10 codes; 28 firms got their next number; 2 workbook firms match no client (Q1); rerun creates nothing. Totals: 28
+  clients, 174 fields, 468 plots (all coded), 28 firms, 0 clients without a firm. Browser at 1280/390 px: 28 clients
+  with "Ver campos y lotes", OT form for a client with 29 fields, plots from two fields totalled, number hint shown,
+  0 label overlaps, no horizontal overflow, no page errors; print view checked with an intercepted invented document
+  (no real OT created): title = workbook file name, one A4 page. Polished amounts to the decimal comma and stopped
+  repeating the formulation already in the product name.

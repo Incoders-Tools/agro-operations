@@ -155,9 +155,15 @@ export function documentTitle(document) {
 export const cropLabel = document => [document.cropName, document.variety].filter(Boolean).join(' · ') || 'Sin indicar';
 
 export function productLabel(line) {
+  // Workbook names already carry "(<mix order> <formulation>)"; repeating it would print it twice.
+  if (/\(\s*\d+\s+[A-Za-z]+\s*\)\s*$/.test(line.inputName ?? '')) return line.inputName;
   const name = line.formulation ? `${line.inputName} ${line.formulation}` : line.inputName;
   return line.mixOrder ? `${name} · orden de mezcla ${line.mixOrder}` : name;
 }
+
+const amountFormat = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 4 });
+/** Quantity as printed on the issued orders: decimal comma, dot for thousands, up to 4 decimals. */
+export const formatAmount = value => value === null || value === undefined || value === '' ? '' : amountFormat.format(Number(value));
 
 /** ISO date (yyyy-mm-dd) as dd/mm/yyyy. */
 export const displayDate = iso => /^\d{4}-\d{2}-\d{2}$/.test(text(iso)) ? iso.split('-').reverse().join('/') : text(iso);
