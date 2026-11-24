@@ -29,7 +29,7 @@ export function RecordForm({ entity, record, parent, optionSets, csrfToken, onSa
     setBusy(true); setError('');
     try {
       const saved = await send(record ? `${entity}/${record.id}` : entity, record ? 'PUT' : 'POST',
-        payloadFor(entity, form, { revision: record?.revision, parent }), csrfToken);
+        payloadFor(entity, form, { revision: record?.revision, parent, record }), csrfToken);
       onSaved(saved, Boolean(record));
     } catch (cause) { setError(cause.message); }
     finally { setBusy(false); }

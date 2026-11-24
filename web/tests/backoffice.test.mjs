@@ -61,9 +61,9 @@ test('child payloads carry their parent only on create', () => {
 test('plot crop update omits the identifying campaign and position', () => {
   const form = { campaignId: 'k1', position: '2', cropId: 'r1', role: 'servicio', variety: '' };
   assert.deepEqual(payloadFor('plot-crops', form, { parent: { plotId: 'p1' } }),
-    { plotId: 'p1', campaignId: 'k1', position: 2, cropId: 'r1', role: 'servicio', variety: null });
+    { plotId: 'p1', campaignId: 'k1', position: 2, cropId: 'r1', role: 'servicio', variety: null, grainYieldKgHa: null, forageBiomassKgHa: null });
   assert.deepEqual(payloadFor('plot-crops', form, { revision: 7, parent: { plotId: 'p1' } }),
-    { cropId: 'r1', role: 'servicio', variety: null, revision: 7 });
+    { cropId: 'r1', role: 'servicio', variety: null, grainYieldKgHa: null, forageBiomassKgHa: null, revision: 7 });
 });
 
 test('input payload converts numbers, keeps empty numbers null and sends booleans', () => {
@@ -78,11 +78,12 @@ test('input payload converts numbers, keeps empty numbers null and sends boolean
 });
 
 test('contractor, labor and stage payloads', () => {
-  assert.deepEqual(payloadFor('contractors', { name: 'Propio', taxId: '', phone: '', email: '', notes: '', ownEquipment: true }),
-    { name: 'Propio', taxId: null, phone: null, email: null, notes: null, ownEquipment: true });
+  assert.deepEqual(payloadFor('contractors', { name: 'Propio', taxId: '', phone: '', email: '', website: '', notes: '', ownEquipment: true }),
+    { name: 'Propio', taxId: null, phone: null, email: null, website: null, notes: null, ownEquipment: true });
   assert.deepEqual(payloadFor('contractors', { name: 'X', ownEquipment: false }),
-    { name: 'X', taxId: null, phone: null, email: null, notes: null, ownEquipment: false });
-  assert.deepEqual(payloadFor('labor-types', { name: 'Siembra gruesa', abbreviation: '' }), { name: 'Siembra gruesa', abbreviation: null });
+    { name: 'X', taxId: null, phone: null, email: null, website: null, notes: null, ownEquipment: false });
+  assert.deepEqual(payloadFor('labor-types', { name: 'Siembra gruesa', abbreviation: '' }),
+    { name: 'Siembra gruesa', abbreviation: null, category: null, description: null });
   assert.deepEqual(payloadFor('stages', { name: 'Barbecho', sortOrder: '10' }, { revision: 1 }), { name: 'Barbecho', sortOrder: 10, revision: 1 });
   assert.deepEqual(payloadFor('crops', { name: ' Soja ' }), { name: 'Soja' });
 });

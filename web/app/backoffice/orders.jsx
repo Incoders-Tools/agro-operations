@@ -2,18 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
-import { Field } from './field.jsx';
+import { Field, optionNodes } from './field.jsx';
 import { RecordDetail, SectionHeader } from './records.jsx';
 import { fieldPlotCount, optionLabel, rowLabel, searchRecords } from './schema.mjs';
 import {
-  clientFirms, displayDate, doseRange, emptyOrder, exceedsPlot, fieldNames, lineTotal, newLine, orderFromRecord, orderLabel, orderPayload,
-  orderQuery, plotCropPrefill, plotGroups, statuses, workedTotal,
+  clientFirms, displayDate, doseRange, emptyOrder, exceedsPlot, fieldNames, laborLabel, laborOptionGroups, lineTotal, newLine, orderFromRecord,
+  orderLabel, orderPayload, orderQuery, plotCropPrefill, plotGroups, statuses, workedTotal,
 } from './work-orders.mjs';
 
 // Catalogs the list, form and detail resolve ids against; firms come back with their next work order number.
 const references = ['commercial-firms', 'clients', 'fields', 'labor-types', 'stages', 'contractors', 'campaigns', 'crops', 'inputs'];
 const byId = (rows, id) => rows.find(row => row.id === id);
-const laborLabel = labor => labor ? (labor.abbreviation ? `${labor.name} (${labor.abbreviation})` : labor.name) : 'Sin referencia';
 const nameOf = (rows, id) => byId(rows, id)?.name;
 const printHref = id => `/backoffice/work-orders/${encodeURIComponent(id)}/print`;
 
@@ -30,7 +29,7 @@ function Select({ id, label, value, onChange, options, placeholder, optional, hi
   return <Field id={id} label={label} optional={optional} hint={hint}>{hintId =>
     <select id={id} value={value} required={required} disabled={disabled} aria-describedby={hintId} onChange={event => onChange(event.target.value)}>
       <option value="">{placeholder}</option>
-      {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+      {optionNodes(options)}
     </select>}</Field>;
 }
 
@@ -126,7 +125,7 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
       <Field id="bo-wo-date" label="Fecha">
         <input id="bo-wo-date" type="date" value={form.issuedOn} required onChange={event => set({ issuedOn: event.target.value })} /></Field>
       <Select id="bo-wo-labor" label="Labor" value={form.laborTypeId} onChange={laborTypeId => set({ laborTypeId })}
-        options={options(refs['labor-types'], laborLabel)} placeholder="Selecciona una labor" />
+        options={laborOptionGroups(refs['labor-types'])} placeholder="Selecciona una labor" />
       <Select id="bo-wo-stage" label="Etapa" optional value={form.stageId} onChange={stageId => set({ stageId })}
         options={options(refs.stages)} placeholder="Sin indicar" />
       <Select id="bo-wo-contractor" label="Contratista" value={form.contractorId} onChange={contractorId => set({ contractorId })}

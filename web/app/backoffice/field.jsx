@@ -13,6 +13,11 @@ export function Field({ id, label, optional, hint, check, children }) {
   </div>;
 }
 
+// Options for a select; an item with its own `options` renders as an <optgroup>.
+export const optionNodes = options => options.map(option => option.options
+  ? <optgroup key={option.label} label={option.label}>{optionNodes(option.options)}</optgroup>
+  : <option key={option.value} value={option.value}>{option.label}</option>);
+
 // Renders one schema field (see schema.mjs). `options` resolves named option sets such as 'crops'.
 export function SchemaControl({ field, id, value, onChange, optionSets = {} }) {
   const common = { id, required: !field.optional && field.type !== 'checkbox' };
@@ -26,7 +31,7 @@ export function SchemaControl({ field, id, value, onChange, optionSets = {} }) {
       const options = typeof field.options === 'string' ? optionSets[field.options] ?? [] : field.options;
       return <select {...props}>
         {(field.placeholder || field.optional) && <option value="">{field.placeholder ?? 'Sin indicar'}</option>}
-        {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        {optionNodes(options)}
       </select>;
     }
     if (field.type === 'textarea') return <textarea {...props} rows={3} maxLength={field.maxLength ?? 2000} />;

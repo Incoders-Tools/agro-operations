@@ -42,13 +42,15 @@ const validations = {
   'Worked area must be positive and fit numeric(12,4)': 'Las ha a trabajar deben ser mayores que cero y tener hasta 4 decimales.',
   'Line total must be positive and fit numeric(14,4)': 'El total de cada insumo debe ser mayor que cero y tener hasta 4 decimales.',
   "Every plot must belong to the firm's client": 'Todos los lotes deben ser de campos del cliente de la firma.',
+  'Yield must be zero or positive and fit numeric(12,2)': 'El rendimiento debe ser cero o positivo.',
+  'Website must be a single address without spaces': 'El sitio web no puede tener espacios.',
 };
 
 // Messages that list the accepted values end with that list, so they match by prefix.
 const choices = [
   ['Tenure must be one of', 'Elige una tenencia válida.'],
   ['Role must be one of', 'Elige renta o servicio.'],
-  ['Category must be one of', 'Elige una categoría válida.'],
+  ['Category must be one of', 'La categoría no es válida.'],
   ['Stage must be', 'Elige una etapa válida.'],
   ['Status must be one of', 'Elige un estado válido.'],
 ];

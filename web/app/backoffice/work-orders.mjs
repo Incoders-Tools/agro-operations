@@ -1,6 +1,6 @@
 // Pure work order (OT) helpers: form state, request payloads and the live totals shown before the server stores them.
 
-import { fold } from './schema.mjs';
+import { fold, laborGroups } from './schema.mjs';
 
 export const statuses = [
   { value: 'emitida', label: 'Emitida' },
@@ -102,6 +102,13 @@ export function plotCropPrefill(plotCrops, campaignId) {
   const first = plotCrops.find(row => row.campaignId === campaignId && Number(row.position) === 1);
   return first ? { cropId: first.cropId, variety: text(first.variety) } : null;
 }
+
+export const laborLabel = labor => labor ? (labor.abbreviation ? `${labor.name} (${labor.abbreviation})` : labor.name) : 'Sin referencia';
+
+/** OT labor select: one optgroup per category in reference order, "Otras" last; options show the abbreviation. */
+export const laborOptionGroups = labors => laborGroups(labors).map(group => ({
+  label: group.label, options: group.labors.map(labor => ({ value: labor.id, label: laborLabel(labor) })),
+}));
 
 export const orderLabel = (firm, number) => firm ? `${firm.name} Nº ${number}` : `Nº ${number}`;
 

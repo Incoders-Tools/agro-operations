@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.mjs';
 import { RecordDetail, RecordForm, RecordList, SectionHeader } from './records.jsx';
-import { clientCounts, entities, fieldPlotCount, optionLabel, roles, rowLabel, tenures } from './schema.mjs';
+import { clientCounts, entities, fieldMoveGroups, fieldPlotCount, moveNotice, optionLabel, plotCropDetail, rowLabel, tenures } from './schema.mjs';
 
 const children = { clients: 'fields', fields: 'plots', plots: 'plot-crops' };
 
@@ -17,6 +17,7 @@ export default function ClientsSection({ identity }) {
   // Every field and plot, only to count them on the client and field rows (S1).
   const [totals, setTotals] = useState({ fields: [], plots: [] });
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   const load = useCallback(async (entity, query) => {
     try {
@@ -49,9 +50,9 @@ export default function ClientsSection({ identity }) {
     if (next.fieldId !== path.fieldId) cleared.plots = [];
     if (next.plotId !== path.plotId) cleared['plot-crops'] = [];
     setRows(current => ({ ...current, ...cleared }));
-    setPath(next); setEditor(null); setFormKey(key => key + 1); setError('');
+    setPath(next); setEditor(null); setFormKey(key => key + 1); setError(''); setNotice('');
   }
-  function open(entity, record = null) { setEditor({ entity, record }); setFormKey(key => key + 1); setError(''); }
+  function open(entity, record = null) { setEditor({ entity, record }); setFormKey(key => key + 1); setError(''); setNotice(''); }
   function reloadFor(entity) {
     if (entity === 'clients' || entity === 'fields' || entity === 'plots') loadTotals();
     if (entity === 'clients') return load('clients');
@@ -59,7 +60,15 @@ export default function ClientsSection({ identity }) {
     if (entity === 'plots') return load('plots', `fieldId=${path.fieldId}`);
     return load('plot-crops', `plotId=${path.plotId}`);
   }
-  function saved(entity) { setEditor(null); setFormKey(key => key + 1); reloadFor(entity); }
+  // A field moved to another client or a plot moved to another field opens its new parent (S3).
+  function saved(entity, record, result) {
+    const moved = record && result && moveNotice(entity, record, result, { clients: rows.clients, fields: totals.fields });
+    if (!moved) { setEditor(null); setFormKey(key => key + 1); setNotice(''); reloadFor(entity); return; }
+    loadTotals();
+    if (entity === 'fields') go({ clientId: result.clientId, fieldId: null, plotId: null });
+    else go({ clientId: totals.fields.find(row => row.id === result.fieldId)?.clientId ?? path.clientId, fieldId: result.fieldId, plotId: null });
+    setNotice(moved);
+  }
   const refresh = entity => () => { setError(''); reloadFor(entity); };
 
   const target = editor ?? { entity: level ? children[level] : 'clients', record: null };
@@ -67,6 +76,8 @@ export default function ClientsSection({ identity }) {
   const optionSets = {
     crops: rows.crops.map(row => ({ value: row.id, label: row.name })),
     campaigns: rows.campaigns.map(row => ({ value: row.id, label: row.name })),
+    clients: rows.clients.map(row => ({ value: row.id, label: row.name })),
+    fieldsByClient: fieldMoveGroups(rows.clients, totals.fields),
   };
   const missing = target.entity === 'plot-crops' && !target.record && (!rows.crops.length || !rows.campaigns.length)
     ? 'Primero crea cultivos y campañas en sus catálogos.' : undefined;
@@ -88,6 +99,7 @@ export default function ClientsSection({ identity }) {
       {field && <li><button type="button" onClick={() => go({ ...path, plotId: null })} aria-current={level === 'fields' ? 'page' : undefined}>{field.name}</button></li>}
       {plot && <li><button type="button" aria-current="page" onClick={() => go(path)}>{rowLabel('plots', plot)}</button></li>}
     </ol></nav>
+    {notice && <p className="bo-notice" role="status">{notice}</p>}
     {error && <p className="bo-error" role="alert">{error}</p>}
     <div className="bo-columns"><div className="bo-stack">
       {!level && <RecordList entity="clients" rows={rows.clients} searchable onRefresh={refresh('clients')}
@@ -98,7 +110,7 @@ export default function ClientsSection({ identity }) {
       {level === 'clients' && <>
         <RecordDetail title="Datos del cliente" onEdit={() => open('clients', client)} items={[
           ['Nombre', client.name], ['CUIT', client.taxId], ['Productores', client.producers], ['Email', client.email],
-          ['Teléfono', client.phone], ['Dirección', client.address]]} />
+          ['Celular', client.phone], ['Dirección', client.address]]} />
         <RecordList entity="commercial-firms" rows={rows['commercial-firms']} onRefresh={refresh('commercial-firms')}
           onNew={() => open('commercial-firms')} newLabel="Nueva firma" onEdit={row => open('commercial-firms', row)}
           empty="Este cliente aún no tiene firmas comerciales." />
@@ -122,13 +134,13 @@ export default function ClientsSection({ identity }) {
         <RecordList entity="plot-crops" rows={plotCrops} onRefresh={refresh('plot-crops')}
           onEdit={row => open('plot-crops', row)} onNew={() => open('plot-crops')} newLabel="Nuevo cultivo"
           label={row => `${nameOf(rows.campaigns, row.campaignId)} · ${row.position} · ${nameOf(rows.crops, row.cropId)}`}
-          detail={row => [optionLabel(roles, row.role), row.variety].filter(Boolean).join(' · ')}
+          detail={plotCropDetail}
           empty="Este lote aún no tiene cultivos cargados por campaña." />
       </>}
     </div>
       <RecordForm key={`${target.entity}-${target.record?.id ?? 'new'}-${formKey}`} entity={target.entity} record={target.record}
         parent={parent} optionSets={optionSets} csrfToken={identity.csrfToken} missing={missing} context={context}
-        onCancel={editor ? () => { setEditor(null); setFormKey(key => key + 1); } : undefined} onSaved={() => saved(target.entity)} />
+        onCancel={editor ? () => { setEditor(null); setFormKey(key => key + 1); } : undefined} onSaved={result => saved(target.entity, target.record, result)} />
     </div>
   </>;
 }

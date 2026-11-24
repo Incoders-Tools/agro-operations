@@ -89,3 +89,5 @@
 .bo-table .bo-print-link{padding:0}
 .bo-app a:focus-visible{outline:3px solid var(--brand-accent);outline-offset:3px}
 @media(max-width:560px){.bo-list li button.bo-open{order:3}}
+/* Contractor website link in list rows (catalogs.jsx). */
+.bo-list li small a{color:var(--brand-primary);overflow-wrap:anywhere}
