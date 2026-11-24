@@ -126,6 +126,8 @@ if ([int]$fieldColumn.Trim() -eq 1) { Apply-Migration '009_ot_across_fields.sql'
 $laborCategory = & docker.exe compose -p $project -f $compose exec -T postgres psql -U agro_dev -d agro_operations -tAc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='labor_types' AND column_name='category'"
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect local PostgreSQL schema.' }
 if ([int]$laborCategory.Trim() -eq 0) { Apply-Migration '010_reference_alignment.sql'; Write-Host 'Applied local schema migration 010_reference_alignment.sql.' }
+Ensure-Migration '011_providers_and_quotes.sql' 'public.providers,public.provider_contacts,public.client_providers,public.provider_prices,public.quote_comparisons,public.quotes,public.quote_lines'
+Ensure-Migration '012_analyses.sql' 'public.soil_analyses,public.soil_analysis_results,public.seed_analyses'
 
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
 $env:AGRO_LOCAL_ADMIN_EMAIL = $settings.email
