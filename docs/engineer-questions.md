@@ -49,3 +49,19 @@ underneath when it is resolved. Answers already given by the engineers' domain r
 
 - [ ] Q16. Does the engineering company have a brand manual, logo files and a colour palette? They will style the
   site and every document it produces (OT PDF first).
+
+## Analyses and providers
+
+- [ ] Q17. Which soil parameters, units and sampling depths do you use (e.g. pH, organic matter %, P ppm, N-NO3 ppm,
+  S-SO4 ppm, Zn, CEC; 0-20 / 20-40 / 40-60 cm)? Current behaviour: free parameter name with a suggested list, value,
+  unit, optional depth and station.
+- [ ] Q18. Seeding rate: confirm the formula seeds/ha = target plants/ha / (germination % x expected field emergence
+  %), kg/ha = seeds/ha x thousand-seed weight (g) / 1,000,000, which germination value to use (with or without seed
+  treatment) and the usual emergence efficiency per crop. Current behaviour: the calculator uses germination with
+  treatment when present, otherwise without, and asks for the efficiency (default 90%).
+- [ ] Q19. Supplier quotes: are prices compared with or without VAT, and in ARS or USD? Do you need the exchange
+  rate of the day to compare mixed currencies? Current behaviour: each quote has one currency; totals are compared
+  only within the same currency.
+- [ ] Q20. "Precios de referencia de productos que tenemos": are these your own reference prices per input, each
+  supplier's list prices, or both? Current behaviour: each input keeps its reference cost and each supplier can
+  have dated prices per input.
