@@ -244,7 +244,7 @@ try
         var seededCrops = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/crops");
         var soyId = seededCrops!.Single(item => item.GetProperty("name").GetString() == "Soja").GetProperty("id").GetGuid();
         var wheatId = seededCrops!.Single(item => item.GetProperty("name").GetString() == "Trigo").GetProperty("id").GetGuid();
-        var plotCropBody = new { plotId = codedPlotId, campaignId, cropId = soyId, position = 1, role = "renta", variety = "NK 855 VIP3" };
+        var plotCropBody = new { plotId = codedPlotId, campaignId, cropId = soyId, position = 1, role = "renta", variety = "Híbrido ficticio 1" };
         if (!await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { position = 3 }), HttpStatusCode.BadRequest) ||
             !await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { role = "cobertura" }), HttpStatusCode.BadRequest) ||
             !await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { plotId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
@@ -255,7 +255,7 @@ try
         var plotCrop = await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody);
         var plotCropRow = await Body(plotCrop);
         var plotCropId = plotCropRow.GetProperty("id").GetGuid();
-        if (plotCrop.StatusCode != HttpStatusCode.Created || plotCropRow.GetProperty("variety").GetString() != "NK 855 VIP3" ||
+        if (plotCrop.StatusCode != HttpStatusCode.Created || plotCropRow.GetProperty("variety").GetString() != "Híbrido ficticio 1" ||
             plotCropRow.GetProperty("position").GetInt32() != 1 || plotCropRow.GetProperty("role").GetString() != "renta")
             throw new Exception($"Plot crop create: {(int)plotCrop.StatusCode}");
         if (!await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", plotCropBody with { cropId = wheatId }), HttpStatusCode.Conflict, "Duplicate position") ||
@@ -372,7 +372,7 @@ try
         if (rangedInput.StatusCode != HttpStatusCode.Created) throw new Exception("Ranged input create failed");
         var rangedInputId = (await Body(rangedInput)).GetProperty("id").GetGuid();
         var orderBody = new { firmId, issuedOn = (string?)"2026-11-24", laborTypeId, stageId = (Guid?)stageId, contractorId, fieldId = richFieldId,
-            campaignId = (Guid?)campaignId, cropId = (Guid?)soyId, variety = (string?)"NK 855 VIP3", observations = (string?)"Observación ficticia",
+            campaignId = (Guid?)campaignId, cropId = (Guid?)soyId, variety = (string?)"Híbrido ficticio 1", observations = (string?)"Observación ficticia",
             responsibleEngineer = (string?)"Ingeniero ficticio", plots = new object[] { new { plotId = codedPlotId, workedAreaHectares = 3.5m } },
             lines = new object[] { new { inputId = rangedInputId, dosePerHectare = 2.5m }, new { inputId, dosePerHectare = 1m } } };
         async Task<string> OrderState() => await client.GetStringAsync("/api/v1/work-orders") + "|" + await client.GetStringAsync("/api/v1/commercial-firms");
@@ -409,7 +409,7 @@ try
         var orderPlot = orderRow.GetProperty("plots")[0];
         var orderLines = orderRow.GetProperty("lines");
         if (createdOrder.StatusCode != HttpStatusCode.Created || orderRow.GetProperty("number").GetInt32() != 1 || orderRow.GetProperty("status").GetString() != "emitida" ||
-            orderRow.GetProperty("issuedOn").GetString() != "2026-11-24" || orderRow.GetProperty("variety").GetString() != "NK 855 VIP3" ||
+            orderRow.GetProperty("issuedOn").GetString() != "2026-11-24" || orderRow.GetProperty("variety").GetString() != "Híbrido ficticio 1" ||
             orderPlot.GetProperty("areaHectares").GetDecimal() != 3m || orderPlot.GetProperty("workedAreaHectares").GetDecimal() != 3.5m ||
             !orderPlot.GetProperty("workedAreaExceedsPlot").GetBoolean() || orderLines.GetArrayLength() != 2 ||
             orderLines[0].GetProperty("total").GetDecimal() != 8.75m || !orderLines[0].GetProperty("doseOutOfRange").GetBoolean() ||

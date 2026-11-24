@@ -1,5 +1,7 @@
 # Local-only protected API. Never serve customer data through the synthetic notebook.
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell pipes text to native commands as US-ASCII by default; migrations carry accented seed names.
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
 $root = Split-Path $PSScriptRoot -Parent
 $state = Join-Path $root '.local'
 $settingsFile = Join-Path $state 'backoffice-credentials.json'

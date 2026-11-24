@@ -11,7 +11,7 @@ const generic = 'Revisa los datos e intenta de nuevo.';
 const form = {
   ...emptyOrder('2026-11-23'),
   firmId: 'f1', laborTypeId: 'l1', stageId: '', contractorId: 'c1', fieldId: 'fd1', campaignId: '', cropId: 'cr1',
-  variety: '  DM 46 ', observations: ' ', responsibleEngineer: ' Ing. Demo ',
+  variety: '  Variedad ficticia 2 ', observations: ' ', responsibleEngineer: ' Ing. Demo ',
   plots: [{ plotId: 'p1', worked: '10.5' }, { plotId: 'p2', worked: '4' }],
   lines: [{ key: 1, inputId: 'i1', dose: '1.25', term: 'gli' }, { key: 2, inputId: '', dose: '', term: '' }],
 };
@@ -29,7 +29,7 @@ test('an empty order starts today with no plots and one blank input line', () =>
 test('create payload carries the firm, trims text, nulls empty optionals and skips blank lines', () => {
   assert.deepEqual(orderPayload(form), {
     firmId: 'f1', issuedOn: '2026-11-23', laborTypeId: 'l1', stageId: null, contractorId: 'c1', fieldId: 'fd1',
-    campaignId: null, cropId: 'cr1', variety: 'DM 46', observations: null, responsibleEngineer: 'Ing. Demo',
+    campaignId: null, cropId: 'cr1', variety: 'Variedad ficticia 2', observations: null, responsibleEngineer: 'Ing. Demo',
     plots: [{ plotId: 'p1', workedAreaHectares: 10.5 }, { plotId: 'p2', workedAreaHectares: 4 }],
     lines: [{ inputId: 'i1', dosePerHectare: 1.25 }],
   });

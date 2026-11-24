@@ -74,3 +74,8 @@ verbatim but never contain real client, contractor or product values; those exis
   `FIRMA COMERCIAL`, so OT numbers are consecutive per commercial firm. Each firm has an editable next number so the
   numbering can continue from the workbook. The owner's ordering rules say numbers must not be skipped and a
   cancelled OT keeps its number, so numbers are allocated in the creating transaction (no sequence gaps).
+- L9 (verify, T8): independent verifier found B1 — Windows PowerShell 5.1 pipes migrations to psql as US-ASCII, so
+  accented seed names (006 labors/stages, 007 crops) would be stored with '?'; caught before the private DB got
+  006-008. Fixed with $OutputEncoding = UTF-8 in the launcher and a Windows smoke regression (RED: missing setting;
+  ASCII probe shows 3F). B2 — a real commercial hybrid and a real-looking variety in tests replaced with invented
+  values. Migrations: no row loss, rerunnable, partial schemas refused. Numbering: gapless and race-safe under probes.

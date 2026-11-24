@@ -92,9 +92,30 @@ try
         (await check.GetAsync("/api/v1/session")).StatusCode != HttpStatusCode.NotFound)
         throw new Exception("Production exposed temporary local login");
     Console.WriteLine("PASS: local bootstrap not mapped in production");
+    if (OperatingSystem.IsWindows()) CheckLauncherPipesUtf8(root);
 }
 finally
 {
     if (!production.HasExited) production.Kill(entireProcessTree: true);
     await production.WaitForExitAsync();
+}
+
+// Windows PowerShell 5.1 pipes text to native commands with $OutputEncoding (US-ASCII by default), which would store
+// accented seed names such as "Fertilización" as "Fertilizaci?n". Pipe one exactly as the launcher pipes migrations.
+static void CheckLauncherPipesUtf8(string testsRoot)
+{
+    var launcher = File.ReadAllText(Path.Combine(testsRoot, "..", "tools", "start-backoffice-api.ps1"));
+    var setup = System.Text.RegularExpressions.Regex.Match(launcher, @"^\$OutputEncoding\s*=.*$",
+        System.Text.RegularExpressions.RegexOptions.Multiline).Value.Trim();
+    if (setup.Length == 0) throw new Exception("Launcher must set $OutputEncoding to UTF-8 before piping migrations");
+    var shell = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+    var script = setup + "; 'Fertilización' | & '" + shell + "' -NoProfile -Command " +
+        "'$m = New-Object IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($m); [BitConverter]::ToString($m.ToArray())'";
+    var start = new ProcessStartInfo(shell, "-NoProfile -EncodedCommand " +
+        Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(script))) { RedirectStandardOutput = true, UseShellExecute = false };
+    using var child = Process.Start(start) ?? throw new Exception("Unable to start Windows PowerShell");
+    var bytes = child.StandardOutput.ReadToEnd();
+    child.WaitForExit();
+    if (!bytes.Contains("C3-B3")) throw new Exception("Launcher pipe loses accents: " + bytes.Trim());
+    Console.WriteLine("PASS: launcher pipes migrations to psql as UTF-8");
 }

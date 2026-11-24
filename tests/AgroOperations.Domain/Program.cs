@@ -434,9 +434,9 @@ try
     Reject<DomainNotFoundException>(() => plotCrops.Create(plot.Id, campaign.Id, Guid.NewGuid(), 1, "renta", null), "plot crop with missing crop");
     Check(Snapshot() == attributesBefore, "rejected plot crop creates changed stored rows");
     var firstCrop = plotCrops.Create(plot.Id, campaign.Id, wheat.Id, 1, " Servicio ", "  ");
-    var secondCrop = plotCrops.Create(plot.Id, campaign.Id, soy.Id, 2, "renta", " NK 855 VIP3 ");
+    var secondCrop = plotCrops.Create(plot.Id, campaign.Id, soy.Id, 2, "renta", " Híbrido ficticio 1 ");
     Check(firstCrop is { Position: 1, Role: "servicio", Variety: null, Revision: 1 } && firstCrop.CropId == wheat.Id &&
-          secondCrop is { Position: 2, Role: "renta", Variety: "NK 855 VIP3" } && plotCrops.List().Contains(secondCrop), "plot crop creation/listing");
+          secondCrop is { Position: 2, Role: "renta", Variety: "Híbrido ficticio 1" } && plotCrops.List().Contains(secondCrop), "plot crop creation/listing");
     attributesBefore = Snapshot();
     Check(Rejected<DomainDuplicateException>(() => plotCrops.Create(plot.Id, campaign.Id, soy.Id, 1, "renta", null), "duplicate plot crop position")
           .Message == "Duplicate position", "duplicate position message");
@@ -502,7 +502,7 @@ try
     var issuedOn = new DateOnly(2026, 11, 24);
     // codedPlot has 10 ha and blankCodePlot 5 ha, both in ownField of fullClient; firm and secondFirm belong to fullClient.
     var orderDraft = new WorkOrderDraft(issuedOn, laborType.Id, stage.Id, contractor.Id, ownField.Id, campaign.Id, soy.Id,
-        " NK 855 VIP3 ", " Observación ficticia ", " Ingeniero ficticio ",
+        " Híbrido ficticio 1 ", " Observación ficticia ", " Ingeniero ficticio ",
         [new WorkOrderPlotDraft(codedPlot.Id, 10m), new WorkOrderPlotDraft(blankCodePlot.Id, 6.5m)],
         [new WorkOrderLineDraft(minimalInput.Id, 2m), new WorkOrderLineDraft(input.Id, 1.3333m)]);
     Check(firms.List().All(item => item.NextWorkOrderNumber == 1), "firms start numbering at 1");
@@ -541,7 +541,7 @@ try
     Check(WorkOrderState() == orderBefore && NextNumber(firm.Id) == 1, "rejected work order creates changed stored rows or the next number");
 
     var firstOrder = workOrders.Create(firm.Id, orderDraft);
-    Check(firstOrder is { Number: 1, Status: "emitida", CancelReason: null, Revision: 1, Variety: "NK 855 VIP3",
+    Check(firstOrder is { Number: 1, Status: "emitida", CancelReason: null, Revision: 1, Variety: "Híbrido ficticio 1",
           Observations: "Observación ficticia", ResponsibleEngineer: "Ingeniero ficticio" } && firstOrder.FirmId == firm.Id &&
           firstOrder.IssuedOn == issuedOn && firstOrder.FieldId == ownField.Id && firstOrder.StageId == stage.Id && firstOrder.CropId == soy.Id,
           "first work order header");
