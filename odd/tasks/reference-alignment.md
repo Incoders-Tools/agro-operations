@@ -92,7 +92,7 @@ document). Public repository: no client values here.
 ## Tasks
 - T1 (S1-S6) worker: migration 010 + API + tests. | done
 - T2 (S1-S6) worker: UI. | done
-- T3: launcher, docs, real DB apply, browser check, push.
+- T3: launcher, docs, real DB apply, browser check, push. | done
 
 ## Log
 - L1 (owner, 2026-11-24, verbatim): "Excelente guardemos las preguntas luego te las resuelvo cuando me reuna con ellos
@@ -104,3 +104,9 @@ document). Public repository: no client values here.
 - L3 (decision): the reference's section-6 duplicates "Embolsado de grano" and "Extracción de grano" are covered by
   the section-5 entries and not seeded twice. Soil analysis, seed analysis and the suppliers/labs/platforms database
   are new scope, not deviations, and wait for the owner's go-ahead. Q1 and Q13 answered, Q12 and Q15 partly.
+- L4 (T3 evidence): private DB backed up to `.local/backups/before-010.dump`; 010 applied by the launcher: 82 labors,
+  all categorized (aplicacion 19, labranza 22, siembra 18, cosecha 10, forrajes 9, infraestructura 4), no '?' in
+  names or descriptions; 4 crops renamed; masters intact (28 clients, 174 fields, 468 plots, 28 contractors, 367
+  inputs). Browser at 1280/390 px (read-only): labor optgroups in the OT form, inoculant and seed-treatment labels,
+  contractor website, client 'Celular', 0 label overlaps, no overflow, no page errors. Moves were exercised by tests
+  only, not on real data.
