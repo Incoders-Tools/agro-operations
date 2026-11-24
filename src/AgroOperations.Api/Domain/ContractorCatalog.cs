@@ -17,14 +17,7 @@ public sealed class ContractorCatalog(IContractorRepository repository)
 {
     private static ContractorDraft Validated(ContractorDraft draft) => new(
         CatalogText.Required(draft.Name, "Name"), CatalogText.TaxId(draft.TaxId), CatalogText.Optional(draft.Phone),
-        CatalogText.Email(draft.Email), CatalogText.Optional(draft.Notes), draft.OwnEquipment, Website(draft.Website));
-
-    private static string? Website(string? value)
-    {
-        var website = CatalogText.Optional(value);
-        return website is null || (website.Length <= 200 && !website.Any(char.IsWhiteSpace))
-            ? website : throw new DomainValidationException("Website must be a single address without spaces");
-    }
+        CatalogText.Email(draft.Email), CatalogText.Optional(draft.Notes), draft.OwnEquipment, CatalogText.Website(draft.Website));
 
     public Contractor Create(ContractorDraft contractor) => repository.Create(Validated(contractor));
     public Contractor Update(Guid id, long revision, ContractorDraft contractor) => repository.Update(id, revision, Validated(contractor));

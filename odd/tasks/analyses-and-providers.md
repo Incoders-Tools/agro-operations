@@ -69,7 +69,7 @@ yet. Public repository: no client values. The API contract below is binding for 
   laboratory", "Map link must be a single address without spaces".
 
 ## Tasks
-- T1 (S3, S4) worker: migration 011 providers, contacts, client links, prices, quote comparisons + API + tests.
+- T1 (S3, S4) worker: migration 011 providers, contacts, client links, prices, quote comparisons + API + tests. | done
 - T2 (S1, S2) worker, parallel with T1: UI for soil analyses (plot level), seed analyses section, calculator. | done (commit: analyses UI; API round trip in T5)
 - T3 (S1, S2) worker: migration 012 soil and seed analyses + API + tests.
 - T4 (S3, S4) worker, parallel with T3: UI for providers, contacts, client links, prices, quote comparison.

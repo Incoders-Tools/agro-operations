@@ -22,7 +22,7 @@ try
     using (var db = new NpgsqlConnection(scoped.ConnectionString))
     {
         db.Open();
-        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql", "010_reference_alignment.sql" })
+        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql", "010_reference_alignment.sql", "011_providers_and_quotes.sql" })
         {
             var file = Path.Combine(root, "src", "AgroOperations.Api", "Persistence", "Migrations", name);
             using var migration = new NpgsqlCommand(File.ReadAllText(file), db);
@@ -45,6 +45,13 @@ try
     start.Environment["AGRO_LOCAL_ADMIN_PASSWORD"] = password;
     start.Environment["AGRO_LOCAL_DATABASE"] = scoped.ConnectionString;
     using var server = Process.Start(start) ?? throw new Exception("Unable to start test API");
+    // Drain the API's output: an unread pipe fills, then the console logger's queue, and requests block on logging.
+    var serverLog = new System.Collections.Concurrent.ConcurrentQueue<string>();
+    void Keep(string? line) { if (line is null) return; serverLog.Enqueue(line); while (serverLog.Count > 200) serverLog.TryDequeue(out _); }
+    server.OutputDataReceived += (_, e) => Keep(e.Data);
+    server.ErrorDataReceived += (_, e) => Keep(e.Data);
+    server.BeginOutputReadLine();
+    server.BeginErrorReadLine();
     try
     {
         using var handler = new HttpClientHandler { UseCookies = true };
@@ -52,7 +59,7 @@ try
         HttpResponseMessage? health = null;
         for (var attempt = 0; attempt < 40; attempt++)
         {
-            if (server.HasExited) throw new Exception($"Test API exited with {server.ExitCode}: {await server.StandardError.ReadToEndAsync()}");
+            if (server.HasExited) throw new Exception($"Test API exited with {server.ExitCode}: {string.Join(Environment.NewLine, serverLog)}");
             try { health = await client.GetAsync("/api/v1/health"); break; }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException) { await Task.Delay(250); }
         }
@@ -699,6 +706,266 @@ try
             throw new Exception("Invalid recipe line changed stored records");
         if ((await Send(HttpMethod.Put, $"/api/v1/recipes/{recipeId}", new { stage = "postemergencia", targetUse = "Barbecho", responsibleEngineer = "Matías Kincaid", revision = 0 })).StatusCode != HttpStatusCode.Conflict)
             throw new Exception("Stale recipe update did not conflict");
+        // 011: providers, contacts, client links, reference prices and quote comparisons.
+        var unknownId = Guid.NewGuid();
+        string[] providerReads = ["providers", "providers?kind=insumos", "provider-contacts", $"provider-contacts?providerId={unknownId}", "client-providers",
+            $"client-providers?clientId={unknownId}&providerId={unknownId}", "provider-prices", $"provider-prices?providerId={unknownId}&inputId={unknownId}", "quote-comparisons",
+            $"quote-comparisons?clientId={unknownId}&status=abierta", $"quote-comparisons/{unknownId}"];
+        (HttpMethod Method, string Path)[] providerWrites = [(HttpMethod.Post, "providers"), (HttpMethod.Put, $"providers/{unknownId}"), (HttpMethod.Post, "provider-contacts"),
+            (HttpMethod.Put, $"provider-contacts/{unknownId}"), (HttpMethod.Post, "client-providers"), (HttpMethod.Delete, $"client-providers/{unknownId}"),
+            (HttpMethod.Post, "provider-prices"), (HttpMethod.Put, $"provider-prices/{unknownId}"), (HttpMethod.Post, "quote-comparisons"),
+            (HttpMethod.Put, $"quote-comparisons/{unknownId}"), (HttpMethod.Post, $"quote-comparisons/{unknownId}/decide"), (HttpMethod.Post, $"quote-comparisons/{unknownId}/reopen"),
+            (HttpMethod.Post, $"quote-comparisons/{unknownId}/quotes"), (HttpMethod.Put, $"quotes/{unknownId}")];
+        async Task<string> ProviderState()
+        {
+            var state = new List<string>();
+            foreach (var route in new[] { "providers", "provider-contacts", "client-providers", "provider-prices", "quote-comparisons" })
+                state.Add(await client.GetStringAsync($"/api/v1/{route}"));
+            foreach (var comparisonRow in (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/quote-comparisons"))!)
+                state.Add(await client.GetStringAsync($"/api/v1/quote-comparisons/{comparisonRow.GetProperty("id").GetGuid()}"));
+            return string.Join("|", state);
+        }
+        using (var anonymous = new HttpClient { BaseAddress = client.BaseAddress })
+        {
+            foreach (var route in providerReads)
+                if ((await anonymous.GetAsync($"/api/v1/{route}")).StatusCode != HttpStatusCode.Unauthorized)
+                    throw new Exception($"Anonymous GET {route} accessible");
+            foreach (var (method, path) in providerWrites)
+                using (var request = new HttpRequestMessage(method, $"/api/v1/{path}") { Content = JsonContent.Create(new { name = "Example", revision = 1 }) })
+                    if ((await anonymous.SendAsync(request)).StatusCode != HttpStatusCode.Unauthorized)
+                        throw new Exception($"Anonymous {method} {path} accessible");
+        }
+        var providerBody = new { name = "Proveedor de prueba", kind = "insumos", taxId = (string?)"30-12345678-9", website = (string?)"https://www.example.test",
+            phone = (string?)"0000 000000", email = (string?)"ventas@example.test", notes = (string?)null };
+        var emptyProviders = await ProviderState();
+        foreach (var (method, path) in providerWrites)
+            using (var request = new HttpRequestMessage(method, $"/api/v1/{path}") { Content = JsonContent.Create(providerBody) })
+                if ((await client.SendAsync(request)).StatusCode != HttpStatusCode.Forbidden)
+                    throw new Exception($"{method} {path} accepted without CSRF");
+        if (await ProviderState() != emptyProviders || (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/providers"))!.Length != 0)
+            throw new Exception("Provider writes without CSRF changed stored records");
+        const string kindError = "Kind must be one of: insumos, laboratorio_suelos, laboratorio_semillas, plataforma_virtual, otro";
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/providers", providerBody with { kind = "contratista" }), HttpStatusCode.BadRequest, kindError) ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/providers", providerBody with { taxId = "123" }), HttpStatusCode.BadRequest, "CUIT must have 11 digits") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/providers", providerBody with { website = "a b" }), HttpStatusCode.BadRequest, "Website must be a single address without spaces") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/providers", providerBody with { email = "a@b@c" }), HttpStatusCode.BadRequest) ||
+            !await IsError(await client.GetAsync("/api/v1/providers?kind=laboratorio"), HttpStatusCode.BadRequest, kindError) ||
+            await ProviderState() != emptyProviders)
+            throw new Exception("Rejected providers changed stored records");
+        var providerResponse = await Send(HttpMethod.Post, "/api/v1/providers", providerBody);
+        var providerRow = await Body(providerResponse);
+        var providerId = providerRow.GetProperty("id").GetGuid();
+        if (providerResponse.StatusCode != HttpStatusCode.Created || providerRow.GetProperty("kind").GetString() != "insumos" ||
+            providerRow.GetProperty("taxId").GetString() != "30123456789" || providerRow.GetProperty("website").GetString() != "https://www.example.test" ||
+            providerRow.GetProperty("revision").GetInt64() != 1 || !Absent(providerRow, "notes"))
+            throw new Exception($"Provider create: {(int)providerResponse.StatusCode} {providerRow}");
+        var labRow = await Body(await Send(HttpMethod.Post, "/api/v1/providers", new { name = "Laboratorio de prueba", kind = "laboratorio_suelos" }));
+        var labId = labRow.GetProperty("id").GetGuid();
+        var providersBefore = await ProviderState();
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/providers", providerBody with { name = " PROVEEDOR DE PRUEBA " }), HttpStatusCode.Conflict, "Duplicate name") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/providers/{labId}", new { name = "proveedor de prueba", kind = "otro", revision = 1 }), HttpStatusCode.Conflict, "Duplicate name") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/providers/{providerId}", new { name = "Proveedor de prueba", kind = "x", revision = 1 }), HttpStatusCode.BadRequest, kindError) ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/providers/{providerId}", new { name = "Stale", kind = "insumos", revision = 0 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/providers/{Guid.NewGuid()}", new { name = "Ausente", kind = "insumos", revision = 1 }), HttpStatusCode.NotFound, "Record not found") ||
+            await ProviderState() != providersBefore)
+            throw new Exception("Rejected provider updates changed stored records");
+        var changedLab = await Send(HttpMethod.Put, $"/api/v1/providers/{labId}", new { name = "Laboratorio de prueba", kind = "laboratorio_semillas", website = "www.lab.example.test", revision = 1 });
+        if (changedLab.StatusCode != HttpStatusCode.OK || (await Body(changedLab)) is var changedLabRow && (changedLabRow.GetProperty("kind").GetString() != "laboratorio_semillas" ||
+            changedLabRow.GetProperty("website").GetString() != "www.lab.example.test" || changedLabRow.GetProperty("revision").GetInt64() != 2))
+            throw new Exception("Provider update failed");
+        if (!(await Ids("providers")).SequenceEqual([labId, providerId]) || !(await Ids("providers?kind=insumos")).SequenceEqual([providerId]) ||
+            !(await Ids("providers?kind=laboratorio_semillas")).SequenceEqual([labId]) || (await Ids("providers?kind=otro")).Length != 0)
+            throw new Exception("Providers filter by kind mismatch");
+
+        var contactBody = new { providerId, name = "Representante", role = "ventas", phone = (string?)"0000 111111", email = (string?)"rep@example.test", notes = (string?)null };
+        providersBefore = await ProviderState();
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/provider-contacts", contactBody with { role = "comercial" }), HttpStatusCode.BadRequest,
+                "Role must be one of: ventas, tecnico, otro") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/provider-contacts", contactBody with { providerId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/provider-contacts", contactBody with { email = "a@b@c" }), HttpStatusCode.BadRequest) ||
+            await ProviderState() != providersBefore)
+            throw new Exception("Rejected contacts changed stored records");
+        var contactResponse = await Send(HttpMethod.Post, "/api/v1/provider-contacts", contactBody);
+        var contactRow = await Body(contactResponse);
+        var contactId = contactRow.GetProperty("id").GetGuid();
+        if (contactResponse.StatusCode != HttpStatusCode.Created || contactRow.GetProperty("providerId").GetGuid() != providerId ||
+            contactRow.GetProperty("role").GetString() != "ventas" || contactRow.GetProperty("email").GetString() != "rep@example.test")
+            throw new Exception($"Contact create: {(int)contactResponse.StatusCode}");
+        var labContactId = (await Body(await Send(HttpMethod.Post, "/api/v1/provider-contacts", new { providerId = labId, name = "Técnico", role = "tecnico" }))).GetProperty("id").GetGuid();
+        // The update body has no provider: a contact never moves to another provider, even if one is sent.
+        var changedContact = await Send(HttpMethod.Put, $"/api/v1/provider-contacts/{contactId}", new { providerId = labId, name = "Representante", role = "otro", revision = 1 });
+        if (changedContact.StatusCode != HttpStatusCode.OK || (await Body(changedContact)) is var changedContactRow &&
+            (changedContactRow.GetProperty("providerId").GetGuid() != providerId || changedContactRow.GetProperty("role").GetString() != "otro" ||
+             !Absent(changedContactRow, "phone", "email", "notes") || changedContactRow.GetProperty("revision").GetInt64() != 2))
+            throw new Exception("Contact update failed or moved the contact");
+        providersBefore = await ProviderState();
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/provider-contacts/{contactId}", new { name = "Stale", role = "ventas", revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/provider-contacts/{contactId}", new { name = "Representante", role = "x", revision = 2 }), HttpStatusCode.BadRequest,
+                "Role must be one of: ventas, tecnico, otro") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/provider-contacts/{Guid.NewGuid()}", new { name = "Ausente", role = "ventas", revision = 1 }), HttpStatusCode.NotFound) ||
+            await ProviderState() != providersBefore)
+            throw new Exception("Rejected contact updates changed stored records");
+        if (!(await Ids($"provider-contacts?providerId={providerId}")).SequenceEqual([contactId]) || !(await Ids($"provider-contacts?providerId={labId}")).SequenceEqual([labContactId]) ||
+            (await Ids("provider-contacts")).Length != 2)
+            throw new Exception("Contacts filter by provider mismatch");
+
+        providersBefore = await ProviderState();
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/client-providers", new { clientId = Guid.NewGuid(), providerId }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/client-providers", new { clientId = id, providerId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            await ProviderState() != providersBefore)
+            throw new Exception("Rejected links changed stored records");
+        var linkResponse = await Send(HttpMethod.Post, "/api/v1/client-providers", new { clientId = id, providerId });
+        var linkRow = await Body(linkResponse);
+        var linkId = linkRow.GetProperty("id").GetGuid();
+        if (linkResponse.StatusCode != HttpStatusCode.Created || linkRow.GetProperty("clientId").GetGuid() != id || linkRow.GetProperty("providerId").GetGuid() != providerId)
+            throw new Exception($"Link create: {(int)linkResponse.StatusCode}");
+        var richLinkId = (await Body(await Send(HttpMethod.Post, "/api/v1/client-providers", new { clientId = richId, providerId }))).GetProperty("id").GetGuid();
+        var labLinkId = (await Body(await Send(HttpMethod.Post, "/api/v1/client-providers", new { clientId = id, providerId = labId }))).GetProperty("id").GetGuid();
+        providersBefore = await ProviderState();
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/client-providers", new { clientId = id, providerId }), HttpStatusCode.Conflict, "Duplicate link") ||
+            await ProviderState() != providersBefore)
+            throw new Exception("Duplicate link changed stored records");
+        if ((await Ids($"client-providers?clientId={id}")).Order().SequenceEqual(new[] { linkId, labLinkId }.Order()) is false ||
+            !(await Ids($"client-providers?providerId={labId}")).SequenceEqual([labLinkId]) ||
+            !(await Ids($"client-providers?clientId={richId}&providerId={providerId}")).SequenceEqual([richLinkId]) || (await Ids("client-providers")).Length != 3)
+            throw new Exception("Links filter mismatch");
+        var unlinked = await Send(HttpMethod.Delete, $"/api/v1/client-providers/{labLinkId}", new { });
+        if (unlinked.StatusCode != HttpStatusCode.NoContent || (await unlinked.Content.ReadAsStringAsync()).Length != 0 ||
+            !await IsError(await Send(HttpMethod.Delete, $"/api/v1/client-providers/{labLinkId}", new { }), HttpStatusCode.NotFound, "Record not found") ||
+            (await Ids("client-providers")).Length != 2 || (await Ids("providers")).Length != 2)
+            throw new Exception("Link delete failed or removed more than the link");
+
+        var priceBody = new { providerId, inputId, price = 12.5m, currency = "USD", unit = (string?)null, validOn = (string?)"2026-11-01", notes = (string?)null };
+        providersBefore = await ProviderState();
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/provider-prices", priceBody with { price = 0m }), HttpStatusCode.BadRequest, "Price must be positive and fit numeric(14,4)") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/provider-prices", priceBody with { currency = "EUR" }), HttpStatusCode.BadRequest, "Currency must be ARS or USD") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/provider-prices", priceBody with { validOn = null }), HttpStatusCode.BadRequest, "Valid on is required") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/provider-prices", priceBody with { inputId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            await ProviderState() != providersBefore)
+            throw new Exception("Rejected prices changed stored records");
+        var priceResponse = await Send(HttpMethod.Post, "/api/v1/provider-prices", priceBody);
+        var priceRow = await Body(priceResponse);
+        var priceId = priceRow.GetProperty("id").GetGuid();
+        if (priceResponse.StatusCode != HttpStatusCode.Created || priceRow.GetProperty("unit").GetString() != "kg" || priceRow.GetProperty("price").GetDecimal() != 12.5m ||
+            priceRow.GetProperty("currency").GetString() != "USD" || priceRow.GetProperty("validOn").GetString() != "2026-11-01" || priceRow.GetProperty("inputId").GetGuid() != inputId)
+            throw new Exception($"Price create: {(int)priceResponse.StatusCode} {priceRow}");
+        var rangedPriceId = (await Body(await Send(HttpMethod.Post, "/api/v1/provider-prices",
+            priceBody with { inputId = rangedInputId, currency = "ARS", unit = "bidon", validOn = "2026-11-20" }))).GetProperty("id").GetGuid();
+        var changedPrice = await Send(HttpMethod.Put, $"/api/v1/provider-prices/{priceId}", new { inputId = rangedInputId, price = 13m, currency = "ARS", validOn = "2026-11-02", revision = 1 });
+        if (changedPrice.StatusCode != HttpStatusCode.OK || (await Body(changedPrice)) is var changedPriceRow && (changedPriceRow.GetProperty("unit").GetString() != "l" ||
+            changedPriceRow.GetProperty("providerId").GetGuid() != providerId || changedPriceRow.GetProperty("inputId").GetGuid() != rangedInputId ||
+            changedPriceRow.GetProperty("revision").GetInt64() != 2))
+            throw new Exception("Price update failed");
+        providersBefore = await ProviderState();
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/provider-prices/{priceId}", new { price = 1m, currency = "ARS", validOn = "2026-11-02", revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/provider-prices/{priceId}", new { price = -1m, currency = "ARS", validOn = "2026-11-02", revision = 2 }), HttpStatusCode.BadRequest) ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/provider-prices/{Guid.NewGuid()}", new { price = 1m, currency = "ARS", validOn = "2026-11-02", revision = 1 }), HttpStatusCode.NotFound) ||
+            await ProviderState() != providersBefore)
+            throw new Exception("Rejected price updates changed stored records");
+        if (!(await Ids($"provider-prices?inputId={rangedInputId}")).SequenceEqual([rangedPriceId, priceId]) || (await Ids($"provider-prices?inputId={inputId}")).Length != 0 ||
+            !(await Ids($"provider-prices?providerId={providerId}&inputId={rangedInputId}")).SequenceEqual([rangedPriceId, priceId]) ||
+            (await Ids($"provider-prices?providerId={labId}")).Length != 0)
+            throw new Exception("Prices filter mismatch");
+
+        providersBefore = await ProviderState();
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/quote-comparisons", new { clientId = id, title = " ", requestedOn = "2026-11-10" }), HttpStatusCode.BadRequest, "Title is required") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/quote-comparisons", new { clientId = Guid.NewGuid(), title = "T", requestedOn = "2026-11-10" }), HttpStatusCode.NotFound) ||
+            !await IsError(await client.GetAsync("/api/v1/quote-comparisons?status=cerrada"), HttpStatusCode.BadRequest, "Status must be one of: abierta, decidida") ||
+            !await IsError(await client.GetAsync($"/api/v1/quote-comparisons/{Guid.NewGuid()}"), HttpStatusCode.NotFound) ||
+            await ProviderState() != providersBefore)
+            throw new Exception("Rejected comparisons changed stored records");
+        var comparisonResponse = await Send(HttpMethod.Post, "/api/v1/quote-comparisons", new { clientId = id, title = "Herbicidas", requestedOn = "2026-11-10" });
+        var comparisonRow = await Body(comparisonResponse);
+        var comparisonId = comparisonRow.GetProperty("id").GetGuid();
+        if (comparisonResponse.StatusCode != HttpStatusCode.Created || comparisonRow.GetProperty("status").GetString() != "abierta" ||
+            !Absent(comparisonRow, "chosenQuoteId", "decisionReason") || comparisonRow.GetProperty("requestedOn").GetString() != "2026-11-10")
+            throw new Exception($"Comparison create: {(int)comparisonResponse.StatusCode}");
+        var otherComparisonId = (await Body(await Send(HttpMethod.Post, "/api/v1/quote-comparisons", new { clientId = richId, title = "Fertilizantes", requestedOn = "2026-11-05" })))
+            .GetProperty("id").GetGuid();
+        var quoteBody = new { providerId, receivedOn = (string?)"2026-11-12", currency = "ARS", notes = (string?)null,
+            lines = new object[] { new { inputId, quantity = 10m, unitPrice = 5.5m }, new { productText = "Coadyuvante X", quantity = 2m, unit = "l", unitPrice = 3.3333m } } };
+        providersBefore = await ProviderState();
+        if (!await IsError(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/quotes", quoteBody with { lines = new object[] { new { quantity = 1m, unit = "l", unitPrice = 1m } } }),
+                HttpStatusCode.BadRequest, "Each line needs an input or a product") ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/quotes", quoteBody with { lines = new object[] { new { inputId, quantity = 0m, unitPrice = 1m } } }),
+                HttpStatusCode.BadRequest, "Quantity must be positive") ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/quotes", quoteBody with { lines = new object[] { new { inputId, quantity = 1m, unitPrice = -1m } } }),
+                HttpStatusCode.BadRequest, "Unit price must be zero or positive") ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/quotes", quoteBody with { currency = "EUR" }), HttpStatusCode.BadRequest, "Currency must be ARS or USD") ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{Guid.NewGuid()}/quotes", quoteBody), HttpStatusCode.NotFound, "Record not found") ||
+            await ProviderState() != providersBefore)
+            throw new Exception("Rejected quotes changed stored records");
+        var quoteResponse = await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/quotes", quoteBody);
+        var quoteRow = await Body(quoteResponse);
+        var quoteId = quoteRow.GetProperty("id").GetGuid();
+        var quoteLines = quoteRow.GetProperty("lines");
+        if (quoteResponse.StatusCode != HttpStatusCode.Created || quoteRow.GetProperty("comparisonId").GetGuid() != comparisonId || quoteRow.GetProperty("total").GetDecimal() != 61.6666m ||
+            quoteLines.GetArrayLength() != 2 || quoteLines[0].GetProperty("position").GetInt32() != 1 || quoteLines[0].GetProperty("unit").GetString() != "kg" ||
+            quoteLines[0].GetProperty("inputId").GetGuid() != inputId || !Absent(quoteLines[0], "productText") || !Absent(quoteLines[1], "inputId") ||
+            quoteLines[1].GetProperty("productText").GetString() != "Coadyuvante X" || quoteRow.GetProperty("receivedOn").GetString() != "2026-11-12")
+            throw new Exception($"Quote create: {(int)quoteResponse.StatusCode} {quoteRow}");
+        var cheapQuoteId = (await Body(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/quotes", quoteBody with { providerId = labId, receivedOn = "2026-11-11",
+            lines = new object[] { new { inputId, quantity = 10m, unitPrice = 5m } } }))).GetProperty("id").GetGuid();
+        var usdQuoteId = (await Body(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/quotes", quoteBody with { currency = "USD", receivedOn = "2026-11-13",
+            lines = new object[] { new { inputId, quantity = 10m, unitPrice = 0.005m } } }))).GetProperty("id").GetGuid();
+        var foreignQuoteId = (await Body(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{otherComparisonId}/quotes", quoteBody))).GetProperty("id").GetGuid();
+        var detailRow = await client.GetFromJsonAsync<JsonElement>($"/api/v1/quote-comparisons/{comparisonId}");
+        var detailProducts = detailRow.GetProperty("products");
+        var inputProduct = detailProducts[1];
+        var cheapest = inputProduct.GetProperty("cheapestQuoteIdByCurrency");
+        var firstOffer = inputProduct.GetProperty("offers")[0];
+        if (detailRow.GetProperty("comparison").GetProperty("id").GetGuid() != comparisonId ||
+            !detailRow.GetProperty("quotes").EnumerateArray().Select(item => item.GetProperty("id").GetGuid()).SequenceEqual([cheapQuoteId, quoteId, usdQuoteId]) ||
+            detailProducts.GetArrayLength() != 2 || detailProducts[0].GetProperty("key").GetString() != "text:coadyuvante x" ||
+            detailProducts[0].GetProperty("label").GetString() != "Coadyuvante X" || inputProduct.GetProperty("key").GetString() != $"input:{inputId}" ||
+            inputProduct.GetProperty("label").GetString() != "Producto de prueba" || inputProduct.GetProperty("offers").GetArrayLength() != 3 ||
+            firstOffer.GetProperty("quoteId").GetGuid() != cheapQuoteId || firstOffer.GetProperty("providerId").GetGuid() != labId ||
+            firstOffer.GetProperty("unitPrice").GetDecimal() != 5m || firstOffer.GetProperty("currency").GetString() != "ARS" || firstOffer.GetProperty("quantity").GetDecimal() != 10m ||
+            firstOffer.GetProperty("unit").GetString() != "kg" || firstOffer.GetProperty("lineTotal").GetDecimal() != 50m ||
+            cheapest.EnumerateObject().Count() != 2 || cheapest.GetProperty("ARS").GetGuid() != cheapQuoteId || cheapest.GetProperty("USD").GetGuid() != usdQuoteId ||
+            detailProducts[0].GetProperty("cheapestQuoteIdByCurrency").EnumerateObject().Single() is not { Name: "ARS" } textCheapest || textCheapest.Value.GetGuid() != quoteId)
+            throw new Exception($"Comparison detail shape: {detailRow}");
+        providersBefore = await ProviderState();
+        if (!await IsError(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/decide", new { quoteId = cheapQuoteId, reason = " ", revision = 1 }), HttpStatusCode.BadRequest,
+                "Reason is required") ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/decide", new { quoteId = foreignQuoteId, reason = "Motivo", revision = 1 }), HttpStatusCode.NotFound) ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/decide", new { quoteId = cheapQuoteId, reason = "Motivo", revision = 0 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/reopen", new { revision = 1 }), HttpStatusCode.Conflict, "Comparison is not decided") ||
+            await ProviderState() != providersBefore)
+            throw new Exception("Rejected decisions changed stored records");
+        var decidedResponse = await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/decide", new { quoteId = cheapQuoteId, reason = "Menor precio", revision = 1 });
+        if (decidedResponse.StatusCode != HttpStatusCode.OK || (await Body(decidedResponse)) is var decidedRow && (decidedRow.GetProperty("status").GetString() != "decidida" ||
+            decidedRow.GetProperty("chosenQuoteId").GetGuid() != cheapQuoteId || decidedRow.GetProperty("decisionReason").GetString() != "Menor precio" ||
+            decidedRow.GetProperty("revision").GetInt64() != 2))
+            throw new Exception("Decision failed");
+        providersBefore = await ProviderState();
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/quote-comparisons/{comparisonId}", new { title = "Nuevo", requestedOn = "2026-11-10", revision = 2 }), HttpStatusCode.Conflict, "Comparison is not open") ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/quotes", quoteBody), HttpStatusCode.Conflict, "Comparison is not open") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/quotes/{quoteId}", new { providerId, receivedOn = "2026-11-12", currency = "ARS", lines = quoteBody.lines, revision = 1 }), HttpStatusCode.Conflict, "Comparison is not open") ||
+            await ProviderState() != providersBefore)
+            throw new Exception("Edits of a decided comparison changed stored records");
+        var reopenedResponse = await Send(HttpMethod.Post, $"/api/v1/quote-comparisons/{comparisonId}/reopen", new { revision = 2 });
+        if (reopenedResponse.StatusCode != HttpStatusCode.OK || (await Body(reopenedResponse)) is var reopenedRow && (reopenedRow.GetProperty("status").GetString() != "abierta" ||
+            reopenedRow.GetProperty("decisionReason").GetString() != "Menor precio" || reopenedRow.GetProperty("chosenQuoteId").GetGuid() != cheapQuoteId))
+            throw new Exception("Reopen failed or dropped the previous decision");
+        var editedQuote = await Send(HttpMethod.Put, $"/api/v1/quotes/{quoteId}", new { receivedOn = "2026-11-12", currency = "USD", notes = "Nota",
+            lines = new object[] { new { productText = "Producto libre", quantity = 3m, unit = "kg", unitPrice = 2m } }, revision = 1 });
+        if (editedQuote.StatusCode != HttpStatusCode.OK || (await Body(editedQuote)) is var editedQuoteRow && (editedQuoteRow.GetProperty("providerId").GetGuid() != providerId ||
+            editedQuoteRow.GetProperty("total").GetDecimal() != 6m || editedQuoteRow.GetProperty("lines").GetArrayLength() != 1 ||
+            editedQuoteRow.GetProperty("currency").GetString() != "USD" || editedQuoteRow.GetProperty("revision").GetInt64() != 2))
+            throw new Exception("Quote edit after reopening failed");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/quotes/{quoteId}", new { receivedOn = "2026-11-12", currency = "USD", lines = new object[0], revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/quotes/{Guid.NewGuid()}", new { receivedOn = "2026-11-12", currency = "USD", lines = new object[0], revision = 1 }), HttpStatusCode.NotFound))
+            throw new Exception("Rejected quote edit accepted");
+        var renamedComparison = await Send(HttpMethod.Put, $"/api/v1/quote-comparisons/{comparisonId}", new { title = "Herbicidas de barbecho", requestedOn = "2026-11-09", revision = 3 });
+        if (renamedComparison.StatusCode != HttpStatusCode.OK || (await Body(renamedComparison)).GetProperty("title").GetString() != "Herbicidas de barbecho" ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/quote-comparisons/{comparisonId}", new { title = "Stale", requestedOn = "2026-11-09", revision = 3 }), HttpStatusCode.Conflict, "Stale revision"))
+            throw new Exception("Comparison edit after reopening failed");
+        if (!(await Ids($"quote-comparisons?clientId={id}")).SequenceEqual([comparisonId]) || !(await Ids("quote-comparisons")).SequenceEqual([comparisonId, otherComparisonId]) ||
+            !(await Ids("quote-comparisons?status=abierta")).SequenceEqual([comparisonId, otherComparisonId]) || (await Ids("quote-comparisons?status=decidida")).Length != 0 ||
+            !(await Ids($"quote-comparisons?clientId={richId}&status=abierta")).SequenceEqual([otherComparisonId]))
+            throw new Exception("Comparisons filter mismatch");
+
         using (var anonymous = new HttpClient { BaseAddress = client.BaseAddress })
             if ((await anonymous.GetAsync("/api/v1/import-records")).StatusCode != HttpStatusCode.Unauthorized)
                 throw new Exception("Anonymous import-records route accessible");

@@ -31,7 +31,7 @@ try
     }
     string[] previousMigrations = ["001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql"];
     Migrate(builder.ConnectionString, [.. previousMigrations, "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql",
-        "010_reference_alignment.sql"]);
+        "010_reference_alignment.sql", "011_providers_and_quotes.sql"]);
     var service = new OperationsService(new PostgresOperationsRepository(builder.ConnectionString));
     static void Check(bool condition, string label)
     {
@@ -875,6 +875,274 @@ try
           crossAfter.FirmId == firm.Id && crossAfter.Revision == crossBefore.Revision &&
           crossAfter.Plots.Select(item => item.PlotId).Order().SequenceEqual(crossBefore.Plots.Select(item => item.PlotId).Order()), "work orders keep their firm and plots after a move");
 
+    // 011: providers of inputs and services, their contacts, the clients that buy from them, reference prices and quote comparisons.
+    string ProviderStateOf(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("""
+            SELECT concat_ws('|',
+              (SELECT coalesce(string_agg(to_jsonb(p)::text, ',' ORDER BY p.id), '') FROM providers p),
+              (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM provider_contacts c),
+              (SELECT coalesce(string_agg(to_jsonb(l)::text, ',' ORDER BY l.id), '') FROM client_providers l),
+              (SELECT coalesce(string_agg(to_jsonb(p)::text, ',' ORDER BY p.id), '') FROM provider_prices p),
+              (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM quote_comparisons c),
+              (SELECT coalesce(string_agg(to_jsonb(q)::text, ',' ORDER BY q.id), '') FROM quotes q),
+              (SELECT coalesce(string_agg(to_jsonb(l)::text, ',' ORDER BY l.id), '') FROM quote_lines l))
+            """, connection);
+        return (string)command.ExecuteScalar()!;
+    }
+    string ProviderState() => ProviderStateOf(builder.ConnectionString);
+    var providers = new ProviderService(new PostgresProviderRepository(builder.ConnectionString));
+    const string kindError = "Kind must be one of: insumos, laboratorio_suelos, laboratorio_semillas, plataforma_virtual, otro";
+    var providerDraft = new ProviderDraft(" Proveedor de prueba ", " Insumos ", " 30-12345678-9 ", "  https://www.example.test/proveedor ", " 0000 000000 ",
+        " ventas@example.test ", "  ");
+    var providerState = ProviderState();
+    foreach (var kind in new[] { null, " ", "contratista", "laboratorio" })
+        Check(Rejected<DomainValidationException>(() => providers.Create(providerDraft with { Kind = kind }), $"invalid kind {kind}").Message == kindError, "kind message");
+    foreach (var taxId in new[] { "2012345678", "20.12345678.9" })
+        Check(Rejected<DomainValidationException>(() => providers.Create(providerDraft with { TaxId = taxId }), $"invalid provider CUIT {taxId}").Message ==
+              "CUIT must have 11 digits", "provider CUIT message");
+    foreach (var email in new[] { "sin-arroba", "a@b@c", "@example.test" })
+        Check(Rejected<DomainValidationException>(() => providers.Create(providerDraft with { Email = email }), $"invalid provider email {email}").Message ==
+              "Email must contain a single @ with text on both sides", "provider email message");
+    foreach (var website in new[] { "www.example .test", new string('w', 201) })
+        Check(Rejected<DomainValidationException>(() => providers.Create(providerDraft with { Website = website }), "invalid provider website").Message ==
+              "Website must be a single address without spaces", "provider website message");
+    Check(Rejected<DomainValidationException>(() => providers.Create(providerDraft with { Name = " " }), "blank provider").Message == "Name is required", "provider name message");
+    Check(ProviderState() == providerState, "rejected provider creates changed stored rows");
+    var provider = providers.Create(providerDraft);
+    Check(provider is { Name: "Proveedor de prueba", Kind: "insumos", TaxId: "30123456789", Website: "https://www.example.test/proveedor", Phone: "0000 000000",
+          Email: "ventas@example.test", Notes: null, Revision: 1 } && providers.List().Contains(provider), "provider creation/listing");
+    var lab = providers.Create(new ProviderDraft("Laboratorio de prueba", "laboratorio_suelos", null, null, null, null, null));
+    var otherProvider = providers.Create(new ProviderDraft("Otro proveedor", "insumos", null, null, null, null, null));
+    providerState = ProviderState();
+    Check(Rejected<DomainDuplicateException>(() => providers.Create(providerDraft with { Name = " PROVEEDOR DE PRUEBA " }), "duplicate provider").Message == "Duplicate name",
+          "duplicate provider message");
+    Reject<DomainDuplicateException>(() => providers.Update(lab.Id, lab.Revision, providerDraft with { Name = "proveedor de prueba" }), "rename to duplicate provider");
+    Check(Rejected<DomainValidationException>(() => providers.Update(lab.Id, lab.Revision, providerDraft with { Name = "Laboratorio", Kind = "laboratorio" }),
+          "invalid kind update").Message == kindError, "kind update message");
+    Reject<DomainValidationException>(() => providers.Update(lab.Id, lab.Revision, providerDraft with { Name = "Laboratorio", TaxId = "1" }), "invalid CUIT update");
+    Reject<DomainConflictException>(() => providers.Update(provider.Id, 0, providerDraft), "stale provider");
+    Reject<DomainNotFoundException>(() => providers.Update(Guid.NewGuid(), 1, providerDraft with { Name = "Ausente" }), "missing provider");
+    Check(ProviderState() == providerState, "rejected provider updates changed stored rows");
+    var changedLab = providers.Update(lab.Id, lab.Revision, new ProviderDraft("Laboratorio de prueba", " LABORATORIO_SEMILLAS ", null, "www.lab.example.test", null, null, "Notas"));
+    Check(changedLab is { Kind: "laboratorio_semillas", Website: "www.lab.example.test", Notes: "Notas", TaxId: null, Revision: 2 }, "provider update replaces");
+    Check(providers.List("laboratorio_semillas").SequenceEqual([changedLab]) &&
+          providers.List(" INSUMOS ").Select(item => item.Id).SequenceEqual([otherProvider.Id, provider.Id]) && providers.List("otro").Count == 0 &&
+          providers.List(" ").Count == 3, "providers filter by kind");
+    Check(Rejected<DomainValidationException>(() => providers.List("laboratorio"), "invalid kind filter").Message == kindError, "kind filter message");
+
+    const string roleError = "Role must be one of: ventas, tecnico, otro";
+    var contactDraft = new ProviderContactDraft(" Representante ", " Ventas ", " 0000 111111 ", " rep@example.test ", null);
+    providerState = ProviderState();
+    foreach (var role in new[] { null, " ", "comercial", "técnico" })
+        Check(Rejected<DomainValidationException>(() => providers.CreateContact(provider.Id, contactDraft with { Role = role }), $"invalid role {role}").Message == roleError,
+              "role message");
+    Reject<DomainValidationException>(() => providers.CreateContact(provider.Id, contactDraft with { Name = " " }), "blank contact");
+    Reject<DomainValidationException>(() => providers.CreateContact(provider.Id, contactDraft with { Email = "a@b@c" }), "invalid contact email");
+    Reject<DomainNotFoundException>(() => providers.CreateContact(Guid.NewGuid(), contactDraft), "contact of a missing provider");
+    Check(ProviderState() == providerState, "rejected contact creates changed stored rows");
+    var contact = providers.CreateContact(provider.Id, contactDraft);
+    Check(contact is { Name: "Representante", Role: "ventas", Phone: "0000 111111", Email: "rep@example.test", Notes: null, Revision: 1 } &&
+          contact.ProviderId == provider.Id, "contact creation");
+    var technician = providers.CreateContact(otherProvider.Id, contactDraft with { Name = "Técnico", Role = "TECNICO" });
+    Check(technician is { Role: "tecnico" } && technician.ProviderId == otherProvider.Id, "technical contact");
+    var changedContact = providers.UpdateContact(contact.Id, contact.Revision, new ProviderContactDraft("Representante", "otro", null, null, "Notas"));
+    Check(changedContact is { Role: "otro", Phone: null, Email: null, Notes: "Notas", Revision: 2 } && changedContact.ProviderId == provider.Id,
+          "contact update replaces and keeps its provider");
+    providerState = ProviderState();
+    Reject<DomainConflictException>(() => providers.UpdateContact(contact.Id, contact.Revision, contactDraft), "stale contact");
+    Reject<DomainNotFoundException>(() => providers.UpdateContact(Guid.NewGuid(), 1, contactDraft), "missing contact");
+    Check(Rejected<DomainValidationException>(() => providers.UpdateContact(contact.Id, changedContact.Revision, contactDraft with { Role = "x" }), "invalid role update")
+          .Message == roleError, "role update message");
+    Check(ProviderState() == providerState, "rejected contact updates changed stored rows");
+    Check(providers.ListContacts(provider.Id).SequenceEqual([changedContact]) && providers.ListContacts(otherProvider.Id).SequenceEqual([technician]) &&
+          providers.ListContacts().Count == 2 && providers.ListContacts(Guid.NewGuid()).Count == 0, "contacts filter by provider");
+
+    providerState = ProviderState();
+    Reject<DomainNotFoundException>(() => providers.Link(Guid.NewGuid(), provider.Id), "link to a missing client");
+    Reject<DomainNotFoundException>(() => providers.Link(client.Id, Guid.NewGuid()), "link to a missing provider");
+    Check(ProviderState() == providerState, "rejected links changed stored rows");
+    var link = providers.Link(client.Id, provider.Id);
+    var labLink = providers.Link(client.Id, lab.Id);
+    Check(link.ClientId == client.Id && link.ProviderId == provider.Id, "client provider link");
+    providerState = ProviderState();
+    Check(Rejected<DomainDuplicateException>(() => providers.Link(client.Id, provider.Id), "duplicate link").Message == "Duplicate link", "duplicate link message");
+    Check(ProviderState() == providerState, "duplicate link changed stored rows");
+    Check(providers.ListLinks(client.Id).Count == 2 && providers.ListLinks(null, provider.Id).SequenceEqual([link]) &&
+          providers.ListLinks(client.Id, lab.Id).SequenceEqual([labLink]) && providers.ListLinks(Guid.NewGuid()).Count == 0 && providers.ListLinks().Count == 2,
+          "links filter by client and provider");
+    providers.Unlink(labLink.Id);
+    providerState = ProviderState();
+    Reject<DomainNotFoundException>(() => providers.Unlink(labLink.Id), "unlink a missing link");
+    Check(ProviderState() == providerState && providers.ListLinks(client.Id).SequenceEqual([link]), "unlink removes only the link");
+
+    var priceDraft = new ProviderPriceDraft(provider.Id, input.Id, 12.5m, " usd ", null, new DateOnly(2026, 11, 1), "  ");
+    providerState = ProviderState();
+    foreach (var amount in new[] { 0m, -1m, 0.00001m, 10000000000m })
+        Check(Rejected<DomainValidationException>(() => providers.CreatePrice(priceDraft with { Price = amount }), $"invalid price {amount}").Message ==
+              "Price must be positive and fit numeric(14,4)", "price message");
+    foreach (var currency in new[] { null, " ", "EUR", "u$s" })
+        Check(Rejected<DomainValidationException>(() => providers.CreatePrice(priceDraft with { Currency = currency }), $"invalid currency {currency}").Message ==
+              "Currency must be ARS or USD", "currency message");
+    Check(Rejected<DomainValidationException>(() => providers.CreatePrice(priceDraft with { ValidOn = null }), "price without date").Message == "Valid on is required",
+          "valid on message");
+    Check(Rejected<DomainValidationException>(() => providers.CreatePrice(priceDraft with { ProviderId = null }), "price without provider").Message == "Provider is required",
+          "price provider message");
+    Check(Rejected<DomainValidationException>(() => providers.CreatePrice(priceDraft with { InputId = null }), "price without input").Message == "Input is required",
+          "price input message");
+    Reject<DomainNotFoundException>(() => providers.CreatePrice(priceDraft with { ProviderId = Guid.NewGuid() }), "price of a missing provider");
+    Reject<DomainNotFoundException>(() => providers.CreatePrice(priceDraft with { InputId = Guid.NewGuid() }), "price of a missing input");
+    Check(ProviderState() == providerState, "rejected price creates changed stored rows");
+    var price = providers.CreatePrice(priceDraft);
+    Check(price is { Price: 12.5m, Currency: "USD", Unit: "l", Notes: null, Revision: 1 } && price.ValidOn == new DateOnly(2026, 11, 1) &&
+          price.ProviderId == provider.Id && price.InputId == input.Id, "price defaults to the input's unit");
+    var bagPrice = providers.CreatePrice(priceDraft with { InputId = minimalInput.Id, Price = 9999999999.9999m, Currency = "ARS", Unit = " bolsa ",
+        ValidOn = new DateOnly(2026, 11, 20) });
+    Check(bagPrice is { Unit: "bolsa", Currency: "ARS", Price: 9999999999.9999m }, "price with its own unit");
+    var movedPrice = providers.UpdatePrice(price.Id, price.Revision, new ProviderPriceDraft(otherProvider.Id, minimalInput.Id, 13m, "ARS", null, new DateOnly(2026, 11, 2), "Lista"));
+    Check(movedPrice is { Price: 13m, Currency: "ARS", Unit: "kg", Notes: "Lista", Revision: 2 } && movedPrice.ProviderId == otherProvider.Id &&
+          movedPrice.InputId == minimalInput.Id, "price update replaces and defaults to the new input's unit");
+    var keptPrice = providers.UpdatePrice(price.Id, movedPrice.Revision, new ProviderPriceDraft(null, null, 14m, "USD", "tn", new DateOnly(2026, 11, 2), null));
+    Check(keptPrice is { Price: 14m, Unit: "tn", Notes: null, Revision: 3 } && keptPrice.ProviderId == otherProvider.Id && keptPrice.InputId == minimalInput.Id,
+          "price update without provider or input keeps them");
+    providerState = ProviderState();
+    Reject<DomainConflictException>(() => providers.UpdatePrice(price.Id, 1, priceDraft), "stale price");
+    Reject<DomainNotFoundException>(() => providers.UpdatePrice(Guid.NewGuid(), 1, priceDraft), "missing price");
+    Reject<DomainNotFoundException>(() => providers.UpdatePrice(price.Id, keptPrice.Revision, priceDraft with { InputId = Guid.NewGuid() }), "price moved to a missing input");
+    Reject<DomainValidationException>(() => providers.UpdatePrice(price.Id, keptPrice.Revision, priceDraft with { Price = 0m }), "invalid price update");
+    Check(ProviderState() == providerState, "rejected price updates changed stored rows");
+    Check(providers.ListPrices(provider.Id).SequenceEqual([bagPrice]) && providers.ListPrices(null, minimalInput.Id).Select(item => item.Id).SequenceEqual([bagPrice.Id, price.Id]) &&
+          providers.ListPrices().Count == 2 && providers.ListPrices(otherProvider.Id, input.Id).Count == 0, "prices filter by provider and input, newest first");
+    RejectSql("INSERT INTO providers(id,name,kind) VALUES (gen_random_uuid(),'Proveedor SQL','contratista')", "provider kind check");
+    RejectSql($"INSERT INTO provider_contacts(id,provider_id,name,role) VALUES (gen_random_uuid(),'{provider.Id}','Contacto','comercial')", "contact role check");
+    RejectSql($"INSERT INTO provider_prices(id,provider_id,input_id,price,currency,unit,valid_on) VALUES (gen_random_uuid(),'{provider.Id}','{input.Id}',0,'ARS','l','2026-11-01')",
+        "price check");
+    RejectSql($"INSERT INTO provider_prices(id,provider_id,input_id,price,currency,unit,valid_on) VALUES (gen_random_uuid(),'{provider.Id}','{input.Id}',1,'EUR','l','2026-11-01')",
+        "currency check");
+
+    var comparisons = new QuoteComparisonService(new PostgresQuoteComparisonRepository(builder.ConnectionString));
+    providerState = ProviderState();
+    Check(Rejected<DomainValidationException>(() => comparisons.Create(client.Id, " ", new DateOnly(2026, 11, 10)), "blank title").Message == "Title is required", "title message");
+    Check(Rejected<DomainValidationException>(() => comparisons.Create(client.Id, "Comparación", null), "comparison without date").Message == "Requested on is required",
+          "requested on message");
+    Reject<DomainNotFoundException>(() => comparisons.Create(Guid.NewGuid(), "Comparación", new DateOnly(2026, 11, 10)), "comparison of a missing client");
+    Check(ProviderState() == providerState, "rejected comparison creates changed stored rows");
+    var comparison = comparisons.Create(client.Id, " Herbicidas de barbecho ", new DateOnly(2026, 11, 10));
+    Check(comparison is { Title: "Herbicidas de barbecho", Status: "abierta", ChosenQuoteId: null, DecisionReason: null, Revision: 1 } && comparison.ClientId == client.Id &&
+          comparison.RequestedOn == new DateOnly(2026, 11, 10), "comparison creation");
+    var otherComparison = comparisons.Create(client.Id, "Fertilizantes", new DateOnly(2026, 11, 5));
+    var quoteDraft = new QuoteDraft(provider.Id, new DateOnly(2026, 11, 12), " ars ", "  ",
+        [new QuoteLineDraft(input.Id, null, 10m, null, 5.5m), new QuoteLineDraft(null, "  Coadyuvante X ", 2m, " l ", 3.3333m)]);
+    providerState = ProviderState();
+    foreach (var (invalid, message) in new (QuoteDraft, string)[] {
+        (quoteDraft with { Lines = [new QuoteLineDraft(null, " ", 1m, "l", 1m)] }, "Each line needs an input or a product"),
+        (quoteDraft with { Lines = [new QuoteLineDraft(input.Id, null, 0m, null, 1m)] }, "Quantity must be positive"),
+        (quoteDraft with { Lines = [new QuoteLineDraft(input.Id, null, -1m, null, 1m)] }, "Quantity must be positive"),
+        (quoteDraft with { Lines = [new QuoteLineDraft(input.Id, null, 0.00001m, null, 1m)] }, "Quantity must be positive"),
+        (quoteDraft with { Lines = [new QuoteLineDraft(input.Id, null, 1m, null, -1m)] }, "Unit price must be zero or positive"),
+        (quoteDraft with { Lines = [new QuoteLineDraft(input.Id, null, 1m, null, 0.00001m)] }, "Unit price must be zero or positive"),
+        (quoteDraft with { Lines = [new QuoteLineDraft(null, "Producto", 1m, " ", 1m)] }, "Unit is required"),
+        (quoteDraft with { Currency = "EUR" }, "Currency must be ARS or USD"),
+        (quoteDraft with { ReceivedOn = null }, "Received on is required"),
+        (quoteDraft with { ProviderId = null }, "Provider is required") })
+        Check(Rejected<DomainValidationException>(() => comparisons.AddQuote(comparison.Id, invalid), message).Message == message, $"quote message {message}");
+    Reject<DomainNotFoundException>(() => comparisons.AddQuote(Guid.NewGuid(), quoteDraft), "quote of a missing comparison");
+    Reject<DomainNotFoundException>(() => comparisons.AddQuote(comparison.Id, quoteDraft with { ProviderId = Guid.NewGuid() }), "quote of a missing provider");
+    Reject<DomainNotFoundException>(() => comparisons.AddQuote(comparison.Id, quoteDraft with { Lines = [new QuoteLineDraft(Guid.NewGuid(), null, 1m, "l", 1m)] }),
+        "quote line of a missing input");
+    Check(ProviderState() == providerState, "rejected quotes changed stored rows");
+    var arsQuote = comparisons.AddQuote(comparison.Id, quoteDraft);
+    Check(arsQuote is { Currency: "ARS", Notes: null, Revision: 1, Total: 61.6666m } && arsQuote.ComparisonId == comparison.Id && arsQuote.ProviderId == provider.Id &&
+          arsQuote.Lines is [{ Position: 1, ProductText: null, Quantity: 10m, Unit: "l", UnitPrice: 5.5m } firstLine, { Position: 2, InputId: null, ProductText: "Coadyuvante X",
+              Quantity: 2m, Unit: "l", UnitPrice: 3.3333m }] && firstLine.InputId == input.Id, "quote with an input line and a product line");
+    var cheapQuote = comparisons.AddQuote(comparison.Id, new QuoteDraft(otherProvider.Id, new DateOnly(2026, 11, 11), "ARS", "Contado",
+        [new QuoteLineDraft(input.Id, null, 10m, null, 5m), new QuoteLineDraft(null, " coadyuvante   X ", 2m, "l", 3.3333m)]));
+    var usdQuote = comparisons.AddQuote(comparison.Id, new QuoteDraft(provider.Id, new DateOnly(2026, 11, 13), "USD", null,
+        [new QuoteLineDraft(input.Id, null, 10m, null, 0.005m), new QuoteLineDraft(null, "Otro producto", 0.3333m, "kg", 0.3333m)]));
+    var foreignQuote = comparisons.AddQuote(otherComparison.Id, quoteDraft);
+    Check(cheapQuote.Total == 56.6666m && usdQuote.Total == 0.1611m, "quote totals rounded to 4 decimals");
+    var comparisonDetail = comparisons.Detail(comparison.Id)!;
+    Check(comparisonDetail.Comparison == comparison && comparisonDetail.Quotes.Select(item => item.Id).SequenceEqual([cheapQuote.Id, arsQuote.Id, usdQuote.Id]), "detail quotes by received date");
+    Check(comparisonDetail.Products.Select(item => (item.Key, item.Label)).SequenceEqual([("text:coadyuvante   x", "coadyuvante   X"), ("text:coadyuvante x", "Coadyuvante X"),
+          ("text:otro producto", "Otro producto"), ($"input:{input.Id}", "Producto de prueba")]), $"detail products {string.Join(",", comparisonDetail.Products.Select(item => item.Key))}");
+    var inputProduct = comparisonDetail.Products[3];
+    Check(inputProduct.Offers.Select(item => (item.QuoteId, item.ProviderId, item.UnitPrice, item.Currency, item.Quantity, item.Unit, item.LineTotal)).SequenceEqual([
+          (cheapQuote.Id, otherProvider.Id, 5m, "ARS", 10m, "l", 50m), (arsQuote.Id, provider.Id, 5.5m, "ARS", 10m, "l", 55m), (usdQuote.Id, provider.Id, 0.005m, "USD", 10m, "l", 0.05m)]) &&
+          inputProduct.CheapestQuoteIdByCurrency.Count == 2 && inputProduct.CheapestQuoteIdByCurrency["ARS"] == cheapQuote.Id &&
+          inputProduct.CheapestQuoteIdByCurrency["USD"] == usdQuote.Id, "cheapest quote per currency");
+    Check(comparisonDetail.Products[2].CheapestQuoteIdByCurrency.Single() is { Key: "USD" } usd && usd.Value == usdQuote.Id &&
+          comparisonDetail.Products[2].Offers.Single().LineTotal == 0.1111m, "product offered in one currency");
+    // Same unit price: the earliest received quote wins.
+    var tied = comparisons.AddQuote(comparison.Id, new QuoteDraft(lab.Id, new DateOnly(2026, 11, 14), "ARS", null, [new QuoteLineDraft(null, "Coadyuvante X", 5m, "l", 3.3333m)]));
+    comparisonDetail = comparisons.Detail(comparison.Id)!;
+    Check(comparisonDetail.Products[1] is { Key: "text:coadyuvante x" } tiedProduct && tiedProduct.Offers.Count == 2 && tiedProduct.CheapestQuoteIdByCurrency["ARS"] == arsQuote.Id &&
+          comparisonDetail.Products[0].CheapestQuoteIdByCurrency["ARS"] == cheapQuote.Id, "price ties go to the earliest received quote");
+    Check(comparisons.Detail(Guid.NewGuid()) is null, "missing comparison detail");
+
+    providerState = ProviderState();
+    Check(Rejected<DomainValidationException>(() => comparisons.Decide(comparison.Id, comparison.Revision, cheapQuote.Id, "  "), "decision without reason").Message ==
+          "Reason is required", "reason message");
+    Reject<DomainNotFoundException>(() => comparisons.Decide(comparison.Id, comparison.Revision, foreignQuote.Id, "Motivo"), "decision on a quote of another comparison");
+    Reject<DomainNotFoundException>(() => comparisons.Decide(comparison.Id, comparison.Revision, Guid.NewGuid(), "Motivo"), "decision on a missing quote");
+    Reject<DomainNotFoundException>(() => comparisons.Decide(Guid.NewGuid(), 1, cheapQuote.Id, "Motivo"), "decision on a missing comparison");
+    Reject<DomainConflictException>(() => comparisons.Decide(comparison.Id, 0, cheapQuote.Id, "Motivo"), "stale decision");
+    Check(ProviderState() == providerState, "rejected decisions changed stored rows");
+    var decided = comparisons.Decide(comparison.Id, comparison.Revision, cheapQuote.Id, " Menor precio en pesos ");
+    Check(decided is { Status: "decidida", DecisionReason: "Menor precio en pesos", Revision: 2 } && decided.ChosenQuoteId == cheapQuote.Id, "decision");
+    providerState = ProviderState();
+    foreach (var (action, label) in new (Action, string)[] {
+        (() => comparisons.Update(comparison.Id, decided.Revision, "Nuevo título", new DateOnly(2026, 11, 10)), "update"),
+        (() => comparisons.AddQuote(comparison.Id, quoteDraft), "new quote"),
+        (() => comparisons.UpdateQuote(cheapQuote.Id, cheapQuote.Revision, quoteDraft), "quote edit"),
+        (() => comparisons.Decide(comparison.Id, decided.Revision, arsQuote.Id, "Otro motivo"), "second decision") })
+        Check(Rejected<DomainStateException>(action, $"decided comparison {label}").Message == "Comparison is not open", $"not open message on {label}");
+    Check(Rejected<DomainStateException>(() => comparisons.Reopen(otherComparison.Id, otherComparison.Revision), "reopen an open comparison").Message ==
+          "Comparison is not decided", "reopen message");
+    Reject<DomainConflictException>(() => comparisons.Reopen(comparison.Id, 1), "stale reopen");
+    Reject<DomainNotFoundException>(() => comparisons.Reopen(Guid.NewGuid(), 1), "reopen a missing comparison");
+    Check(ProviderState() == providerState, "rejected edits of a decided comparison changed stored rows");
+    var reopened = comparisons.Reopen(comparison.Id, decided.Revision);
+    Check(reopened is { Status: "abierta", DecisionReason: "Menor precio en pesos", Revision: 3 } && reopened.ChosenQuoteId == cheapQuote.Id,
+          "reopen keeps the previous decision");
+    var editedQuote = comparisons.UpdateQuote(cheapQuote.Id, cheapQuote.Revision, quoteDraft with { ProviderId = null,
+        Lines = [new QuoteLineDraft(input.Id, " Producto de prueba a granel ", 20m, "kg", 4m)] });
+    Check(editedQuote is { Revision: 2, Currency: "ARS", Notes: null, Total: 80m } && editedQuote.ProviderId == otherProvider.Id &&
+          editedQuote.ReceivedOn == new DateOnly(2026, 11, 12) && editedQuote.Lines is [{ Position: 1, Unit: "kg", ProductText: "Producto de prueba a granel" }],
+          "quote edit after reopening replaces lines and keeps an omitted provider");
+    var renamedComparison = comparisons.Update(comparison.Id, reopened.Revision, " Herbicidas ", new DateOnly(2026, 11, 9));
+    Check(renamedComparison is { Title: "Herbicidas", Status: "abierta", Revision: 4 } && renamedComparison.RequestedOn == new DateOnly(2026, 11, 9), "comparison edit after reopening");
+    providerState = ProviderState();
+    Reject<DomainConflictException>(() => comparisons.UpdateQuote(cheapQuote.Id, cheapQuote.Revision, quoteDraft), "stale quote");
+    Reject<DomainNotFoundException>(() => comparisons.UpdateQuote(Guid.NewGuid(), 1, quoteDraft), "missing quote");
+    Reject<DomainNotFoundException>(() => comparisons.UpdateQuote(cheapQuote.Id, editedQuote.Revision, quoteDraft with { ProviderId = Guid.NewGuid() }), "quote moved to a missing provider");
+    Reject<DomainValidationException>(() => comparisons.UpdateQuote(cheapQuote.Id, editedQuote.Revision, quoteDraft with { Lines = [new QuoteLineDraft(null, null, 1m, "l", 1m)] }),
+        "quote edit with a line without product");
+    Reject<DomainConflictException>(() => comparisons.Update(comparison.Id, reopened.Revision, "Stale", new DateOnly(2026, 11, 9)), "stale comparison");
+    Reject<DomainNotFoundException>(() => comparisons.Update(Guid.NewGuid(), 1, "Ausente", new DateOnly(2026, 11, 9)), "missing comparison");
+    Reject<DomainValidationException>(() => comparisons.Update(comparison.Id, renamedComparison.Revision, " ", new DateOnly(2026, 11, 9)), "blank title update");
+    Check(ProviderState() == providerState, "rejected quote and comparison edits changed stored rows");
+    var redecided = comparisons.Decide(comparison.Id, renamedComparison.Revision, arsQuote.Id, "Mejor servicio técnico");
+    Check(redecided is { Status: "decidida", DecisionReason: "Mejor servicio técnico", Revision: 5 } && redecided.ChosenQuoteId == arsQuote.Id, "a new decision replaces the previous one");
+    Check(comparisons.List(client.Id).Select(item => item.Id).SequenceEqual([comparison.Id, otherComparison.Id]) &&
+          comparisons.List(null, " DECIDIDA ").SequenceEqual([redecided]) && comparisons.List(client.Id, "abierta").Select(item => item.Id).SequenceEqual([otherComparison.Id]) &&
+          comparisons.List(Guid.NewGuid()).Count == 0 && comparisons.List().Count == 2, "comparisons filter by client and status");
+    Check(Rejected<DomainValidationException>(() => comparisons.List(null, "cerrada"), "invalid status filter").Message == "Status must be one of: abierta, decidida",
+          "status filter message");
+    RejectSql($"UPDATE quote_comparisons SET status='decidida', chosen_quote_id=NULL, decision_reason=NULL WHERE id='{otherComparison.Id}'", "decided comparison without a choice");
+    RejectSql($"UPDATE quote_comparisons SET decision_reason=NULL WHERE id='{comparison.Id}'", "choice without reason");
+    RejectSql($"INSERT INTO quote_lines(id,quote_id,position,quantity,unit,unit_price) VALUES (gen_random_uuid(),'{arsQuote.Id}',9,1,'l',1)", "line without input or product");
+    RejectSql($"INSERT INTO quote_lines(id,quote_id,position,product_text,quantity,unit,unit_price) VALUES (gen_random_uuid(),'{arsQuote.Id}',9,'P',0,'l',1)", "line quantity check");
+    using (var connection = new NpgsqlConnection(builder.ConnectionString))
+    {
+        connection.Open();
+        using var foreignChoice = new NpgsqlCommand($"UPDATE quote_comparisons SET chosen_quote_id='{foreignQuote.Id}' WHERE id='{comparison.Id}'", connection);
+        try { foreignChoice.ExecuteNonQuery(); throw new Exception("A quote of another comparison was chosen"); }
+        catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.ForeignKeyViolation) { }
+    }
+    Check(tied.Total == 16.6665m, "tied quote total");
+
     // 006 on a database that already holds rows in every earlier table, including a same-name labor.
     Migrate(seedBuilder.ConnectionString, previousMigrations);
     var keptLaborId = Guid.NewGuid();
@@ -1103,7 +1371,40 @@ try
           rerunLabors.Single(item => item.Id == cosechaLaborId) is { Category: "forrajes", Revision: 3 } &&
           rerunLabors.Single(item => item.Id == userFine.Id).Description == "Descripción propia", "user-set labor categories and descriptions kept");
 
-    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas, recipes and work orders with concurrent revisions and numbering, across fields, search, print documents, default client firms and the 010 reference alignment");
+    // 011 on a database with rows in every earlier table keeps them and their constraints; a rerun over its own rows changes nothing.
+    string EarlierConstraintsOf(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("""
+            SELECT string_agg(conrelid::regclass::text || ':' || conname || ':' || pg_get_constraintdef(oid), ',' ORDER BY conrelid::regclass::text, conname)
+            FROM pg_constraint WHERE connamespace = current_schema()::regnamespace
+              AND conrelid::regclass::text NOT IN ('providers','provider_contacts','client_providers','provider_prices','quote_comparisons','quotes','quote_lines')
+            """, connection);
+        return (string)command.ExecuteScalar()!;
+    }
+    string EarlierStateOf(string connectionString) => SnapshotOf(connectionString) + "|" + AttributeTablesOf(connectionString) + "|" +
+        WorkOrderStateOf(connectionString) + "|" + EarlierConstraintsOf(connectionString);
+    var before011 = EarlierStateOf(seedBuilder.ConnectionString);
+    Migrate(seedBuilder.ConnectionString, "011_providers_and_quotes.sql");
+    Check(EarlierStateOf(seedBuilder.ConnectionString) == before011, "011 changed rows or constraints of earlier tables");
+    var seedProviders = new ProviderService(new PostgresProviderRepository(seedBuilder.ConnectionString));
+    var seedComparisons = new QuoteComparisonService(new PostgresQuoteComparisonRepository(seedBuilder.ConnectionString));
+    var seedInput = new InputCatalog(new PostgresInputRepository(seedBuilder.ConnectionString)).Create(new InputDraft("Producto 011", null, null, null, null, null, "l", null, null, null, false));
+    var seedProvider = seedProviders.Create(new ProviderDraft("Proveedor 011", "insumos", null, null, null, null, null));
+    seedProviders.CreateContact(seedProvider.Id, new ProviderContactDraft("Contacto 011", "ventas", null, null, null));
+    seedProviders.Link(firmlessClientId, seedProvider.Id);
+    seedProviders.CreatePrice(new ProviderPriceDraft(seedProvider.Id, seedInput.Id, 1m, "ARS", null, new DateOnly(2026, 11, 1), null));
+    var seedComparison = seedComparisons.Create(firmlessClientId, "Comparación 011", new DateOnly(2026, 11, 1));
+    var seedQuote = seedComparisons.AddQuote(seedComparison.Id, new QuoteDraft(seedProvider.Id, new DateOnly(2026, 11, 2), "USD", null,
+        [new QuoteLineDraft(seedInput.Id, null, 1m, null, 2m), new QuoteLineDraft(null, "Producto libre", 1m, "kg", 0m)]));
+    seedComparisons.Decide(seedComparison.Id, seedComparison.Revision, seedQuote.Id, "Motivo");
+    rerunBefore = EarlierStateOf(seedBuilder.ConnectionString) + "|" + ProviderStateOf(seedBuilder.ConnectionString) + "|" + ConstraintsOf(seedBuilder.ConnectionString);
+    Migrate(seedBuilder.ConnectionString, "011_providers_and_quotes.sql");
+    Check(EarlierStateOf(seedBuilder.ConnectionString) + "|" + ProviderStateOf(seedBuilder.ConnectionString) + "|" + ConstraintsOf(seedBuilder.ConnectionString) == rerunBefore,
+          "rerunning 011 changed stored rows or constraints");
+
+    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas, recipes and work orders with concurrent revisions and numbering, across fields, search, print documents, default client firms, the 010 reference alignment, and the 011 providers, contacts, client links, prices and quote comparisons");
     return 0;
 }
 finally

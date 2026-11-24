@@ -24,4 +24,21 @@ internal static class CatalogText
         return at > 0 && at < email.Length - 1 && email.IndexOf('@', at + 1) < 0
             ? email : throw new DomainValidationException("Email must contain a single @ with text on both sides");
     }
+
+    public static string? Website(string? value)
+    {
+        var website = Optional(value);
+        return website is null || (website.Length <= 200 && !website.Any(char.IsWhiteSpace))
+            ? website : throw new DomainValidationException("Website must be a single address without spaces");
+    }
+
+    /// <summary>Money amounts and quantities are stored as numeric(14,4).</summary>
+    public static bool FitsAmount(decimal value) => decimal.Round(value, 4) == value && value <= 9999999999.9999m;
+
+    // Prices and quotes are in pesos or dollars, stored upper case.
+    public static string Currency(string? value)
+    {
+        var currency = Optional(value)?.ToUpperInvariant();
+        return currency is "ARS" or "USD" ? currency : throw new DomainValidationException("Currency must be ARS or USD");
+    }
 }

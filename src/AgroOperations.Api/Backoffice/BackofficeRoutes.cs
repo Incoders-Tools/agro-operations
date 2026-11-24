@@ -28,6 +28,8 @@ public static class BackofficeRoutes
         var plotCrops = new PlotCropService(new PostgresPlotCropRepository(connectionString));
         var provenance = new ImportProvenanceService(new PostgresImportRecordRepository(connectionString));
         var workOrders = new WorkOrderService(new PostgresWorkOrderRepository(connectionString));
+        var providers = new ProviderService(new PostgresProviderRepository(connectionString));
+        var comparisons = new QuoteComparisonService(new PostgresQuoteComparisonRepository(connectionString));
         var protectedRoutes = local.MapGroup("").RequireAuthorization().AddEndpointFilter(async (context, next) =>
         {
             if (HttpMethods.IsGet(context.HttpContext.Request.Method)) return await next(context);
@@ -63,6 +65,34 @@ public static class BackofficeRoutes
         protectedRoutes.MapPut("/work-orders/{id:guid}", (Guid id, RevisionWorkOrderInput input) => Change(() => workOrders.Update(id, input.Revision, input.Draft())));
         protectedRoutes.MapPost("/work-orders/{id:guid}/cancel", (Guid id, CancelWorkOrderInput input) => Change(() => workOrders.Cancel(id, input.Revision, input.Reason)));
         protectedRoutes.MapPost("/work-orders/{id:guid}/complete", (Guid id, RevisionOnlyInput input) => Change(() => workOrders.Complete(id, input.Revision)));
+        // Providers: input suppliers and service providers. Filters are optional and combine; an unknown kind or status is rejected.
+        protectedRoutes.MapGet("/providers", (string? kind) => Change(() => providers.List(kind)));
+        protectedRoutes.MapPost("/providers", (ProviderInput input) => Create(() => providers.Create(input.Draft())));
+        protectedRoutes.MapPut("/providers/{id:guid}", (Guid id, RevisionProviderInput input) => Change(() => providers.Update(id, input.Revision, input.Draft())));
+        protectedRoutes.MapGet("/provider-contacts", (Guid? providerId) => Results.Json(providers.ListContacts(providerId)));
+        protectedRoutes.MapPost("/provider-contacts", (ProviderContactInput input) => Create(() => providers.CreateContact(input.ProviderId, input.Draft())));
+        // A contact keeps its provider: a providerId sent on update is ignored.
+        protectedRoutes.MapPut("/provider-contacts/{id:guid}", (Guid id, RevisionProviderContactInput input) =>
+            Change(() => providers.UpdateContact(id, input.Revision, input.Draft())));
+        protectedRoutes.MapGet("/client-providers", (Guid? clientId, Guid? providerId) => Results.Json(providers.ListLinks(clientId, providerId)));
+        protectedRoutes.MapPost("/client-providers", (ClientProviderInput input) => Create(() => providers.Link(input.ClientId, input.ProviderId)));
+        protectedRoutes.MapDelete("/client-providers/{id:guid}", (Guid id) => Remove(() => providers.Unlink(id)));
+        protectedRoutes.MapGet("/provider-prices", (Guid? providerId, Guid? inputId) => Results.Json(providers.ListPrices(providerId, inputId)));
+        // An omitted unit is the input's unit; on update an omitted providerId or inputId keeps the current one.
+        protectedRoutes.MapPost("/provider-prices", (ProviderPriceInput input) => Create(() => providers.CreatePrice(input.Draft())));
+        protectedRoutes.MapPut("/provider-prices/{id:guid}", (Guid id, RevisionProviderPriceInput input) => Change(() => providers.UpdatePrice(id, input.Revision, input.Draft())));
+        // Quote comparisons: the detail groups every quoted line by product with the cheapest quote per currency.
+        protectedRoutes.MapGet("/quote-comparisons", (Guid? clientId, string? status) => Change(() => comparisons.List(clientId, status)));
+        protectedRoutes.MapGet("/quote-comparisons/{id:guid}", (Guid id) => Item(comparisons.Detail(id)));
+        protectedRoutes.MapPost("/quote-comparisons", (QuoteComparisonInput input) => Create(() => comparisons.Create(input.ClientId, input.Title, input.RequestedOn)));
+        protectedRoutes.MapPut("/quote-comparisons/{id:guid}", (Guid id, RevisionQuoteComparisonInput input) =>
+            Change(() => comparisons.Update(id, input.Revision, input.Title, input.RequestedOn)));
+        protectedRoutes.MapPost("/quote-comparisons/{id:guid}/decide", (Guid id, DecideInput input) =>
+            Change(() => comparisons.Decide(id, input.Revision, input.QuoteId, input.Reason)));
+        protectedRoutes.MapPost("/quote-comparisons/{id:guid}/reopen", (Guid id, RevisionOnlyInput input) => Change(() => comparisons.Reopen(id, input.Revision)));
+        // Quotes replace their lines on update; an omitted providerId keeps the current provider.
+        protectedRoutes.MapPost("/quote-comparisons/{id:guid}/quotes", (Guid id, QuoteInput input) => Create(() => comparisons.AddQuote(id, input.Draft())));
+        protectedRoutes.MapPut("/quotes/{id:guid}", (Guid id, RevisionQuoteInput input) => Change(() => comparisons.UpdateQuote(id, input.Revision, input.Draft())));
         protectedRoutes.MapGet("/clients/{id:guid}", (Guid id) => Item(operations.GetClient(id)));
         protectedRoutes.MapGet("/fields/{id:guid}", (Guid id) => Item(operations.GetField(id)));
         protectedRoutes.MapGet("/plots/{id:guid}", (Guid id) => Item(operations.GetPlot(id)));
@@ -114,11 +144,12 @@ public static class BackofficeRoutes
     }
 
     private static IResult Item<T>(T? item) where T : class => item is null ? Results.NotFound() : Results.Json(item);
-    private static IResult Create<T>(Func<T> action) => Run(action, 201);
-    private static IResult Change<T>(Func<T> action) => Run(action, 200);
-    private static IResult Run<T>(Func<T> action, int success)
+    private static IResult Create<T>(Func<T> action) => Run(() => Results.Json(action(), statusCode: 201));
+    private static IResult Change<T>(Func<T> action) => Run(() => Results.Json(action(), statusCode: 200));
+    private static IResult Remove(Action action) => Run(() => { action(); return Results.NoContent(); });
+    private static IResult Run(Func<IResult> action)
     {
-        try { return Results.Json(action(), statusCode: success); }
+        try { return action(); }
         catch (DomainValidationException error) { return Results.BadRequest(new { error = error.Message }); }
         catch (DomainNotFoundException) { return Results.NotFound(new { error = "Record not found" }); }
         catch (DomainConflictException) { return Results.Conflict(new { error = "Stale revision" }); }
@@ -189,6 +220,43 @@ public static class BackofficeRoutes
     public sealed record RevisionContractorInput(string Name, string? TaxId, string? Phone, string? Email, string? Notes, bool OwnEquipment, long Revision, string? Website)
     {
         public ContractorDraft Draft() => new(Name, TaxId, Phone, Email, Notes, OwnEquipment, Website);
+    }
+    public sealed record ProviderInput(string Name, string? Kind, string? TaxId, string? Website, string? Phone, string? Email, string? Notes)
+    {
+        public ProviderDraft Draft() => new(Name, Kind, TaxId, Website, Phone, Email, Notes);
+    }
+    public sealed record RevisionProviderInput(string Name, string? Kind, string? TaxId, string? Website, string? Phone, string? Email, string? Notes, long Revision)
+    {
+        public ProviderDraft Draft() => new(Name, Kind, TaxId, Website, Phone, Email, Notes);
+    }
+    public sealed record ProviderContactInput(Guid ProviderId, string Name, string? Role, string? Phone, string? Email, string? Notes)
+    {
+        public ProviderContactDraft Draft() => new(Name, Role, Phone, Email, Notes);
+    }
+    public sealed record RevisionProviderContactInput(string Name, string? Role, string? Phone, string? Email, string? Notes, long Revision)
+    {
+        public ProviderContactDraft Draft() => new(Name, Role, Phone, Email, Notes);
+    }
+    public sealed record ClientProviderInput(Guid ClientId, Guid ProviderId);
+    public sealed record ProviderPriceInput(Guid ProviderId, Guid InputId, decimal Price, string? Currency, string? Unit, DateOnly? ValidOn, string? Notes)
+    {
+        public ProviderPriceDraft Draft() => new(ProviderId, InputId, Price, Currency, Unit, ValidOn, Notes);
+    }
+    public sealed record RevisionProviderPriceInput(Guid? ProviderId, Guid? InputId, decimal Price, string? Currency, string? Unit, DateOnly? ValidOn, string? Notes,
+        long Revision)
+    {
+        public ProviderPriceDraft Draft() => new(ProviderId, InputId, Price, Currency, Unit, ValidOn, Notes);
+    }
+    public sealed record QuoteComparisonInput(Guid ClientId, string? Title, DateOnly? RequestedOn);
+    public sealed record RevisionQuoteComparisonInput(string? Title, DateOnly? RequestedOn, long Revision);
+    public sealed record DecideInput(Guid QuoteId, string? Reason, long Revision);
+    public sealed record QuoteInput(Guid ProviderId, DateOnly? ReceivedOn, string? Currency, string? Notes, QuoteLineDraft[]? Lines)
+    {
+        public QuoteDraft Draft() => new(ProviderId, ReceivedOn, Currency, Notes, Lines);
+    }
+    public sealed record RevisionQuoteInput(Guid? ProviderId, DateOnly? ReceivedOn, string? Currency, string? Notes, QuoteLineDraft[]? Lines, long Revision)
+    {
+        public QuoteDraft Draft() => new(ProviderId, ReceivedOn, Currency, Notes, Lines);
     }
     public sealed record InputInput(string CommercialName, string? ActiveIngredient, string? Concentration, string? Formulation, short? MixOrder,
         string? Category, string Unit, decimal? DoseMin, decimal? DoseMax, decimal? ReferenceCost, bool HollowCone)
