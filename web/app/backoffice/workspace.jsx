@@ -5,18 +5,19 @@ import { api, sessionEndedMessage } from './api.mjs';
 import CatalogSection from './catalogs.jsx';
 import ClientsSection from './clients.jsx';
 import GenericSection, { genericGroups } from './generic.jsx';
+import WorkOrdersSection from './orders.jsx';
 import { entities } from './schema.mjs';
 
 // Sidebar navigation. To add a section, add its key here and a case in renderSection.
-// Planned: "Órdenes de trabajo" (work orders, T6) goes first under "Operación" as { key: 'work-orders', ... }.
 const navigation = [
-  { title: 'Operación', items: [{ key: 'clients', title: 'Clientes' }] },
+  { title: 'Operación', items: [{ key: 'work-orders', title: 'Órdenes de trabajo' }, { key: 'clients', title: 'Clientes' }] },
   { title: 'Catálogos', items: ['contractors', 'inputs', 'labor-types', 'stages', 'crops', 'campaigns'].map(key => ({ key, title: entities[key].title })) },
   { title: 'Planificación', items: ['plot-campaign-areas', 'recipes', 'recipe-lines'].map(key => ({ key, title: genericGroups[key].title })) },
   { title: 'Auditoría', items: [{ key: 'import-records', title: genericGroups['import-records'].title }] },
 ];
 
 function renderSection(key, identity) {
+  if (key === 'work-orders') return <WorkOrdersSection identity={identity} />;
   if (key === 'clients') return <ClientsSection identity={identity} />;
   if (entities[key]) return <CatalogSection key={key} entity={key} identity={identity} />;
   return <GenericSection key={key} group={key} identity={identity} />;

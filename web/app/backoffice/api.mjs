@@ -8,6 +8,8 @@ const conflicts = {
   'Duplicate code': 'Ya existe un lote con ese código.',
   'Duplicate position': 'Ese lote ya tiene un cultivo en esa posición para la campaña.',
   'Stale revision': stale,
+  'Work order is not editable': 'Esta orden ya no se puede editar.',
+  'Duplicate number': 'Otra orden tomó ese número. Actualiza e intenta de nuevo.',
 };
 
 const required = {
@@ -18,6 +20,8 @@ const required = {
   'Responsible engineer': 'El ingeniero responsable es obligatorio.',
   'Product name': 'El producto es obligatorio.',
   'Dose unit': 'La unidad de dosis es obligatoria.',
+  Reason: 'Indica el motivo de la cancelación.',
+  'Issued on': 'La fecha es obligatoria.',
 };
 
 const validations = {
@@ -33,6 +37,12 @@ const validations = {
   'Minimum dose must not exceed maximum dose': 'La dosis mínima no puede superar la máxima.',
   'Reference cost must be zero or positive and fit numeric(14,4)': 'El costo de referencia debe ser cero o positivo, con hasta 4 decimales.',
   'Dose must be positive and fit numeric(12,4)': 'La dosis debe ser mayor que cero y tener hasta 4 decimales.',
+  'At least one plot is required': 'Selecciona al menos un lote.',
+  'Each plot can appear only once': 'Cada lote puede aparecer una sola vez.',
+  'Worked area must be positive and fit numeric(12,4)': 'Las ha a trabajar deben ser mayores que cero y tener hasta 4 decimales.',
+  'Line total must be positive and fit numeric(14,4)': 'El total de cada insumo debe ser mayor que cero y tener hasta 4 decimales.',
+  "Field must belong to the firm's client": 'El campo debe pertenecer al cliente de la firma.',
+  "Every plot must belong to the work order's field": 'Todos los lotes deben pertenecer al campo elegido.',
 };
 
 // Messages that list the accepted values end with that list, so they match by prefix.
@@ -41,11 +51,17 @@ const choices = [
   ['Role must be one of', 'Elige renta o servicio.'],
   ['Category must be one of', 'Elige una categoría válida.'],
   ['Stage must be', 'Elige una etapa válida.'],
+  ['Status must be one of', 'Elige un estado válido.'],
 ];
+
+// A firm's next work order number must exceed its highest issued one, which the message names.
+const nextNumber = /^Next number must be greater than (\d+)$/;
 
 function validationMessage(text) {
   if (typeof text !== 'string') return generic;
   if (validations[text]) return validations[text];
+  const issued = nextNumber.exec(text)?.[1];
+  if (issued) return `El próximo número debe ser mayor que ${issued}.`;
   const field = text.endsWith(' is required') ? text.slice(0, -' is required'.length) : null;
   if (field && required[field]) return required[field];
   return choices.find(([prefix]) => text.startsWith(prefix))?.[1] ?? generic;

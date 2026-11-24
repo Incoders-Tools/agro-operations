@@ -33,8 +33,14 @@ export const entities = {
   },
   'commercial-firms': {
     title: 'Firmas comerciales', singular: 'firma comercial', feminine: true, parent: 'clientId',
-    fields: [name, taxId],
-    detail: row => row.taxId ? `CUIT ${row.taxId}` : 'Sin CUIT',
+    fields: [
+      name, taxId,
+      {
+        key: 'nextWorkOrderNumber', label: 'Próximo Nº de orden', type: 'integer', optional: true, editOnly: true, min: '1', step: '1',
+        hint: 'Continúa la numeración de la planilla. Debe ser mayor que la última orden emitida; vacío mantiene el actual.',
+      },
+    ],
+    detail: row => joined([row.taxId ? `CUIT ${row.taxId}` : 'Sin CUIT', row.nextWorkOrderNumber && `Próxima orden Nº ${row.nextWorkOrderNumber}`]),
   },
   fields: {
     title: 'Campos', singular: 'campo', parent: 'clientId',
@@ -123,12 +129,15 @@ function value(field, raw) {
   return text === '' && field.optional ? null : text;
 }
 
+// Shown and sent only where it applies: create-only fields identify a record, edit-only ones exist after creation.
+export const fieldApplies = (field, editing) => editing ? !field.createOnly : !field.editOnly;
+
 // Creating sends the parent key and every field; editing sends the revision and omits create-only fields.
 export function payloadFor(entity, form, { revision, parent } = {}) {
   const { fields, parent: parentKey } = entities[entity];
   const editing = revision !== undefined;
   const payload = !editing && parentKey ? { [parentKey]: parent?.[parentKey] } : {};
-  for (const field of fields) if (!(editing && field.createOnly)) payload[field.key] = value(field, form[field.key]);
+  for (const field of fields) if (fieldApplies(field, editing)) payload[field.key] = value(field, form[field.key]);
   if (editing) payload.revision = revision;
   return payload;
 }

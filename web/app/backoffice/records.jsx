@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { send } from './api.mjs';
 import { Field, SchemaControl } from './field.jsx';
-import { entities, formFor, payloadFor, rowLabel, searchRecords } from './schema.mjs';
+import { entities, fieldApplies, formFor, payloadFor, rowLabel, searchRecords } from './schema.mjs';
 
 export function SectionHeader({ identity, title, description, count }) {
   return <header><div><p className="bo-kicker">Registro privado · {identity.email}</p><h1>{title}</h1>
@@ -22,7 +22,7 @@ export function RecordForm({ entity, record, parent, optionSets, csrfToken, onSa
   const [form, setForm] = useState(() => formFor(entity, record));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const fields = meta.fields.filter(field => !(record && field.createOnly));
+  const fields = meta.fields.filter(field => fieldApplies(field, Boolean(record)));
 
   async function save(event) {
     event.preventDefault();
