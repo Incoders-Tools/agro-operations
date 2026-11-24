@@ -1,7 +1,9 @@
 namespace AgroOperations.Api.Domain;
 
-public sealed record Contractor(Guid Id, string Name, string? TaxId, string? Phone, string? Email, string? Notes, bool OwnEquipment, long Revision);
-public sealed record ContractorDraft(string Name, string? TaxId, string? Phone, string? Email, string? Notes, bool OwnEquipment);
+// Website comes last and is optional so callers written before it keep compiling.
+public sealed record Contractor(Guid Id, string Name, string? TaxId, string? Phone, string? Email, string? Notes, bool OwnEquipment, long Revision,
+    string? Website = null);
+public sealed record ContractorDraft(string Name, string? TaxId, string? Phone, string? Email, string? Notes, bool OwnEquipment, string? Website = null);
 
 public interface IContractorRepository
 {
@@ -15,7 +17,14 @@ public sealed class ContractorCatalog(IContractorRepository repository)
 {
     private static ContractorDraft Validated(ContractorDraft draft) => new(
         CatalogText.Required(draft.Name, "Name"), CatalogText.TaxId(draft.TaxId), CatalogText.Optional(draft.Phone),
-        CatalogText.Email(draft.Email), CatalogText.Optional(draft.Notes), draft.OwnEquipment);
+        CatalogText.Email(draft.Email), CatalogText.Optional(draft.Notes), draft.OwnEquipment, Website(draft.Website));
+
+    private static string? Website(string? value)
+    {
+        var website = CatalogText.Optional(value);
+        return website is null || (website.Length <= 200 && !website.Any(char.IsWhiteSpace))
+            ? website : throw new DomainValidationException("Website must be a single address without spaces");
+    }
 
     public Contractor Create(ContractorDraft contractor) => repository.Create(Validated(contractor));
     public Contractor Update(Guid id, long revision, ContractorDraft contractor) => repository.Update(id, revision, Validated(contractor));

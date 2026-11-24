@@ -19,7 +19,7 @@ public interface IInputRepository
 public sealed class InputCatalog(IInputRepository repository)
 {
     private static readonly string[] Categories =
-        ["fertilizante", "herbicida", "insecticida", "fungicida", "coadyuvante", "curasemilla", "bioestimulante", "terapico"];
+        ["fertilizante", "herbicida", "insecticida", "fungicida", "coadyuvante", "curasemilla", "bioestimulante", "terapico", "inoculante"];
 
     private static InputDraft Validated(InputDraft draft)
     {

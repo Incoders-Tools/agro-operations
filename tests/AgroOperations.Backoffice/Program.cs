@@ -22,7 +22,7 @@ try
     using (var db = new NpgsqlConnection(scoped.ConnectionString))
     {
         db.Open();
-        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql" })
+        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql", "010_reference_alignment.sql" })
         {
             var file = Path.Combine(root, "src", "AgroOperations.Api", "Persistence", "Migrations", name);
             using var migration = new NpgsqlCommand(File.ReadAllText(file), db);
@@ -81,7 +81,7 @@ try
             using (var anonymous = new HttpClient { BaseAddress = client.BaseAddress })
                 if ((await anonymous.GetAsync($"/api/v1/{route}")).StatusCode != HttpStatusCode.Unauthorized)
                     throw new Exception($"Anonymous filtered {route} accessible");
-        var catalogCounts = new Dictionary<string, int> { ["labor-types"] = 14, ["stages"] = 7, ["contractors"] = 1, ["inputs"] = 0,
+        var catalogCounts = new Dictionary<string, int> { ["labor-types"] = 82, ["stages"] = 7, ["contractors"] = 1, ["inputs"] = 0,
             ["crops"] = 28, ["commercial-firms"] = 0, ["plot-crops"] = 0 };
         var catalogBody = new { name = "Example", abbreviation = "EX", sortOrder = 1, commercialName = "Example", unit = "l", revision = 1 };
         foreach (var (route, expected) in catalogCounts)
@@ -127,7 +127,7 @@ try
             throw new Exception("Invalid plot area changed stored records");
         var plot = await Send(HttpMethod.Post, "/api/v1/plots", new { fieldId, name = "Plot", areaHectares = 2.5m });
         if (plot.StatusCode != HttpStatusCode.Created) throw new Exception("Plot create failed");
-        if (!(await client.GetFromJsonAsync<JsonElement[]>("/api/v1/crops"))!.Any(item => item.GetProperty("name").GetString() == "Pastura de gramíneas"))
+        if (!(await client.GetFromJsonAsync<JsonElement[]>("/api/v1/crops"))!.Any(item => item.GetProperty("name").GetString() == "Pasturas puras de gramíneas"))
             throw new Exception("Seeded reference crop missing");
         var crop = await Send(HttpMethod.Post, "/api/v1/crops", new { name = "Crop" });
         if (crop.StatusCode != HttpStatusCode.Created) throw new Exception("Crop create failed");
@@ -276,7 +276,7 @@ try
         var changedPlotCrop = await Send(HttpMethod.Put, $"/api/v1/plot-crops/{plotCropId}", new { cropId = wheatId, role = "servicio", revision = 1 });
         if (changedPlotCrop.StatusCode != HttpStatusCode.OK || (await Body(changedPlotCrop)) is var changedPlotCropRow &&
             (changedPlotCropRow.GetProperty("cropId").GetGuid() != wheatId || changedPlotCropRow.GetProperty("position").GetInt32() != 1 ||
-             !Absent(changedPlotCropRow, "variety") || changedPlotCropRow.GetProperty("plotId").GetGuid() != codedPlotId))
+             !Absent(changedPlotCropRow, "variety", "grainYieldKgHa", "forageBiomassKgHa") || changedPlotCropRow.GetProperty("plotId").GetGuid() != codedPlotId))
             throw new Exception("Plot crop update failed");
         if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/plot-crops/{plotCropId}", new { cropId = soyId, role = "renta", revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
             !await IsError(await Send(HttpMethod.Put, $"/api/v1/plot-crops/{plotCropId}", new { cropId = Guid.NewGuid(), role = "renta", revision = 2 }), HttpStatusCode.NotFound) ||
@@ -286,17 +286,50 @@ try
         if ((await Ids($"plot-crops?plotId={codedPlotId}")).Length != 2 || (await Ids($"plot-crops?plotId={samplePlot.GetProperty("id").GetGuid()}")).Length != 0 ||
             (await Ids("plot-crops")).Length != 2)
             throw new Exception("Plot crops filter by plot mismatch");
+
+        // 010: grain yield and forage biomass round-trip; the PUT replaces both.
+        var samplePlotCropBody = new { plotId = samplePlot.GetProperty("id").GetGuid(), campaignId, cropId = soyId, position = 1, role = "renta",
+            grainYieldKgHa = (decimal?)3500.5m, forageBiomassKgHa = (decimal?)12000m };
+        var plotCropsBefore = await client.GetStringAsync("/api/v1/plot-crops");
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", samplePlotCropBody with { grainYieldKgHa = -1m }), HttpStatusCode.BadRequest,
+                "Yield must be zero or positive and fit numeric(12,2)") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/plot-crops", samplePlotCropBody with { forageBiomassKgHa = 0.001m }), HttpStatusCode.BadRequest,
+                "Yield must be zero or positive and fit numeric(12,2)") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/plot-crops/{plotCropId}", new { cropId = wheatId, role = "servicio", grainYieldKgHa = -1m, revision = 2 }),
+                HttpStatusCode.BadRequest, "Yield must be zero or positive and fit numeric(12,2)") ||
+            await client.GetStringAsync("/api/v1/plot-crops") != plotCropsBefore)
+            throw new Exception("Rejected yields changed stored records");
+        var yieldCrop = await Send(HttpMethod.Post, "/api/v1/plot-crops", samplePlotCropBody);
+        var yieldCropRow = await Body(yieldCrop);
+        var yieldCropId = yieldCropRow.GetProperty("id").GetGuid();
+        if (yieldCrop.StatusCode != HttpStatusCode.Created || yieldCropRow.GetProperty("grainYieldKgHa").GetDecimal() != 3500.5m ||
+            yieldCropRow.GetProperty("forageBiomassKgHa").GetDecimal() != 12000m ||
+            (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/plot-crops?plotId={samplePlotCropBody.plotId}"))!.Single().GetProperty("grainYieldKgHa").GetDecimal() != 3500.5m)
+            throw new Exception($"Plot crop with yields: {(int)yieldCrop.StatusCode}");
+        var replacedYields = await Send(HttpMethod.Put, $"/api/v1/plot-crops/{yieldCropId}", new { cropId = soyId, role = "renta", forageBiomassKgHa = 0m, revision = 1 });
+        if (replacedYields.StatusCode != HttpStatusCode.OK || (await Body(replacedYields)) is var replacedYieldsRow &&
+            (!Absent(replacedYieldsRow, "grainYieldKgHa") || replacedYieldsRow.GetProperty("forageBiomassKgHa").GetDecimal() != 0m ||
+             replacedYieldsRow.GetProperty("revision").GetInt64() != 2))
+            throw new Exception("Plot crop yields PUT did not replace both yields");
         var seededLabors = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/labor-types");
-        if (!seededLabors!.Any(item => item.GetProperty("name").GetString() == "Pulverización terrestre" && item.GetProperty("abbreviation").GetString() == "PULV-TE"))
-            throw new Exception("Seeded labor abbreviation missing");
+        if (!seededLabors!.Any(item => item.GetProperty("name").GetString() == "Pulverización terrestre" && item.GetProperty("abbreviation").GetString() == "PULV-TE" &&
+                item.GetProperty("category").GetString() == "aplicacion" && item.GetProperty("description").ValueKind == JsonValueKind.Null) ||
+            !seededLabors!.Any(item => item.GetProperty("name").GetString() == "Rastra de disco pesada" && item.GetProperty("category").GetString() == "labranza" &&
+                item.GetProperty("description").GetString() == "excéntrica o \"rastra tiro excéntrico\"" && item.GetProperty("abbreviation").ValueKind == JsonValueKind.Null))
+            throw new Exception("Seeded labor abbreviation, category or description missing");
         var laborType = await Send(HttpMethod.Post, "/api/v1/labor-types", new { name = "Labor de prueba", abbreviation = "LAB-PRU" });
         if (laborType.StatusCode != HttpStatusCode.Created) throw new Exception("Labor type create failed");
         var laborTypeRow = await Body(laborType);
         var laborTypeId = laborTypeRow.GetProperty("id").GetGuid();
-        if (laborTypeRow.GetProperty("abbreviation").GetString() != "LAB-PRU") throw new Exception("Labor abbreviation not returned");
+        if (laborTypeRow.GetProperty("abbreviation").GetString() != "LAB-PRU" || !Absent(laborTypeRow, "category", "description"))
+            throw new Exception("Labor abbreviation not returned or old-shape labor has a category");
         if (!await IsError(await Send(HttpMethod.Post, "/api/v1/labor-types", new { name = " disco ", abbreviation = "D" }), HttpStatusCode.Conflict, "Duplicate name") ||
             !await IsError(await Send(HttpMethod.Post, "/api/v1/labor-types", new { name = "Labor larga", abbreviation = "ABCDEFGHIJKLM" }), HttpStatusCode.BadRequest) ||
-            await Count("labor-types") != 15)
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/labor-types", new { name = "Labor con categoría", category = "otra" }), HttpStatusCode.BadRequest,
+                "Category must be one of: aplicacion, labranza, siembra, cosecha, forrajes, infraestructura") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/labor-types", new { name = "Labor con categoría", description = new string('x', 301) }), HttpStatusCode.BadRequest,
+                "Description must be at most 300 characters") ||
+            await Count("labor-types") != 83)
             throw new Exception("Rejected labor changed stored records");
         var changedLabor = await Send(HttpMethod.Put, $"/api/v1/labor-types/{laborTypeId}", new { name = "Labor de prueba", abbreviation = "LP", revision = 1 });
         if (changedLabor.StatusCode != HttpStatusCode.OK || (await Body(changedLabor)).GetProperty("revision").GetInt64() != 2 ||
@@ -305,6 +338,23 @@ try
             throw new Exception("Labor abbreviation did not round-trip");
         if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/labor-types/{laborTypeId}", new { name = "Stale", abbreviation = "S", revision = 1 }), HttpStatusCode.Conflict, "Stale revision"))
             throw new Exception("Stale labor update did not conflict");
+        // 010: category and description round-trip; the PUT replaces both.
+        var categorizedLabor = await Send(HttpMethod.Post, "/api/v1/labor-types", new { name = "Labor con categoría", category = " Forrajes ", description = "  Descripción ficticia " });
+        var categorizedRow = await Body(categorizedLabor);
+        var categorizedId = categorizedRow.GetProperty("id").GetGuid();
+        if (categorizedLabor.StatusCode != HttpStatusCode.Created || categorizedRow.GetProperty("category").GetString() != "forrajes" ||
+            categorizedRow.GetProperty("description").GetString() != "Descripción ficticia" || !Absent(categorizedRow, "abbreviation"))
+            throw new Exception($"Labor with category: {(int)categorizedLabor.StatusCode}");
+        var laborsBefore = await client.GetStringAsync("/api/v1/labor-types");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/labor-types/{categorizedId}", new { name = "Labor con categoría", category = "aplicación", revision = 1 }),
+                HttpStatusCode.BadRequest, "Category must be one of: aplicacion, labranza, siembra, cosecha, forrajes, infraestructura") ||
+            await client.GetStringAsync("/api/v1/labor-types") != laborsBefore)
+            throw new Exception("Rejected labor category update changed stored records");
+        var recategorized = await Send(HttpMethod.Put, $"/api/v1/labor-types/{categorizedId}", new { name = "Labor con categoría", category = "cosecha", revision = 1 });
+        if (recategorized.StatusCode != HttpStatusCode.OK || (await Body(recategorized)) is var recategorizedRow &&
+            (recategorizedRow.GetProperty("category").GetString() != "cosecha" || !Absent(recategorizedRow, "description") ||
+             recategorizedRow.GetProperty("revision").GetInt64() != 2))
+            throw new Exception("Labor PUT did not replace category and description");
 
         var stages = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/stages");
         if (!stages!.Select(item => item.GetProperty("name").GetString()).SequenceEqual(
@@ -340,13 +390,29 @@ try
         var contractorId = contractorRow.GetProperty("id").GetGuid();
         if (contractorRow.GetProperty("taxId").GetString() != "20123456789" || await Count("contractors") != 2)
             throw new Exception("Contractor CUIT not normalized");
+        if (!Absent(contractorRow, "website")) throw new Exception("Old-shape contractor has a website");
+        // 010: website round-trip and its validation; the PUT replaces it.
+        var contractorsBefore = await client.GetStringAsync("/api/v1/contractors");
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/contractors", new { name = "Contratista web", website = "www.example .test" }), HttpStatusCode.BadRequest,
+                "Website must be a single address without spaces") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/contractors/{contractorId}", new { name = "Contratista de prueba", website = "a b", revision = 1 }),
+                HttpStatusCode.BadRequest, "Website must be a single address without spaces") ||
+            await client.GetStringAsync("/api/v1/contractors") != contractorsBefore)
+            throw new Exception("Rejected website changed stored records");
+        var webContractor = await Send(HttpMethod.Put, $"/api/v1/contractors/{contractorId}",
+            new { name = "Contratista de prueba", taxId = "20123456789", website = " https://www.example.test ", revision = 1 });
+        if (webContractor.StatusCode != HttpStatusCode.OK || (await Body(webContractor)).GetProperty("website").GetString() != "https://www.example.test" ||
+            (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/contractors"))!.Single(item => item.GetProperty("id").GetGuid() == contractorId)
+                .GetProperty("website").GetString() != "https://www.example.test")
+            throw new Exception("Contractor website did not round-trip");
         var changedContractor = await Send(HttpMethod.Put, $"/api/v1/contractors/{contractorId}",
-            new { name = "Contratista de prueba", taxId = "20123456789", notes = "Notas", ownEquipment = true, revision = 1 });
+            new { name = "Contratista de prueba", taxId = "20123456789", notes = "Notas", ownEquipment = true, revision = 2 });
         if (changedContractor.StatusCode != HttpStatusCode.OK || (await Body(changedContractor)) is var contractorChange &&
-            (contractorChange.GetProperty("notes").GetString() != "Notas" || !contractorChange.GetProperty("ownEquipment").GetBoolean()))
-            throw new Exception("Contractor update failed");
+            (contractorChange.GetProperty("notes").GetString() != "Notas" || !contractorChange.GetProperty("ownEquipment").GetBoolean() ||
+             !Absent(contractorChange, "website")))
+            throw new Exception("Contractor update failed or kept the website");
         if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/contractors/{contractorId}", new { name = "Stale", revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
-            !await IsError(await Send(HttpMethod.Put, $"/api/v1/contractors/{contractorId}", new { name = "Propio", revision = 2 }), HttpStatusCode.Conflict, "Duplicate name") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/contractors/{contractorId}", new { name = "Propio", revision = 3 }), HttpStatusCode.Conflict, "Duplicate name") ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/contractors"))!.Single(item => item.GetProperty("id").GetGuid() == contractorId)
                 .GetProperty("name").GetString() != "Contratista de prueba")
             throw new Exception("Rejected contractor update overwrote record");
@@ -374,6 +440,9 @@ try
             !await IsError(await Send(HttpMethod.Put, $"/api/v1/inputs/{inputId}", new { commercialName = "Producto de prueba", unit = "l", doseMin = 4m, doseMax = 3m, revision = 2 }), HttpStatusCode.BadRequest) ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/inputs"))![0].GetProperty("unit").GetString() != "kg")
             throw new Exception("Rejected input update overwrote record");
+        var inoculant = await Send(HttpMethod.Post, "/api/v1/inputs", new { commercialName = "Inoculante de prueba", unit = "l", category = "Inoculante" });
+        if (inoculant.StatusCode != HttpStatusCode.Created || (await Body(inoculant)).GetProperty("category").GetString() != "inoculante")
+            throw new Exception("Inoculante input category rejected");
 
         // 008 work orders: codedPlotId (3 ha) is in richFieldId of client richId, whose firm is firmId; samplePlot is in another client's field.
         // Since 009 an order has no single field: bodies that still send fieldId keep working and it is ignored.
@@ -582,6 +651,29 @@ try
             document.GetProperty("observations").GetString() != "Observación ficticia" || document.GetProperty("responsibleEngineer").GetString() != "Ingeniero ficticio" ||
             document.GetProperty("fileName").GetString() != "FIRMA COMERCIAL SA_ORDEN_52_CAMPO ALQUILADO_(Lote)_CAMPO NORTE_(Lote N)_LP_24-nov")
             throw new Exception($"Work order document: {(int)documentResponse.StatusCode} {document}");
+        // 010: a field moves to another client and a plot to another field via PUT; omitted targets keep the current ones.
+        var mobileField = await Body(await Send(HttpMethod.Post, "/api/v1/fields", new { clientId = id, name = "Campo móvil" }));
+        var mobileFieldId = mobileField.GetProperty("id").GetGuid();
+        var mobilePlotId = (await Body(await Send(HttpMethod.Post, "/api/v1/plots", new { fieldId = mobileFieldId, name = "Lote móvil", areaHectares = 1m }))).GetProperty("id").GetGuid();
+        async Task<string> Hierarchy() => await client.GetStringAsync("/api/v1/fields") + "|" + await client.GetStringAsync("/api/v1/plots") + "|" + await OrderState();
+        var hierarchyBefore = await Hierarchy();
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/fields/{mobileFieldId}", new { name = "Campo móvil", clientId = Guid.NewGuid(), revision = 1 }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/plots/{mobilePlotId}", new { name = "Lote móvil", areaHectares = 1m, fieldId = Guid.NewGuid(), revision = 1 }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/fields/{mobileFieldId}", new { name = "Campo móvil", clientId = richId, revision = 2 }), HttpStatusCode.Conflict, "Stale revision") ||
+            await Hierarchy() != hierarchyBefore)
+            throw new Exception("Rejected moves changed stored records");
+        var movedField = await Send(HttpMethod.Put, $"/api/v1/fields/{mobileFieldId}", new { name = "Campo móvil", clientId = richId, revision = 1 });
+        var keptClientField = await Send(HttpMethod.Put, $"/api/v1/fields/{mobileFieldId}", new { name = "Campo móvil", locality = "Localidad ficticia", revision = 2 });
+        if (movedField.StatusCode != HttpStatusCode.OK || (await Body(movedField)).GetProperty("clientId").GetGuid() != richId ||
+            keptClientField.StatusCode != HttpStatusCode.OK || (await Body(keptClientField)).GetProperty("clientId").GetGuid() != richId ||
+            !(await Ids($"fields?clientId={richId}")).Contains(mobileFieldId) || (await Ids($"fields?clientId={id}")).Contains(mobileFieldId))
+            throw new Exception("Field move via PUT failed");
+        var movedPlot = await Send(HttpMethod.Put, $"/api/v1/plots/{mobilePlotId}", new { name = "Lote móvil", areaHectares = 1m, fieldId = northFieldId, revision = 1 });
+        var keptFieldPlot = await Send(HttpMethod.Put, $"/api/v1/plots/{mobilePlotId}", new { name = "Lote móvil", areaHectares = 1.5m, revision = 2 });
+        if (movedPlot.StatusCode != HttpStatusCode.OK || (await Body(movedPlot)).GetProperty("fieldId").GetGuid() != northFieldId ||
+            keptFieldPlot.StatusCode != HttpStatusCode.OK || (await Body(keptFieldPlot)).GetProperty("fieldId").GetGuid() != northFieldId ||
+            !(await Ids($"plots?fieldId={northFieldId}")).Contains(mobilePlotId) || (await Ids($"plots?fieldId={mobileFieldId}")).Length != 0)
+            throw new Exception("Plot move via PUT failed");
         if ((await Send(HttpMethod.Post, "/api/v1/plot-campaign-areas", new { plotId = Guid.NewGuid(), campaignId, areaHectares = 1m })).StatusCode != HttpStatusCode.NotFound ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/plot-campaign-areas"))!.Length != 0)
             throw new Exception("Orphan plot campaign area changed stored records");

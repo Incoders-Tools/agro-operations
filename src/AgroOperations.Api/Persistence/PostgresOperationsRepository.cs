@@ -95,12 +95,22 @@ public sealed class PostgresOperationsRepository(string connectionString) : IOpe
     public Client UpdateClient(Guid id, long revision, ClientDraft client) => Update(
         $"UPDATE clients SET name=@name,tax_id=@taxId,producers=@producers,email=@email,phone=@phone,address=@address,revision=revision+1 WHERE id=@id AND revision=@expected RETURNING {ClientColumns}",
         id, revision, c => Bind(c, client), ClientRow, key => GetClient(key) is not null);
-    public Field UpdateField(Guid id, long revision, FieldDraft field) => Update(
-        $"UPDATE fields SET name=@name,tenure=@tenure,locality=@locality,revision=revision+1 WHERE id=@id AND revision=@expected RETURNING {FieldColumns}",
-        id, revision, c => Bind(c, field), FieldRow, key => GetField(key) is not null);
-    public Plot UpdatePlot(Guid id, long revision, PlotDraft plot) => Update(
-        $"UPDATE plots SET name=@name,area_hectares=@area,code=@code,revision=revision+1 WHERE id=@id AND revision=@expected RETURNING {PlotColumns}",
-        id, revision, c => Bind(c, plot), PlotRow, key => GetPlot(key) is not null);
+    // A field or plot moves only to an existing parent; an absent parent keeps the current one. A missing record or
+    // parent is not found; only an existing record with an existing parent is stale. Work orders keep their plots.
+    public Field UpdateField(Guid id, long revision, FieldDraft field) => Update($"""
+        UPDATE fields SET name=@name,tenure=@tenure,locality=@locality,client_id=coalesce(@parent::uuid,client_id),revision=revision+1
+        WHERE id=@id AND revision=@expected AND (@parent::uuid IS NULL OR EXISTS(SELECT 1 FROM clients WHERE id=@parent::uuid))
+        RETURNING {FieldColumns}
+        """,
+        id, revision, c => { Bind(c, field); Add(c, "parent", field.ClientId); }, FieldRow,
+        key => GetField(key) is not null && (field.ClientId is not { } parent || GetClient(parent) is not null));
+    public Plot UpdatePlot(Guid id, long revision, PlotDraft plot) => Update($"""
+        UPDATE plots SET name=@name,area_hectares=@area,code=@code,field_id=coalesce(@parent::uuid,field_id),revision=revision+1
+        WHERE id=@id AND revision=@expected AND (@parent::uuid IS NULL OR EXISTS(SELECT 1 FROM fields WHERE id=@parent::uuid))
+        RETURNING {PlotColumns}
+        """,
+        id, revision, c => { Bind(c, plot); Add(c, "parent", plot.FieldId); }, PlotRow,
+        key => GetPlot(key) is not null && (plot.FieldId is not { } parent || GetField(parent) is not null));
 
     private T? Find<T>(string sql, Guid id, Func<NpgsqlDataReader, T> map) where T : class
     {

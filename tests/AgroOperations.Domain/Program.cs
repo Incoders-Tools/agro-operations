@@ -30,7 +30,8 @@ try
         }
     }
     string[] previousMigrations = ["001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql"];
-    Migrate(builder.ConnectionString, [.. previousMigrations, "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql"]);
+    Migrate(builder.ConnectionString, [.. previousMigrations, "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql",
+        "010_reference_alignment.sql"]);
     var service = new OperationsService(new PostgresOperationsRepository(builder.ConnectionString));
     static void Check(bool condition, string label)
     {
@@ -149,9 +150,12 @@ try
         "Arveja amarilla", "Centeno", "Triticale", "Vicia", "Nabo", "Pastura de gramíneas", "Pastura de leguminosas", "Pastura consociada",
         "Raigrás", "Soja", "Maíz", "Maíz pisingallo", "Sorgo granífero", "Sorgo forrajero", "Sorgo silero", "Maíz silo", "Girasol",
         "Poroto mung", "Moha"];
+    // 010 renames four seeded crops to the reference spelling; a rename is a revision.
+    var renamedCrops = new Dictionary<string, string> { ["Pastura de gramíneas"] = "Pasturas puras de gramíneas",
+        ["Pastura de leguminosas"] = "Pasturas puras de leguminosas", ["Raigrás"] = "Raygrass", ["Poroto mung"] = "Poroto mungo" };
     var seededCrops = crops.List();
-    Check(seededCrops.Count == referenceCrops.Length && referenceCrops.All(name => seededCrops.Any(item => item.Name == name && item.Revision == 1)),
-          "seeded reference crops");
+    Check(seededCrops.Count == referenceCrops.Length && referenceCrops.All(name => seededCrops.Any(item => renamedCrops.TryGetValue(name, out var renamed)
+          ? item.Name == renamed && item.Revision == 2 : item.Name == name && item.Revision == 1)), "seeded reference crops with the 010 renames");
     Reject<DomainValidationException>(() => crops.Create(" "), "blank crop");
     var crop = crops.Create("Cultivo de prueba");
     Check(crop.Revision == 1 && crops.List().Any(item => item == crop), "crop creation/listing");
@@ -176,14 +180,67 @@ try
     Check(Snapshot() == campaignBefore, "rejected campaign create changed stored rows");
 
     var laborTypes = new LaborTypeCatalog(new PostgresLaborTypeRepository(builder.ConnectionString));
-    (string Name, string Abbreviation)[] expectedLabors = [
-        ("Cosecha fina", "COS-FIN"), ("Cosecha gruesa", "COS-GRU"), ("Disco", "DISCO"), ("Fertilización al voleo", "FERT-V"),
-        ("Fertilización incorporada", "FERT-INC"), ("Fertilización líquida", "FERT-LIQ"), ("Pulverización aérea", "PULV-AE"),
-        ("Pulverización terrestre", "PULV-TE"), ("Rolo", "ROL"), ("Rastra y rolo", "RAS-ROL"), ("Siembra fina", "SIEM-FIN"),
-        ("Siembra gruesa", "SIEM-GRU"), ("Resiembra", "RE-SIEM"), ("Subsolador", "SUBSO")];
+    // The 006 labors; 010 fills their category (and two descriptions), one revision each.
+    (string Name, string Abbreviation, string Category, string? Description)[] expectedLabors = [
+        ("Cosecha fina", "COS-FIN", "cosecha", "trigo, cebada, colza, etc."), ("Cosecha gruesa", "COS-GRU", "cosecha", "soja, maíz, girasol, sorgo"),
+        ("Disco", "DISCO", "labranza", null), ("Fertilización al voleo", "FERT-V", "aplicacion", null),
+        ("Fertilización incorporada", "FERT-INC", "aplicacion", null), ("Fertilización líquida", "FERT-LIQ", "aplicacion", null),
+        ("Pulverización aérea", "PULV-AE", "aplicacion", null), ("Pulverización terrestre", "PULV-TE", "aplicacion", null),
+        ("Rolo", "ROL", "labranza", null), ("Rastra y rolo", "RAS-ROL", "labranza", null), ("Siembra fina", "SIEM-FIN", "siembra", null),
+        ("Siembra gruesa", "SIEM-GRU", "siembra", null), ("Resiembra", "RE-SIEM", "siembra", null), ("Subsolador", "SUBSO", "labranza", null)];
+    // The labors 010 adds from the domain reference, without abbreviation.
+    (string Name, string Category, string? Description)[] referenceLabors = [
+        ("Pulverización aérea con avión", "aplicacion", null), ("Pulverización aérea con dron", "aplicacion", null),
+        ("Fertilización al voleo proyectada", "aplicacion", null), ("Fertilización al voleo neumática", "aplicacion", null),
+        ("Disco doble acción", "labranza", null), ("Acondicionador de suelos", "labranza", null), ("Cincel con rastra, peine o rolo", "labranza", null),
+        ("Rastra de dientes", "labranza", null), ("Rastra de dientes con rolo", "labranza", null), ("Disco + rastra de dientes + rolo", "labranza", null),
+        ("Siembra fina con fertilización", "siembra", null), ("Siembra de gruesa a placa con fertilización simple", "siembra", null),
+        ("Siembra de gruesa neumática con fertilización simple", "siembra", null), ("Siembra de gruesa a placa con fertilización doble", "siembra", null),
+        ("Siembra de gruesa neumática con fertilización doble", "siembra", null), ("Siembra de gruesa a chorrillo sin fertilización", "siembra", null),
+        ("Siembra de gruesa a chorrillo con fertilización", "siembra", null), ("Cosecha", "cosecha", null),
+        ("Subsolado / Descompactado profundo", "labranza", "paratill o subsolador de púas"),
+        ("Rastra de disco pesada", "labranza", "excéntrica o \"rastra tiro excéntrico\""),
+        ("Cultivador de campo", "labranza", "con rolo o rastra de dientes"), ("Vibrocultivador", "labranza", "con peine o rolo desterronador"),
+        ("Rastra rotativa", "labranza", "de eje vertical u horizontal / rotovator"), ("Nivelación / Emparejamiento con rabasto", "labranza", null),
+        ("Nivelación láser / Nivelación con pala de arrastre", "labranza", "sistematización y drenaje"),
+        ("Sistematización de curvas de nivel / Armado de terrazas", "labranza", null),
+        ("Borrado de huellas", "labranza", "de cosechadora o pulverizadora"),
+        ("Picado / Triturado de rastrojo", "labranza", "desmalezadora de hélice o trituradora de martillos"),
+        ("Rolado de cultivos de cobertura / Rolado de rastrojos", "labranza", "rolo faca / rolo picador"),
+        ("Siembra directa fina sin fertilización", "siembra", null), ("Siembra directa de gruesa a placa sin fertilización", "siembra", null),
+        ("Siembra directa de gruesa neumática sin fertilización", "siembra", null),
+        ("Siembra con dosificación variable", "siembra", "semilla y/o fertilizante"), ("Siembra al voleo", "siembra", "pasturas o cultivos de cobertura"),
+        ("Interseeding / Siembra aérea de cultivos de servicio", "siembra", "con avión o dron sobre cultivo en pie"), ("Siembra variable", "siembra", null),
+        ("Inoculación y curado de semillas a campo", "siembra", "si se factura como labor aparte"),
+        ("Pulverización terrestre selectiva", "aplicacion", "sensores ópticos tipo WeedSeeker / Weed-It"),
+        ("Escardillado / Carpida mecánica", "labranza", "cultivador entre surcos"),
+        ("Control de plagas con cebos tóxicos", "aplicacion", "aplicación al voleo para hormigas, babosas o tucuras"),
+        ("Fertilización al voleo con dosis variable", "aplicacion", "ambientación"), ("Fertilización líquida chorreada", "aplicacion", "en superficie"),
+        ("Fertilización variable", "aplicacion", null), ("Fertilización líquida inyectada / incorporada", "aplicacion", "ej. UAN o amoníaco anhidro"),
+        ("Aplicación de enmiendas calcáreas / Yeso agrícola", "aplicacion", "encalado"),
+        ("Aplicación de enmiendas orgánicas", "aplicacion", "estiércol sólido, cama de pollo o compost con estercolera"),
+        ("Aplicación de efluentes líquidos / Purines", "aplicacion", "con tanque estercolero e inyector"),
+        ("Fertilización foliar", "aplicacion", "cuando se realiza como pasada específica sin fitosanitarios"),
+        ("Cosecha con plataforma draper / cabezal maicero / cabezal girasolero", "cosecha", "si se diferencia tarifa por cabezal"),
+        ("Hilerado / Corte e hilerado", "cosecha", "cosecha en dos tiempos, ej. colza, pasturas o poroto"),
+        ("Recolección / Trilla de cordón", "cosecha", "con cabezal recolector"),
+        ("Acarreo en lote / Movimiento de tolva autodescargable", "cosecha", "logística interna hasta camión o silo"),
+        ("Embolsado de grano seco / húmedo", "cosecha", "con embolsadora"), ("Extracción de grano de silobolsa", "cosecha", "con extractora"),
+        ("Cosecha de grano húmedo", "cosecha", "para quebrado y embolsado"), ("Corte de pasturas", "forrajes", "segadora de discos o hélice"),
+        ("Corte con acondicionador", "forrajes", "segadora acondicionadora de rodillos o dedos"),
+        ("Rastrillado / Hilerado de forraje", "forrajes", "rastrillo estelar o de entrega lateral"), ("Confección de rollos", "forrajes", "rotoenfardadora"),
+        ("Confección de megafardos / fardos prismáticos", "forrajes", null), ("Encintado / Plastificado de rollos", "forrajes", "henolaje"),
+        ("Picado fino de forraje", "forrajes", "silaje de maíz, sorgo o pasturas"), ("Compactación y tapado de silo", "forrajes", "silo puente o torta"),
+        ("Desmalezado / Limpieza de potreros", "forrajes", null),
+        ("Mantenimiento de caminos internos / Cuneteo", "infraestructura", "motoniveladora o disco"),
+        ("Limpieza de canales y desagües", "infraestructura", "retroexcavadora"), ("Desmonte selectivo / Rolado de renovales", "infraestructura", null),
+        ("Mantenimiento de alambrados y cortafuegos", "infraestructura", null)];
     var seededLabors = laborTypes.List();
-    Check(seededLabors.Count == expectedLabors.Length && expectedLabors.All(expected =>
-        seededLabors.Any(item => item.Name == expected.Name && item.Abbreviation == expected.Abbreviation && item.Revision == 1)), "seeded labors");
+    Check(referenceLabors.Length == 68 && seededLabors.Count == expectedLabors.Length + referenceLabors.Length &&
+        expectedLabors.All(expected => seededLabors.Any(item => item is { Revision: 2 } && item.Name == expected.Name && item.Abbreviation == expected.Abbreviation &&
+            item.Category == expected.Category && item.Description == expected.Description)) &&
+        referenceLabors.All(expected => seededLabors.Any(item => item is { Abbreviation: null, Revision: 1 } && item.Name == expected.Name &&
+            item.Category == expected.Category && item.Description == expected.Description)), "seeded labors with categories and descriptions");
     var laborBefore = Snapshot();
     Reject<DomainValidationException>(() => laborTypes.Create(" ", null), "blank labor type");
     Reject<DomainValidationException>(() => laborTypes.Create("Labor larga", "ABCDEFGHIJKLM"), "abbreviation over 12 characters");
@@ -201,6 +258,33 @@ try
     Reject<DomainConflictException>(() => laborTypes.Update(laborType.Id, laborType.Revision, "Stale", null), "stale labor");
     Reject<DomainNotFoundException>(() => laborTypes.Update(Guid.NewGuid(), 1, "Missing", null), "missing labor");
     Check(Snapshot() == laborBefore && changedLabor.Abbreviation == "ABCDEFGHIJKL" && changedLabor.Revision == 2, "labor update");
+    Check(laborType is { Category: null, Description: null } && changedLabor is { Category: null, Description: null }, "labors without category or description");
+
+    // 010: optional category from the reference grouping and optional description; an update replaces both.
+    const string categoryError = "Category must be one of: aplicacion, labranza, siembra, cosecha, forrajes, infraestructura";
+    laborBefore = Snapshot();
+    foreach (var category in new[] { "otra", "aplicación", "siembras" })
+        Check(Rejected<DomainValidationException>(() => laborTypes.Create("Labor con categoría", null, category, null), $"invalid labor category {category}").Message ==
+              categoryError, "invalid labor category message");
+    Check(Rejected<DomainValidationException>(() => laborTypes.Create("Labor con categoría", null, "siembra", new string('x', 301)), "description over 300")
+          .Message == "Description must be at most 300 characters", "description length message");
+    Check(Rejected<DomainValidationException>(() => laborTypes.Update(changedLabor.Id, changedLabor.Revision, "Labor de prueba", "ABCDEFGHIJKL", "otra", null),
+          "invalid labor category update").Message == categoryError, "invalid labor category update message");
+    Reject<DomainValidationException>(() => laborTypes.Update(changedLabor.Id, changedLabor.Revision, "Labor de prueba", "ABCDEFGHIJKL", null, new string('x', 301)),
+        "description update over 300");
+    Check(Snapshot() == laborBefore, "rejected labor categories and descriptions changed stored rows");
+    var categorized = laborTypes.Create(" Labor con categoría ", null, " Siembra ", "  Descripción ficticia  ");
+    Check(categorized is { Name: "Labor con categoría", Abbreviation: null, Category: "siembra", Description: "Descripción ficticia", Revision: 1 } &&
+          laborTypes.List().Contains(categorized), "labor category and description stored");
+    Check(laborTypes.Create("Labor con descripción en blanco", null, "  ", "   ") is { Category: null, Description: null }, "blank category and description stored as absent");
+    var longDescription = laborTypes.Update(categorized.Id, categorized.Revision, "Labor con categoría", "LCC", "INFRAESTRUCTURA", new string('x', 300));
+    Check(longDescription is { Abbreviation: "LCC", Category: "infraestructura", Revision: 2 } && longDescription.Description == new string('x', 300),
+          "labor category and 300-character description updated");
+    var replacedLabor = laborTypes.Update(categorized.Id, longDescription.Revision, "Labor con categoría", null, null, null);
+    Check(replacedLabor is { Abbreviation: null, Category: null, Description: null, Revision: 3 }, "labor update replaces category and description");
+    laborBefore = Snapshot();
+    Reject<DomainConflictException>(() => laborTypes.Update(categorized.Id, longDescription.Revision, "Stale", null, "siembra", null), "stale labor with category");
+    Check(Snapshot() == laborBefore, "stale labor with category changed stored rows");
 
     var plotAreas = new PlotCampaignAreaService(new PostgresPlotCampaignAreaRepository(builder.ConnectionString));
     Reject<DomainNotFoundException>(() => plotAreas.Create(Guid.NewGuid(), campaign.Id, 1m), "area with missing plot");
@@ -296,6 +380,22 @@ try
     Reject<DomainNotFoundException>(() => contractors.Update(Guid.NewGuid(), 1, contractorDraft), "missing contractor");
     Check(Snapshot() == contractorsBefore, "stale contractor write changed stored rows");
 
+    // 010: optional website, trimmed, one address without spaces, at most 200 characters; an update replaces it.
+    Check(contractor.Website is null && changedContractor.Website is null && ownContractor.Website is null, "contractors without website");
+    contractorsBefore = Snapshot();
+    foreach (var website in new[] { "www.example .test", "https://example.test/a b", "a\tb", new string('w', 201) })
+        Check(Rejected<DomainValidationException>(() => contractors.Create(contractorDraft with { Name = "Contratista web", Website = website }), $"invalid website {website}")
+              .Message == "Website must be a single address without spaces", "website message");
+    Reject<DomainValidationException>(() => contractors.Update(contractor.Id, changedContractor.Revision, contractorDraft with { Website = "a b" }), "invalid website update");
+    Check(Snapshot() == contractorsBefore, "rejected websites changed stored rows");
+    var webContractor = contractors.Create(contractorDraft with { Name = "Contratista web", Website = "  https://www.example.test/contratista  " });
+    Check(webContractor is { Website: "https://www.example.test/contratista", Revision: 1 } && contractors.List().Contains(webContractor), "contractor website stored");
+    Check(contractors.Create(contractorDraft with { Name = "Contratista sin web", Website = "   " }).Website is null, "blank website stored as absent");
+    var longWebsite = contractors.Update(webContractor.Id, webContractor.Revision, contractorDraft with { Name = "Contratista web", Website = new string('w', 200) });
+    Check(longWebsite is { Revision: 2 } && longWebsite.Website == new string('w', 200), "200-character website");
+    Check(contractors.Update(webContractor.Id, longWebsite.Revision, contractorDraft with { Name = "Contratista web" }) is { Website: null, Revision: 3 },
+          "contractor update replaces the website");
+
     var inputs = new InputCatalog(new PostgresInputRepository(builder.ConnectionString));
     Check(inputs.List().Count == 0, "inputs are not seeded");
     var inputDraft = new InputDraft(" Producto de prueba ", " Principio activo ficticio ", " 48% ", " SC ", 3, " Herbicida ", " l ", 1.5m, 3m, 10.25m, true);
@@ -325,6 +425,10 @@ try
     Reject<DomainConflictException>(() => inputs.Update(input.Id, input.Revision, inputDraft), "stale input");
     Reject<DomainNotFoundException>(() => inputs.Update(Guid.NewGuid(), 1, inputDraft), "missing input");
     Check(Snapshot() == inputsBefore, "stale input write changed stored rows");
+    // 010: inoculante is an input category of the reference.
+    var inoculant = inputs.Create(inputDraft with { CommercialName = "Inoculante de prueba", Category = " Inoculante " });
+    Check(inoculant.Category == "inoculante" && inputs.Update(inoculant.Id, inoculant.Revision, inputDraft with { CommercialName = "Inoculante de prueba", Category = "inoculante" })
+          is { Category: "inoculante", Revision: 2 }, "inoculante input category");
 
     // 007: client attributes. CUIT and email follow the contractor rules.
     var clientDraft = new ClientDraft(" Cliente con datos ", " 30-12345678-9 ", " Productor Uno, Productor Dos ", " cliente@example.test ",
@@ -466,6 +570,21 @@ try
           plotCrops.List(codedPlot.Id).Single() == otherPlotCrop && plotCrops.List(Guid.NewGuid()).Count == 0 && plotCrops.List().Count == 3,
           "plot crops filtered by plot");
 
+    // 010: optional grain yield and forage biomass, zero or positive and within numeric(12,2); an update replaces both.
+    Check(plotCrops.List().All(item => item is { GrainYieldKgHa: null, ForageBiomassKgHa: null }), "plot crops without yields");
+    attributesBefore = Snapshot();
+    foreach (var (grain, forage) in new (decimal?, decimal?)[] { (-1m, null), (null, -0.01m), (0.001m, null), (null, 10000000000m), (10000000000m, 1m) })
+        Check(Rejected<DomainValidationException>(() => plotCrops.Create(codedPlot.Id, campaign.Id, wheat.Id, 2, "servicio", null, grain, forage), $"invalid yields {grain} {forage}")
+              .Message == "Yield must be zero or positive and fit numeric(12,2)", "yield message");
+    Reject<DomainValidationException>(() => plotCrops.Update(otherPlotCrop.Id, otherPlotCrop.Revision, soy.Id, "renta", null, -5m, null), "invalid yield update");
+    Check(Snapshot() == attributesBefore, "rejected yields changed stored rows");
+    var yieldCrop = plotCrops.Create(codedPlot.Id, campaign.Id, wheat.Id, 2, "servicio", null, 3500.5m, 9999999999.99m);
+    Check(yieldCrop is { GrainYieldKgHa: 3500.5m, ForageBiomassKgHa: 9999999999.99m, Revision: 1 } && plotCrops.List(codedPlot.Id).Contains(yieldCrop), "plot crop yields stored");
+    var forageOnly = plotCrops.Update(yieldCrop.Id, yieldCrop.Revision, wheat.Id, "servicio", null, null, 0m);
+    Check(forageOnly is { GrainYieldKgHa: null, ForageBiomassKgHa: 0m, Revision: 2 }, "plot crop update replaces both yields");
+    Check(plotCrops.Update(yieldCrop.Id, forageOnly.Revision, wheat.Id, "servicio", null) is { GrainYieldKgHa: null, ForageBiomassKgHa: null, Revision: 3 },
+          "plot crop update without yields clears them");
+
     // Database constraints mirror the domain rules for writers that bypass the services.
     var sqlBefore = Snapshot();
     RejectSql("UPDATE labor_types SET abbreviation = 'ABCDEFGHIJKLM'", "labor abbreviation length");
@@ -481,6 +600,12 @@ try
     RejectSql("UPDATE plots SET code = ' padded '", "plot code trimmed");
     RejectSql("UPDATE plot_crops SET position = 3", "plot crop position");
     RejectSql("UPDATE plot_crops SET role = 'cobertura'", "plot crop role");
+    RejectSql("UPDATE plot_crops SET grain_yield_kg_ha = -1", "plot crop grain yield");
+    RejectSql("UPDATE plot_crops SET forage_biomass_kg_ha = -0.01", "plot crop forage biomass");
+    RejectSql("UPDATE labor_types SET category = 'otra'", "labor category");
+    RejectSql("UPDATE labor_types SET description = repeat('x', 301)", "labor description length");
+    RejectSql("UPDATE labor_types SET description = ' padded '", "labor description trimmed");
+    RejectSql("UPDATE contractors SET website = 'a b'", "contractor website");
     Check(Snapshot() == sqlBefore, "rejected SQL writes changed stored rows");
 
     var provenance = new ImportProvenanceService(new PostgresImportRecordRepository(builder.ConnectionString));
@@ -719,6 +844,37 @@ try
     Check(plainDocument.FileName == "FIRMA COMERCIAL_ORDEN_13_CAMPO NORTE-SUR_(Lote -B-)_Labor sin abreviatura_5-ene", $"fallback file name {plainDocument.FileName}");
     Check(workOrders.Document(secondOrder.Id) is { Status: "cancelada", CancelReason: "Lluvia", Number: 2 }, "document of a cancelled work order");
 
+    // 010: a field moves to another client and a plot to another field; an omitted target keeps the current one.
+    // Work orders issued before keep their firm, number and plots; only the display order of their plots follows the fields.
+    var plainBefore = workOrders.Get(plainOrder.Id)!;
+    var crossBefore = workOrders.Get(crossOrder.Id)!;
+    var moveBefore = Snapshot() + "|" + WorkOrderState();
+    Reject<DomainNotFoundException>(() => service.UpdateField(oddField.Id, oddField.Revision, new FieldDraft("Campo norte/sur", ClientId: Guid.NewGuid())), "field moved to a missing client");
+    Reject<DomainNotFoundException>(() => service.UpdateField(Guid.NewGuid(), 1, new FieldDraft("Campo", ClientId: client.Id)), "missing field moved");
+    Reject<DomainConflictException>(() => service.UpdateField(oddField.Id, oddField.Revision + 1, new FieldDraft("Campo norte/sur", ClientId: client.Id)), "stale field move");
+    Reject<DomainNotFoundException>(() => service.UpdatePlot(rentedPlot.Id, rentedPlot.Revision, new PlotDraft("Lote A", 4m, "ALQ-A", Guid.NewGuid())), "plot moved to a missing field");
+    Reject<DomainNotFoundException>(() => service.UpdatePlot(Guid.NewGuid(), 1, new PlotDraft("Lote", 1m, null, ownField.Id)), "missing plot moved");
+    Reject<DomainConflictException>(() => service.UpdatePlot(rentedPlot.Id, rentedPlot.Revision + 1, new PlotDraft("Lote A", 4m, "ALQ-A", ownField.Id)), "stale plot move");
+    Check(Snapshot() + "|" + WorkOrderState() == moveBefore, "rejected moves changed stored rows");
+    var orderState = WorkOrderState();
+    var movedField = service.UpdateField(oddField.Id, oddField.Revision, new FieldDraft(" Campo norte/sur ", ClientId: client.Id));
+    Check(movedField is { Name: "Campo norte/sur", Revision: 2 } && movedField.ClientId == client.Id && service.GetField(oddField.Id) == movedField &&
+          service.ListFields(client.Id).Contains(movedField) && !service.ListFields(fullClient.Id).Any(item => item.Id == oddField.Id) &&
+          service.ListPlots(oddField.Id).Single().Id == oddPlot.Id, "field moved to another client with its plots");
+    var keptClient = service.UpdateField(oddField.Id, movedField.Revision, new FieldDraft("Campo norte/sur", "propio"));
+    Check(keptClient is { Tenure: "propio", Revision: 3 } && keptClient.ClientId == client.Id, "an omitted client keeps the current one");
+    var movedPlot = service.UpdatePlot(rentedPlot.Id, rentedPlot.Revision, new PlotDraft("Lote A", 4m, "ALQ-A", ownField.Id));
+    Check(movedPlot is { Revision: 2, Code: "ALQ-A" } && movedPlot.FieldId == ownField.Id && service.ListPlots(ownField.Id).Contains(movedPlot) &&
+          !service.ListPlots(rentedField.Id).Any(item => item.Id == rentedPlot.Id), "plot moved to another field");
+    var keptField = service.UpdatePlot(rentedPlot.Id, movedPlot.Revision, new PlotDraft("Lote A", 4.5m, "ALQ-A"));
+    Check(keptField is { AreaHectares: 4.5m, Revision: 3 } && keptField.FieldId == ownField.Id, "an omitted field keeps the current one");
+    var plainAfter = workOrders.Get(plainOrder.Id)!;
+    var crossAfter = workOrders.Get(crossOrder.Id)!;
+    Check(WorkOrderState() == orderState && plainAfter.FirmId == plainBefore.FirmId && plainAfter.Number == plainBefore.Number &&
+          plainAfter.Revision == plainBefore.Revision && plainAfter.Plots.Select(item => item.PlotId).Order().SequenceEqual(plainBefore.Plots.Select(item => item.PlotId).Order()) &&
+          crossAfter.FirmId == firm.Id && crossAfter.Revision == crossBefore.Revision &&
+          crossAfter.Plots.Select(item => item.PlotId).Order().SequenceEqual(crossBefore.Plots.Select(item => item.PlotId).Order()), "work orders keep their firm and plots after a move");
+
     // 006 on a database that already holds rows in every earlier table, including a same-name labor.
     Migrate(seedBuilder.ConnectionString, previousMigrations);
     var keptLaborId = Guid.NewGuid();
@@ -742,7 +898,18 @@ try
         existing.ExecuteNonQuery();
     }
     Migrate(seedBuilder.ConnectionString, "006_catalogs.sql");
-    var existingLabors = new LaborTypeCatalog(new PostgresLaborTypeRepository(seedBuilder.ConnectionString)).List();
+    // Before 010 the repository cannot read labors, it selects the 010 columns; these rows carry no category or description.
+    List<LaborType> LaborsBefore010()
+    {
+        using var connection = new NpgsqlConnection(seedBuilder.ConnectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("SELECT id,name,abbreviation,revision FROM labor_types ORDER BY name,id", connection);
+        using var row = command.ExecuteReader();
+        var labors = new List<LaborType>();
+        while (row.Read()) labors.Add(new(row.GetGuid(0), row.GetString(1), row.IsDBNull(2) ? null : row.GetString(2), null, null, row.GetInt64(3)));
+        return labors;
+    }
+    var existingLabors = LaborsBefore010();
     Check(existingLabors.Count == expectedLabors.Length &&
           existingLabors.Single(item => item.Id == keptLaborId) is { Name: "siembra GRUESA", Abbreviation: "SIEM-GRU" } &&
           existingLabors.Single(item => item.Id == discoLaborId) is { Name: "DISCO", Abbreviation: "DISCO" } &&
@@ -828,16 +995,115 @@ try
     Check(SnapshotOf(seedBuilder.ConnectionString) == earlierRows && !WorkOrderColumns().Split(',').Contains("field_id"), "009 keeps earlier rows and drops the single field");
     Check(seedFirms.List().Count == 2 && seedFirms.List(client.Id).Single() == seedFirm && seedFirms.List(takenClientId).Count == 0 &&
           seedFirms.List(firmlessClientId).Single() is { Name: "Cliente sin firma", TaxId: null, NextWorkOrderNumber: 1, Revision: 1 }, "009 firm backfill");
-    var seedContractor = new ContractorCatalog(new PostgresContractorRepository(seedBuilder.ConnectionString)).List().Single();
+    // Read without the repository, which selects the 010 website column.
+    Guid seedContractorId;
+    using (var connection = new NpgsqlConnection(seedBuilder.ConnectionString))
+    {
+        connection.Open();
+        using var command = new NpgsqlCommand("SELECT id FROM contractors", connection);
+        seedContractorId = (Guid)command.ExecuteScalar()!;
+    }
     var seedOrder = new WorkOrderService(new PostgresWorkOrderRepository(seedBuilder.ConnectionString)).Create(seedFirmId,
-        new WorkOrderDraft(issuedOn, keptLaborId, null, seedContractor.Id, null, null, null, null, null, [new WorkOrderPlotDraft(plot.Id, 1m)], []));
+        new WorkOrderDraft(issuedOn, keptLaborId, null, seedContractorId, null, null, null, null, null, [new WorkOrderPlotDraft(plot.Id, 1m)], []));
     Check(seedOrder.Number == 1, "work order over migrated schema");
     rerunBefore = SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString) + "|" + WorkOrderStateOf(seedBuilder.ConnectionString);
     Migrate(seedBuilder.ConnectionString, "008_work_orders.sql", "009_ot_across_fields.sql");
     Check(SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString) + "|" + WorkOrderStateOf(seedBuilder.ConnectionString) == rerunBefore,
           "rerunning 008 and 009 changed stored rows");
 
-    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas, recipes and work orders with concurrent revisions and numbering, across fields, search, print documents and default client firms");
+    // 010 on a database with rows in every earlier table: a same-name reference labor, a user-edited crop and a taken new crop name.
+    var cosechaLaborId = Guid.NewGuid();
+    var takenCropId = Guid.NewGuid();
+    using (var connection = new NpgsqlConnection(seedBuilder.ConnectionString))
+    {
+        connection.Open();
+        using var existing = new NpgsqlCommand($"""
+            INSERT INTO labor_types(id,name) VALUES ('{cosechaLaborId}','COSECHA');
+            UPDATE crops SET revision = 2 WHERE name = 'Raigrás';
+            INSERT INTO crops(id,name) VALUES ('{takenCropId}','POROTO MUNGO');
+            """, connection);
+        existing.ExecuteNonQuery();
+    }
+    // Every row 010 must not change, without its new columns; labors and crops are checked one by one below.
+    string Untouched010()
+    {
+        using var connection = new NpgsqlConnection(seedBuilder.ConnectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("""
+            SELECT concat_ws('|',
+              (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM clients c),
+              (SELECT coalesce(string_agg(to_jsonb(f)::text, ',' ORDER BY f.id), '') FROM fields f),
+              (SELECT coalesce(string_agg(to_jsonb(p)::text, ',' ORDER BY p.id), '') FROM plots p),
+              (SELECT coalesce(string_agg(to_jsonb(c)::text, ',' ORDER BY c.id), '') FROM campaigns c),
+              (SELECT coalesce(string_agg(to_jsonb(a)::text, ',' ORDER BY a.id), '') FROM plot_campaign_areas a),
+              (SELECT coalesce(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id), '') FROM recipes r),
+              (SELECT coalesce(string_agg(to_jsonb(rl)::text, ',' ORDER BY rl.id), '') FROM recipe_lines rl),
+              (SELECT coalesce(string_agg(to_jsonb(s)::text, ',' ORDER BY s.id), '') FROM stages s),
+              (SELECT coalesce(string_agg(to_jsonb(i)::text, ',' ORDER BY i.id), '') FROM inputs i),
+              (SELECT coalesce(string_agg(to_jsonb(ir)::text, ',' ORDER BY ir.id), '') FROM import_records ir),
+              (SELECT coalesce(string_agg(to_jsonb(f)::text, ',' ORDER BY f.id), '') FROM commercial_firms f),
+              (SELECT coalesce(string_agg((to_jsonb(c) - 'website')::text, ',' ORDER BY c.id), '') FROM contractors c),
+              (SELECT coalesce(string_agg((to_jsonb(pc) - '{grain_yield_kg_ha,forage_biomass_kg_ha}'::text[])::text, ',' ORDER BY pc.id), '') FROM plot_crops pc))
+            """, connection);
+        return (string)command.ExecuteScalar()! + "|" + WorkOrderStateOf(seedBuilder.ConnectionString);
+    }
+    string ConstraintsOf(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("""
+            SELECT string_agg(conrelid::regclass::text || ':' || conname || ':' || pg_get_constraintdef(oid), ',' ORDER BY conrelid::regclass::text, conname)
+            FROM pg_constraint WHERE connamespace = current_schema()::regnamespace
+            """, connection);
+        return (string)command.ExecuteScalar()!;
+    }
+    var seedLabors = new LaborTypeCatalog(new PostgresLaborTypeRepository(seedBuilder.ConnectionString));
+    var seedCrops = new CropCatalog(new PostgresCropRepository(seedBuilder.ConnectionString));
+    var laborsBefore010 = LaborsBefore010();
+    var untouched = Untouched010();
+    Migrate(seedBuilder.ConnectionString, "010_reference_alignment.sql");
+    Check(Untouched010() == untouched, "010 changed rows stored by earlier migrations");
+    var labors010 = seedLabors.List();
+    Check(laborsBefore010.Count == 15 && labors010.Count == 15 + referenceLabors.Length - 1 &&
+          laborsBefore010.All(before => labors010.Single(item => item.Id == before.Id) is var after && after.Revision == before.Revision + 1 &&
+              after.Name == before.Name && after.Abbreviation == before.Abbreviation),
+          "010 adds the missing reference labors and revises each existing labor it fills");
+    Check(labors010.Single(item => item.Id == keptLaborId) is { Name: "siembra GRUESA", Abbreviation: "SIEM-GRU", Category: "siembra", Description: null } &&
+          labors010.Single(item => item.Id == discoLaborId) is { Name: "DISCO", Abbreviation: "DSC", Category: "labranza" } &&
+          labors010.Single(item => item.Id == cosechaLaborId) is { Name: "COSECHA", Abbreviation: null, Category: "cosecha", Description: null, Revision: 2 } &&
+          labors010.Single(item => item.Name == "Cosecha fina") is { Category: "cosecha", Description: "trigo, cebada, colza, etc." } &&
+          expectedLabors.All(expected => labors010.Any(item => string.Equals(item.Name, expected.Name, StringComparison.OrdinalIgnoreCase) &&
+              item.Category == expected.Category && item.Description == expected.Description)) &&
+          referenceLabors.All(expected => labors010.Any(item => string.Equals(item.Name, expected.Name, StringComparison.OrdinalIgnoreCase) &&
+              item.Category == expected.Category && item.Description == expected.Description)), "010 fills categories and keeps same-name labors");
+    var crops010 = seedCrops.List();
+    Check(crops010.Single(item => item.Name == "Pasturas puras de gramíneas").Revision == 2 &&
+          crops010.Single(item => item.Name == "Pasturas puras de leguminosas").Revision == 2 &&
+          !crops010.Any(item => item.Name is "Pastura de gramíneas" or "Pastura de leguminosas" or "Raygrass") &&
+          crops010.Single(item => item.Name == "Raigrás").Revision == 2 && crops010.Single(item => item.Name == "Poroto mung").Revision == 1 &&
+          crops010.Single(item => item.Id == takenCropId) is { Name: "POROTO MUNGO", Revision: 1 } &&
+          crops010.Single(item => item.Id == keptCropId) is { Name: "TRIGO", Revision: 1 } && crops010.Count == referenceCrops.Length + 1,
+          "010 renames only seeded crops at revision 1 whose new name is free");
+    Check(new ContractorCatalog(new PostgresContractorRepository(seedBuilder.ConnectionString)).List().All(item => item.Website is null) &&
+          new PlotCropService(new PostgresPlotCropRepository(seedBuilder.ConnectionString)).List().All(item => item is { GrainYieldKgHa: null, ForageBiomassKgHa: null }),
+          "010 leaves the new attributes of existing rows absent");
+    // A category or description the user set is kept by a rerun, which changes nothing at all.
+    var userDisco = labors010.Single(item => item.Id == discoLaborId);
+    seedLabors.Update(discoLaborId, userDisco.Revision, userDisco.Name, userDisco.Abbreviation, "siembra", "Descripción del usuario");
+    seedLabors.Update(cosechaLaborId, 2, "COSECHA", null, "forrajes", null);
+    var userFine = labors010.Single(item => item.Name == "Cosecha fina");
+    seedLabors.Update(userFine.Id, userFine.Revision, userFine.Name, userFine.Abbreviation, "cosecha", "Descripción propia");
+    rerunBefore = SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString) + "|" +
+        WorkOrderStateOf(seedBuilder.ConnectionString) + "|" + ConstraintsOf(seedBuilder.ConnectionString);
+    Migrate(seedBuilder.ConnectionString, "010_reference_alignment.sql");
+    Check(SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString) + "|" +
+          WorkOrderStateOf(seedBuilder.ConnectionString) + "|" + ConstraintsOf(seedBuilder.ConnectionString) == rerunBefore, "rerunning 010 changed stored rows or constraints");
+    var rerunLabors = seedLabors.List();
+    Check(rerunLabors.Count == labors010.Count && rerunLabors.Single(item => item.Id == discoLaborId) is { Category: "siembra", Description: "Descripción del usuario" } &&
+          rerunLabors.Single(item => item.Id == cosechaLaborId) is { Category: "forrajes", Revision: 3 } &&
+          rerunLabors.Single(item => item.Id == userFine.Id).Description == "Descripción propia", "user-set labor categories and descriptions kept");
+
+    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas, recipes and work orders with concurrent revisions and numbering, across fields, search, print documents, default client firms and the 010 reference alignment");
     return 0;
 }
 finally

@@ -4,10 +4,14 @@ public sealed record Client(Guid Id, string Name, string? TaxId, string? Produce
 public sealed record Field(Guid Id, Guid ClientId, string Name, string? Tenure, string? Locality, long Revision);
 public sealed record Plot(Guid Id, Guid FieldId, string Name, decimal AreaHectares, string? Code, long Revision);
 
-/// <summary>Writes replace every attribute: an omitted optional attribute is stored as absent.</summary>
+/// <summary>
+/// Writes replace every attribute: an omitted optional attribute is stored as absent. The parent is the exception:
+/// on update, ClientId moves a field to another client and FieldId a plot to another field, and an absent parent keeps
+/// the current one; create takes the parent from its own argument and ignores these.
+/// </summary>
 public sealed record ClientDraft(string Name, string? TaxId = null, string? Producers = null, string? Email = null, string? Phone = null, string? Address = null);
-public sealed record FieldDraft(string Name, string? Tenure = null, string? Locality = null);
-public sealed record PlotDraft(string Name, decimal AreaHectares, string? Code = null);
+public sealed record FieldDraft(string Name, string? Tenure = null, string? Locality = null, Guid? ClientId = null);
+public sealed record PlotDraft(string Name, decimal AreaHectares, string? Code = null, Guid? FieldId = null);
 
 public sealed class DomainValidationException(string message) : Exception(message);
 public sealed class DomainConflictException() : Exception("Stale revision");
@@ -35,7 +39,7 @@ public sealed class OperationsService(IOperationsRepository repository)
         var tenure = CatalogText.Optional(draft.Tenure)?.ToLowerInvariant();
         if (tenure is not null && Array.IndexOf(Tenures, tenure) < 0)
             throw new DomainValidationException($"Tenure must be one of: {string.Join(", ", Tenures)}");
-        return new(name, tenure, CatalogText.Optional(draft.Locality));
+        return new(name, tenure, CatalogText.Optional(draft.Locality), draft.ClientId);
     }
 
     private static PlotDraft Validated(PlotDraft draft)
@@ -45,7 +49,7 @@ public sealed class OperationsService(IOperationsRepository repository)
             throw new DomainValidationException("Area must be positive and fit numeric(12,4)");
         var code = CatalogText.Optional(draft.Code);
         if (code is { Length: > 40 }) throw new DomainValidationException("Code must be at most 40 characters");
-        return new(name, draft.AreaHectares, code);
+        return new(name, draft.AreaHectares, code, draft.FieldId);
     }
 
     public Client CreateClient(ClientDraft client) => repository.CreateClient(Validated(client));

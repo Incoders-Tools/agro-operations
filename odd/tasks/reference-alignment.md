@@ -90,8 +90,8 @@ document). Public repository: no client values here.
   optional `website`. Client "celular" is shown as "Celular" (stored phone).
 
 ## Tasks
-- T1 (S1-S6) worker: migration 010 + API + tests.
-- T2 (S1-S6) worker: UI.
+- T1 (S1-S6) worker: migration 010 + API + tests. | done
+- T2 (S1-S6) worker: UI. | done
 - T3: launcher, docs, real DB apply, browser check, push.
 
 ## Log
