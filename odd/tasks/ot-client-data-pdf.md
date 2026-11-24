@@ -38,8 +38,8 @@ contractor or product values; real data lives only in the private local database
 ## Tasks
 - T1 (S2) inline: engineer questions document. | done
 - T2 (S3, S4) worker: migration 009 (OT without single field, default firm per client + backfill), OT search, tests. | done (commit: OT across fields)
-- T3 (S1) worker: workbook import of BASEDATOS clients/fields/plots and Registros firms with next numbers; real run.
-- T4 (S1, S3, S4, S5, S6) worker: OT form by client with plots grouped by field, client list discoverability, OT
+- T3 (S1) worker: workbook import of BASEDATOS clients/fields/plots and Registros firms with next numbers; real run. | done (commit: import hierarchy; real run in T5)
+- T4 (S1, S3, S4, S5, S6) worker | done (commit: OT by client + print view): OT form by client with plots grouped by field, client list discoverability, OT
   search, print view and PDF file name.
 - T5: launcher 009, docs, browser verification, push to main.
 

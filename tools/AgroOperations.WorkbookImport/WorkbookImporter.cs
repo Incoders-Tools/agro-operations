@@ -9,8 +9,8 @@ using Npgsql;
 namespace AgroOperations.WorkbookImport;
 
 /// <summary>
-/// Imports contractors and inputs from the owner's workbook into the private local database, marking each created
-/// record as imported and unverified. Console output carries counts and row numbers only, never record values.
+/// Imports contractors, inputs, clients, fields and plots from the owner's workbook into the private local database, marking
+/// each created record as imported and unverified, and continues each firm's work order numbering after the workbook's. Console output carries counts and row numbers only, never record values.
 /// </summary>
 public static partial class WorkbookImporter
 {
@@ -48,8 +48,13 @@ public static partial class WorkbookImporter
             if (host is not ("127.0.0.1" or "localhost")) return Fail(error, 2, "The workbook import requires a loopback-only PostgreSQL host.");
         }
 
-        SortedDictionary<int, Dictionary<int, string>> sheet;
-        try { sheet = XlsxSheetReader.Read(workbook, SheetName); }
+        SortedDictionary<int, Dictionary<int, string>> sheet, plotSheet, orderSheet;
+        try
+        {
+            sheet = XlsxSheetReader.Read(workbook, SheetName);
+            plotSheet = XlsxSheetReader.Read(workbook, PlotSheetName);
+            orderSheet = XlsxSheetReader.Read(workbook, OrderSheetName);
+        }
         catch (Exception e) when (e is WorkbookFormatException or InvalidDataException or IOException or XmlException)
         {
             return Fail(error, 2, e is WorkbookFormatException ? e.Message : "Workbook could not be read as an .xlsx/.xlsm package.");
@@ -57,16 +62,19 @@ public static partial class WorkbookImporter
 
         try
         {
-            return Import(sheet, hasDatabase ? connectionString! : null, dryRun, output, error);
+            return Import(sheet, plotSheet, orderSheet, hasDatabase ? connectionString! : null, dryRun, output, error);
         }
         catch (WorkbookFormatException e) { return Fail(error, 2, e.Message); }
         catch (PostgresException e) { return Fail(error, 1, $"Database error (SQLSTATE {e.SqlState}); the import stopped."); }
         catch (NpgsqlException) { return Fail(error, 1, "Cannot reach the local database; the import stopped."); }
     }
 
-    private static int Import(SortedDictionary<int, Dictionary<int, string>> sheet, string? connectionString, bool dryRun,
-        TextWriter output, TextWriter error)
+    private static int Import(SortedDictionary<int, Dictionary<int, string>> sheet, SortedDictionary<int, Dictionary<int, string>> plotSheet,
+        SortedDictionary<int, Dictionary<int, string>> orderSheet, string? connectionString, bool dryRun, TextWriter output, TextWriter error)
     {
+        // Every sheet layout is checked before anything is written.
+        var plotColumns = LocatePlotColumns(plotSheet);
+        var orderColumns = LocateOrderColumns(orderSheet);
         var header = sheet.TryGetValue(1, out var first) ? first : throw new WorkbookFormatException("Header row 1 is empty");
         var contractorColumn = Single(header, "CONTRATISTA");
         var unitColumn = Single(header, "UNIDADES");
@@ -201,6 +209,9 @@ public static partial class WorkbookImporter
             + $"rejected {inputCounts.Rejected}, doses skipped {inputCounts.DosesSkipped}, without dose data {inputCounts.WithoutDoses}, "
             + $"unmatched dose rows {inputCounts.UnmatchedDoses}, costs skipped {inputCounts.CostsSkipped}.");
         foreach (var rejection in rejections) output.WriteLine(rejection);
+        var hierarchyLines = new List<string>();
+        if (ImportHierarchy(plotSheet, plotColumns, orderSheet, orderColumns, connectionString, dryRun, hierarchyLines, error) is { } failed) return failed;
+        foreach (var line in hierarchyLines) output.WriteLine(line);
         output.WriteLine(dryRun ? "Dry run: nothing was written." : "Imported records are marked unverified for human review.");
         return 0;
     }

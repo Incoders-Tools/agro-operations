@@ -1,4 +1,5 @@
-# Imports contractors and inputs from the owner's workbook into the private local database.
+# Imports contractors, inputs, clients, fields and plots from the owner's workbook into the private local database and
+# continues each client's firm work order numbering after the workbook's highest number.
 # Start the database first with tools/start-local.ps1. The screen shows counts and row numbers only.
 param(
     [Parameter(Mandatory = $true)][string]$Workbook,
