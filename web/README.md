@@ -1,6 +1,6 @@
 # Cuaderno de campo · demostración local
 
-La ruta `/` es un cuaderno de campo visual con datos enteramente inventados. No contiene clientes reales, documentos ni recomendaciones agronómicas; no consulta la API ni crea órdenes. `/backoffice` es una ruta distinta para iniciar sesión contra la API privada y administrar clientes, campos, lotes, cultivos, campañas, labores y recetas internas guardados en PostgreSQL local, y consultar la procedencia de los registros importados.
+La ruta `/` es un cuaderno de campo visual con datos enteramente inventados. No contiene clientes reales, documentos ni recomendaciones agronómicas; no consulta la API ni crea órdenes. `/backoffice` es una ruta distinta para iniciar sesión contra la API privada. Allí se emiten y siguen órdenes de trabajo (numeradas por firma comercial, con lotes, superficie a trabajar e insumos con dosis y totales), se navega cliente › campo › lote › cultivos por campaña, y se administran firmas comerciales, contratistas, insumos, labores, etapas, cultivos, campañas y recetas internas guardados en PostgreSQL local. También muestra la procedencia de los registros importados.
 
 ## Inicio local
 

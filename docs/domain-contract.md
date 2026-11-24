@@ -16,3 +16,4 @@ This file contains invented terminology only. No customer files or copied client
 ## Log
 - This sanitized public handoff is a subset of the private specification; actual customer paths and names are never copied here.
 - Crop catalog additions are internal only; SQL migration `003_crops.sql` must run after `001_operations.sql`. Do not infer seasonal crop assignments from raw text without human validation.
+- Operational model round (labors and stages as separate catalogs, contractors, inputs, client/field/plot attributes, plot crops per campaign, work orders numbered per commercial firm): see `odd/tasks/backoffice-operational-model.md`.

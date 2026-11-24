@@ -43,7 +43,7 @@ verbatim but never contain real client, contractor or product values; those exis
 - T5 (S1, S3, S4, S6, S7) worker: backoffice UI for hierarchy and attribute forms, contractors, inputs. | done (commit: masters UI; browser check in T8)
 - T6 (S5) worker: OT create/list/detail/cancel UI. | done (commit: work orders UI; browser check in T8)
 - T7 (S8) worker: local workbook import for contractors and inputs with provenance; run against private DB. | done (commit: import tool; real run in T8)
-- T8: launcher applies 006-008, docs, end-to-end verification.
+- T8: launcher applies 006-008, docs, end-to-end verification. | done (commits 81e56bd, 3c5b6fe, docs)
 
 ## Log
 - L1 (owner, 2026-11-24, verbatim): "Ya pude acceder y ya comence encontrando errores de estilos: [captura] mira como se
@@ -79,3 +79,10 @@ verbatim but never contain real client, contractor or product values; those exis
   006-008. Fixed with $OutputEncoding = UTF-8 in the launcher and a Windows smoke regression (RED: missing setting;
   ASCII probe shows 3F). B2 — a real commercial hybrid and a real-looking variety in tests replaced with invented
   values. Migrations: no row loss, rerunnable, partial schemas refused. Numbering: gapless and race-safe under probes.
+- L10 (T8 evidence): private DB backed up to ignored `.local/backups/before-006-008.dump`, then 006-008 applied by the
+  launcher: 0 names with '?', 14 labors, 7 stages, 28 crops; masters intact (1 client, 7 fields, 10 plots). Workbook
+  import created 27 contractors and 367 inputs (147 with mix order, 181 with dose range), all unverified with
+  provenance; a second dry run creates nothing. 36 dose rows did not match an input name exactly (9 differ only in
+  the trailing parenthetical) and those inputs came in without doses. Browser check at 1280 and 390 px over 8
+  screens: 0 label overlaps, 0 UI errors; found and fixed a phone-width overflow (page ~1400px wide) in 3c5b6fe.
+  No OT was created in the private DB (no firm exists yet).
