@@ -27,6 +27,7 @@ public static class BackofficeRoutes
         var firms = new CommercialFirmCatalog(new PostgresCommercialFirmRepository(connectionString));
         var plotCrops = new PlotCropService(new PostgresPlotCropRepository(connectionString));
         var provenance = new ImportProvenanceService(new PostgresImportRecordRepository(connectionString));
+        var workOrders = new WorkOrderService(new PostgresWorkOrderRepository(connectionString));
         var protectedRoutes = local.MapGroup("").RequireAuthorization().AddEndpointFilter(async (context, next) =>
         {
             if (HttpMethods.IsGet(context.HttpContext.Request.Method)) return await next(context);
@@ -51,6 +52,14 @@ public static class BackofficeRoutes
         protectedRoutes.MapGet("/recipes", () => Results.Json(recipes.List()));
         protectedRoutes.MapGet("/recipe-lines", () => Results.Json(recipes.ListLines()));
         protectedRoutes.MapGet("/import-records", () => Results.Json(provenance.List()));
+        // Work orders: optional firm and status filters; an unknown status is rejected rather than matching nothing.
+        protectedRoutes.MapGet("/work-orders", (Guid? firmId, string? status) => Change(() => workOrders.List(firmId, status)));
+        protectedRoutes.MapGet("/work-orders/{id:guid}", (Guid id) => Item(workOrders.Get(id)));
+        // The server takes the number from the firm; a client-sent number or firm on update is ignored.
+        protectedRoutes.MapPost("/work-orders", (WorkOrderInput input) => Create(() => workOrders.Create(input.FirmId, input.Draft())));
+        protectedRoutes.MapPut("/work-orders/{id:guid}", (Guid id, RevisionWorkOrderInput input) => Change(() => workOrders.Update(id, input.Revision, input.Draft())));
+        protectedRoutes.MapPost("/work-orders/{id:guid}/cancel", (Guid id, CancelWorkOrderInput input) => Change(() => workOrders.Cancel(id, input.Revision, input.Reason)));
+        protectedRoutes.MapPost("/work-orders/{id:guid}/complete", (Guid id, RevisionOnlyInput input) => Change(() => workOrders.Complete(id, input.Revision)));
         protectedRoutes.MapGet("/clients/{id:guid}", (Guid id) => Item(operations.GetClient(id)));
         protectedRoutes.MapGet("/fields/{id:guid}", (Guid id) => Item(operations.GetField(id)));
         protectedRoutes.MapGet("/plots/{id:guid}", (Guid id) => Item(operations.GetPlot(id)));
@@ -78,7 +87,9 @@ public static class BackofficeRoutes
         protectedRoutes.MapPut("/fields/{id:guid}", (Guid id, RevisionFieldInput input) => Change(() => operations.UpdateField(id, input.Revision, input.Draft())));
         protectedRoutes.MapPut("/plots/{id:guid}", (Guid id, RevisionPlotInput input) => Change(() => operations.UpdatePlot(id, input.Revision, input.Draft())));
         // A firm keeps its client, and a plot crop keeps its plot, campaign and position: the bodies carry none of them.
-        protectedRoutes.MapPut("/commercial-firms/{id:guid}", (Guid id, RevisionFirmInput input) => Change(() => firms.Update(id, input.Revision, input.Name, input.TaxId)));
+        // Exception to the full-replace rule: an omitted nextWorkOrderNumber keeps the stored one, so a rename never renumbers.
+        protectedRoutes.MapPut("/commercial-firms/{id:guid}", (Guid id, RevisionFirmInput input) =>
+            Change(() => firms.Update(id, input.Revision, input.Name, input.TaxId, input.NextWorkOrderNumber)));
         protectedRoutes.MapPut("/plot-crops/{id:guid}", (Guid id, RevisionPlotCropInput input) =>
             Change(() => plotCrops.Update(id, input.Revision, input.CropId, input.Role, input.Variety)));
         protectedRoutes.MapPut("/crops/{id:guid}", (Guid id, RevisionNameInput input) => Change(() => crops.Update(id, input.Revision, input.Name)));
@@ -106,6 +117,7 @@ public static class BackofficeRoutes
         catch (DomainNotFoundException) { return Results.NotFound(new { error = "Record not found" }); }
         catch (DomainConflictException) { return Results.Conflict(new { error = "Stale revision" }); }
         catch (DomainDuplicateException error) { return Results.Conflict(new { error = error.Message }); }
+        catch (DomainStateException error) { return Results.Conflict(new { error = error.Message }); }
     }
     public sealed record NameInput(string Name);
     public sealed record RevisionNameInput(string Name, long Revision);
@@ -134,7 +146,23 @@ public static class BackofficeRoutes
         public PlotDraft Draft() => new(Name, AreaHectares, Code);
     }
     public sealed record FirmInput(Guid ClientId, string Name, string? TaxId);
-    public sealed record RevisionFirmInput(string Name, string? TaxId, long Revision);
+    public sealed record RevisionFirmInput(string Name, string? TaxId, long Revision, int? NextWorkOrderNumber);
+    public sealed record WorkOrderInput(Guid FirmId, DateOnly? IssuedOn, Guid LaborTypeId, Guid? StageId, Guid ContractorId, Guid FieldId,
+        Guid? CampaignId, Guid? CropId, string? Variety, string? Observations, string? ResponsibleEngineer,
+        WorkOrderPlotDraft[]? Plots, WorkOrderLineDraft[]? Lines)
+    {
+        public WorkOrderDraft Draft() => new(IssuedOn, LaborTypeId, StageId, ContractorId, FieldId, CampaignId, CropId, Variety, Observations,
+            ResponsibleEngineer, Plots, Lines);
+    }
+    public sealed record RevisionWorkOrderInput(DateOnly? IssuedOn, Guid LaborTypeId, Guid? StageId, Guid ContractorId, Guid FieldId,
+        Guid? CampaignId, Guid? CropId, string? Variety, string? Observations, string? ResponsibleEngineer,
+        WorkOrderPlotDraft[]? Plots, WorkOrderLineDraft[]? Lines, long Revision)
+    {
+        public WorkOrderDraft Draft() => new(IssuedOn, LaborTypeId, StageId, ContractorId, FieldId, CampaignId, CropId, Variety, Observations,
+            ResponsibleEngineer, Plots, Lines);
+    }
+    public sealed record CancelWorkOrderInput(long Revision, string? Reason);
+    public sealed record RevisionOnlyInput(long Revision);
     public sealed record PlotCropInput(Guid PlotId, Guid CampaignId, Guid CropId, short Position, string Role, string? Variety);
     public sealed record RevisionPlotCropInput(Guid CropId, string Role, string? Variety, long Revision);
     public sealed record PlotCampaignAreaInput(Guid PlotId, Guid CampaignId, decimal AreaHectares);

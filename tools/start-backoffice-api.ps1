@@ -115,6 +115,7 @@ Ensure-Migration '004_agronomy.sql' 'public.campaigns,public.plot_campaign_areas
 Ensure-Migration '005_import_records.sql' 'public.import_records'
 Ensure-Migration '006_catalogs.sql' 'public.stages,public.contractors,public.inputs'
 Ensure-Migration '007_attributes.sql' 'public.commercial_firms,public.plot_crops'
+Ensure-Migration '008_work_orders.sql' 'public.work_orders,public.work_order_plots,public.work_order_lines'
 
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
 $env:AGRO_LOCAL_ADMIN_EMAIL = $settings.email

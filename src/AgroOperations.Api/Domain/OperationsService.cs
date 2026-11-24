@@ -14,6 +14,8 @@ public sealed class DomainConflictException() : Exception("Stale revision");
 public sealed class DomainNotFoundException() : Exception("Record not found");
 /// <summary>A case-insensitive unique value is already taken; distinct from a stale revision.</summary>
 public sealed class DomainDuplicateException(string message = "Duplicate name") : Exception(message);
+/// <summary>The record exists and the revision matches, but its state forbids the change.</summary>
+public sealed class DomainStateException(string message) : Exception(message);
 
 /// <summary>Application boundary. The repository is supplied by the persistence adapter.</summary>
 public sealed class OperationsService(IOperationsRepository repository)

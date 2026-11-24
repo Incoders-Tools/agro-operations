@@ -30,7 +30,7 @@ try
         }
     }
     string[] previousMigrations = ["001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql"];
-    Migrate(builder.ConnectionString, [.. previousMigrations, "006_catalogs.sql", "007_attributes.sql"]);
+    Migrate(builder.ConnectionString, [.. previousMigrations, "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql"]);
     var service = new OperationsService(new PostgresOperationsRepository(builder.ConnectionString));
     static void Check(bool condition, string label)
     {
@@ -106,13 +106,15 @@ try
             """, connection);
         return (string)command.ExecuteScalar()!;
     }
-    string AttributeTablesOf(string connectionString)
+    // Without the next number, the snapshot compares commercial firms before and after 008 by what 007 stored.
+    string AttributeTablesOf(string connectionString, bool withNextNumber = true)
     {
+        var strip = withNextNumber ? "" : " - 'next_work_order_number'";
         using var connection = new NpgsqlConnection(connectionString);
         connection.Open();
-        using var command = new NpgsqlCommand("""
+        using var command = new NpgsqlCommand($"""
             SELECT concat_ws('|',
-              (SELECT coalesce(string_agg(to_jsonb(f)::text, ',' ORDER BY f.id), '') FROM commercial_firms f),
+              (SELECT coalesce(string_agg((to_jsonb(f){strip})::text, ',' ORDER BY f.id), '') FROM commercial_firms f),
               (SELECT coalesce(string_agg(to_jsonb(pc)::text, ',' ORDER BY pc.id), '') FROM plot_crops pc))
             """, connection);
         return (string)command.ExecuteScalar()!;
@@ -480,6 +482,174 @@ try
     RejectSql($"INSERT INTO import_records(id,entity_type,entity_id,source_reference,raw_payload) VALUES ('{Guid.NewGuid()}','stage','{stage.Id}','fixture','{{}}')", "provenance entity check");
     Check(Snapshot() == provenanceBefore, "rejected provenance changed stored rows");
 
+    // 008: work orders, numbered consecutively per commercial firm inside the creating transaction.
+    var workOrders = new WorkOrderService(new PostgresWorkOrderRepository(builder.ConnectionString));
+    string WorkOrderStateOf(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("""
+            SELECT concat_ws('|',
+              (SELECT coalesce(string_agg(to_jsonb(w)::text, ',' ORDER BY w.id), '') FROM work_orders w),
+              (SELECT coalesce(string_agg(to_jsonb(p)::text, ',' ORDER BY p.work_order_id, p.plot_id), '') FROM work_order_plots p),
+              (SELECT coalesce(string_agg(to_jsonb(l)::text, ',' ORDER BY l.id), '') FROM work_order_lines l),
+              (SELECT coalesce(string_agg(f.id || ':' || f.next_work_order_number, ',' ORDER BY f.id), '') FROM commercial_firms f))
+            """, connection);
+        return (string)command.ExecuteScalar()!;
+    }
+    string WorkOrderState() => WorkOrderStateOf(builder.ConnectionString);
+    int NextNumber(Guid firmId) => firms.List().Single(item => item.Id == firmId).NextWorkOrderNumber;
+    var issuedOn = new DateOnly(2026, 11, 24);
+    // codedPlot has 10 ha and blankCodePlot 5 ha, both in ownField of fullClient; firm and secondFirm belong to fullClient.
+    var orderDraft = new WorkOrderDraft(issuedOn, laborType.Id, stage.Id, contractor.Id, ownField.Id, campaign.Id, soy.Id,
+        " NK 855 VIP3 ", " Observación ficticia ", " Ingeniero ficticio ",
+        [new WorkOrderPlotDraft(codedPlot.Id, 10m), new WorkOrderPlotDraft(blankCodePlot.Id, 6.5m)],
+        [new WorkOrderLineDraft(minimalInput.Id, 2m), new WorkOrderLineDraft(input.Id, 1.3333m)]);
+    Check(firms.List().All(item => item.NextWorkOrderNumber == 1), "firms start numbering at 1");
+
+    var orderBefore = WorkOrderState();
+    Check(Rejected<DomainValidationException>(() => workOrders.Create(firm.Id, orderDraft with { Plots = [new WorkOrderPlotDraft(plot.Id, 1m)] }), "plot of another field")
+          .Message == "Every plot must belong to the work order's field", "plot of another field message");
+    Check(Rejected<DomainValidationException>(() => workOrders.Create(otherClientFirm.Id, orderDraft), "field of another client")
+          .Message == "Field must belong to the firm's client", "field of another client message");
+    Check(Rejected<DomainValidationException>(() => workOrders.Create(firm.Id, orderDraft with { Plots = [] }), "zero plots")
+          .Message == "At least one plot is required", "zero plots message");
+    Reject<DomainValidationException>(() => workOrders.Create(firm.Id, orderDraft with { Plots = null }), "absent plots");
+    Check(Rejected<DomainValidationException>(() => workOrders.Create(firm.Id, orderDraft with { IssuedOn = null }), "missing date")
+          .Message == "Issued on is required", "missing date message");
+    Check(Rejected<DomainValidationException>(() => workOrders.Create(firm.Id, orderDraft with
+          { Plots = [new WorkOrderPlotDraft(codedPlot.Id, 1m), new WorkOrderPlotDraft(codedPlot.Id, 2m)] }), "duplicate plot")
+          .Message == "Each plot can appear only once", "duplicate plot message");
+    foreach (var worked in new[] { 0m, -1m, 0.00001m, 100000000m })
+        Check(Rejected<DomainValidationException>(() => workOrders.Create(firm.Id, orderDraft with { Plots = [new WorkOrderPlotDraft(codedPlot.Id, worked)] }), $"worked area {worked}")
+              .Message == "Worked area must be positive and fit numeric(12,4)", "worked area message");
+    foreach (var dose in new[] { 0m, -1m, 0.00001m, 100000000m })
+        Check(Rejected<DomainValidationException>(() => workOrders.Create(firm.Id, orderDraft with { Lines = [new WorkOrderLineDraft(input.Id, dose)] }), $"dose {dose}")
+              .Message == "Dose must be positive and fit numeric(12,4)", "dose message");
+    Check(Rejected<DomainValidationException>(() => workOrders.Create(firm.Id, orderDraft with
+          { Plots = [new WorkOrderPlotDraft(codedPlot.Id, 99999999m)], Lines = [new WorkOrderLineDraft(input.Id, 99999999m)] }), "total overflow")
+          .Message == "Line total must be positive and fit numeric(14,4)", "total overflow message");
+    Reject<DomainNotFoundException>(() => workOrders.Create(firm.Id, orderDraft with { Lines = [new WorkOrderLineDraft(Guid.NewGuid(), 1m)] }), "missing input");
+    Reject<DomainNotFoundException>(() => workOrders.Create(firm.Id, orderDraft with { Plots = [new WorkOrderPlotDraft(Guid.NewGuid(), 1m)] }), "missing plot");
+    Reject<DomainNotFoundException>(() => workOrders.Create(Guid.NewGuid(), orderDraft), "missing firm");
+    Reject<DomainNotFoundException>(() => workOrders.Create(firm.Id, orderDraft with { LaborTypeId = Guid.NewGuid() }), "missing labor");
+    Reject<DomainNotFoundException>(() => workOrders.Create(firm.Id, orderDraft with { StageId = Guid.NewGuid() }), "missing stage");
+    Reject<DomainNotFoundException>(() => workOrders.Create(firm.Id, orderDraft with { ContractorId = Guid.NewGuid() }), "missing contractor");
+    Reject<DomainNotFoundException>(() => workOrders.Create(firm.Id, orderDraft with { FieldId = Guid.NewGuid() }), "missing field");
+    Reject<DomainNotFoundException>(() => workOrders.Create(firm.Id, orderDraft with { CampaignId = Guid.NewGuid() }), "missing campaign");
+    Reject<DomainNotFoundException>(() => workOrders.Create(firm.Id, orderDraft with { CropId = Guid.NewGuid() }), "missing crop");
+    Check(WorkOrderState() == orderBefore && NextNumber(firm.Id) == 1, "rejected work order creates changed stored rows or the next number");
+
+    var firstOrder = workOrders.Create(firm.Id, orderDraft);
+    Check(firstOrder is { Number: 1, Status: "emitida", CancelReason: null, Revision: 1, Variety: "NK 855 VIP3",
+          Observations: "Observación ficticia", ResponsibleEngineer: "Ingeniero ficticio" } && firstOrder.FirmId == firm.Id &&
+          firstOrder.IssuedOn == issuedOn && firstOrder.FieldId == ownField.Id && firstOrder.StageId == stage.Id && firstOrder.CropId == soy.Id,
+          "first work order header");
+    // Worked areas sum 16.5 ha: 2 × 16.5 = 33 and 1.3333 × 16.5 = 21.99945, rounded half away from zero to 21.9995.
+    Check(firstOrder.Plots.Count == 2 &&
+          firstOrder.Plots.Single(item => item.PlotId == codedPlot.Id) is { AreaHectares: 10m, WorkedAreaHectares: 10m, WorkedAreaExceedsPlot: false } &&
+          firstOrder.Plots.Single(item => item.PlotId == blankCodePlot.Id) is { AreaHectares: 5m, WorkedAreaHectares: 6.5m, WorkedAreaExceedsPlot: true },
+          "plot area snapshot and worked area flag");
+    Check(firstOrder.Lines.Count == 2 &&
+          firstOrder.Lines[0] is { Position: 1, DosePerHectare: 2m, Unit: "kg", Total: 33m, DoseOutOfRange: false } && firstOrder.Lines[0].InputId == minimalInput.Id &&
+          firstOrder.Lines[1] is { Position: 2, DosePerHectare: 1.3333m, Unit: "l", Total: 21.9995m, DoseOutOfRange: true } && firstOrder.Lines[1].InputId == input.Id,
+          "line totals, unit snapshot and dose range flag; the dose is kept");
+    Check(NextNumber(firm.Id) == 2 && workOrders.Get(firstOrder.Id) is { Number: 1, Revision: 1 } detail && detail.Lines.Count == 2 && detail.Plots.Count == 2,
+          "work order detail");
+    var secondOrder = workOrders.Create(firm.Id, orderDraft with { Lines = [] });
+    var otherFirmOrder = workOrders.Create(secondFirm.Id, orderDraft);
+    Check(secondOrder is { Number: 2, Lines.Count: 0 } && otherFirmOrder.Number == 1 && NextNumber(firm.Id) == 3 && NextNumber(secondFirm.Id) == 2,
+          "numbers consecutive per firm and independent between firms; zero lines allowed");
+    Check(workOrders.Get(Guid.NewGuid()) is null, "unknown work order");
+
+    // The next number is editable to continue the workbook numbering, but never back onto an issued number.
+    orderBefore = WorkOrderState();
+    var secondFirmNow = firms.List().Single(item => item.Id == secondFirm.Id);
+    foreach (var next in new[] { 1, 0, -5 })
+        Check(Rejected<DomainValidationException>(() => firms.Update(secondFirm.Id, secondFirmNow.Revision, secondFirmNow.Name, null, next), $"next number {next}")
+              .Message == "Next number must be greater than 1", "next number message");
+    Check(Rejected<DomainValidationException>(() => firms.Update(otherClientFirm.Id, otherClientFirm.Revision, otherClientFirm.Name, null, 0), "next number 0 without orders")
+          .Message == "Next number must be greater than 0", "next number message without orders");
+    Reject<DomainConflictException>(() => firms.Update(secondFirm.Id, secondFirmNow.Revision + 1, secondFirmNow.Name, null, 50), "stale next number");
+    Check(WorkOrderState() == orderBefore && firms.List().Single(item => item.Id == secondFirm.Id) == secondFirmNow, "rejected next numbers changed stored rows");
+    var renumbered = firms.Update(secondFirm.Id, secondFirmNow.Revision, secondFirmNow.Name, null, 100);
+    Check(renumbered is { NextWorkOrderNumber: 100 } && renumbered.Revision == secondFirmNow.Revision + 1, "custom next number stored");
+    Check(workOrders.Create(secondFirm.Id, orderDraft).Number == 100 && NextNumber(secondFirm.Id) == 101, "custom next number honored");
+    var renamed = firms.Update(secondFirm.Id, renumbered.Revision, "Otra firma SA", null);
+    Check(renamed is { NextWorkOrderNumber: 101, Name: "Otra firma SA" }, "omitted next number unchanged");
+
+    // Concurrent creates for one firm serialize on the firm row: distinct consecutive numbers, no gaps.
+    using (var start = new Barrier(9))
+    {
+        var racers = Enumerable.Range(0, 8).Select(_ => Task.Run(() => { start.SignalAndWait(); return workOrders.Create(firm.Id, orderDraft).Number; })).ToArray();
+        start.SignalAndWait();
+        var numbers = (await Task.WhenAll(racers)).Order().ToArray();
+        Check(numbers.SequenceEqual(Enumerable.Range(3, 8)) && NextNumber(firm.Id) == 11, $"concurrent numbers {string.Join(",", numbers)}");
+    }
+    orderBefore = WorkOrderState();
+    Reject<DomainValidationException>(() => workOrders.Create(firm.Id, orderDraft with { Plots = [new WorkOrderPlotDraft(plot.Id, 1m)] }), "rejected create after race");
+    Check(WorkOrderState() == orderBefore && NextNumber(firm.Id) == 11, "a rejected create leaves no gap");
+
+    // Edit: full replace of header, plots and lines while emitida; firm and number never change.
+    var editDraft = orderDraft with { StageId = null, CampaignId = null, CropId = null, Variety = " ", Observations = null, ResponsibleEngineer = null,
+        Plots = [new WorkOrderPlotDraft(noCodePlot.Id, 5m)], Lines = [new WorkOrderLineDraft(input.Id, 2m)] };
+    orderBefore = WorkOrderState();
+    Reject<DomainValidationException>(() => workOrders.Update(firstOrder.Id, firstOrder.Revision, editDraft with { Plots = [new WorkOrderPlotDraft(plot.Id, 1m)] }), "edit to plot of another field");
+    Reject<DomainValidationException>(() => workOrders.Update(firstOrder.Id, firstOrder.Revision, editDraft with { FieldId = field.Id, Plots = [new WorkOrderPlotDraft(plot.Id, 1m)] }), "edit to field of another client");
+    Reject<DomainValidationException>(() => workOrders.Update(firstOrder.Id, firstOrder.Revision, editDraft with { Plots = [] }), "edit to zero plots");
+    Reject<DomainNotFoundException>(() => workOrders.Update(firstOrder.Id, firstOrder.Revision, editDraft with { Lines = [new WorkOrderLineDraft(Guid.NewGuid(), 1m)] }), "edit to missing input");
+    Reject<DomainNotFoundException>(() => workOrders.Update(Guid.NewGuid(), 1, editDraft), "edit of missing work order");
+    Check(Rejected<DomainConflictException>(() => workOrders.Update(firstOrder.Id, firstOrder.Revision + 1, editDraft), "stale edit").Message == "Stale revision", "stale edit message");
+    Check(WorkOrderState() == orderBefore, "rejected edits changed stored rows");
+    var editedOrder = workOrders.Update(firstOrder.Id, firstOrder.Revision, editDraft);
+    Check(editedOrder is { Number: 1, Revision: 2, Status: "emitida", StageId: null, CampaignId: null, CropId: null, Variety: null, Observations: null, ResponsibleEngineer: null } &&
+          editedOrder.FirmId == firm.Id && editedOrder.Plots.Single() is { AreaHectares: 5m, WorkedAreaHectares: 5m, WorkedAreaExceedsPlot: false } &&
+          editedOrder.Lines.Single() is { Position: 1, Total: 10m, DoseOutOfRange: false } && NextNumber(firm.Id) == 11, "edit replaces header, plots and lines");
+    orderBefore = WorkOrderState();
+    Reject<DomainConflictException>(() => workOrders.Update(firstOrder.Id, firstOrder.Revision, orderDraft), "edit with the replaced revision");
+    Check(WorkOrderState() == orderBefore, "stale edit changed stored rows");
+
+    // Cancel keeps the number, the order stays queryable and the next create takes the following number.
+    Check(Rejected<DomainValidationException>(() => workOrders.Cancel(secondOrder.Id, secondOrder.Revision, "  "), "blank reason").Message == "Reason is required", "blank reason message");
+    Reject<DomainConflictException>(() => workOrders.Cancel(secondOrder.Id, secondOrder.Revision + 1, "Motivo"), "stale cancel");
+    Reject<DomainNotFoundException>(() => workOrders.Cancel(Guid.NewGuid(), 1, "Motivo"), "cancel of missing work order");
+    Reject<DomainNotFoundException>(() => workOrders.Complete(Guid.NewGuid(), 1), "complete of missing work order");
+    Reject<DomainConflictException>(() => workOrders.Complete(firstOrder.Id, firstOrder.Revision), "stale complete");
+    Check(WorkOrderState() == orderBefore, "rejected cancel and complete changed stored rows");
+    var cancelled = workOrders.Cancel(secondOrder.Id, secondOrder.Revision, " Lluvia ");
+    Check(cancelled is { Number: 2, Status: "cancelada", CancelReason: "Lluvia", Revision: 2 } && workOrders.Get(secondOrder.Id) is { Status: "cancelada", Number: 2 },
+          "cancelled order keeps its number and stays queryable");
+    Check(workOrders.Create(firm.Id, orderDraft).Number == 11, "next create after cancel takes the following number");
+    var completed = workOrders.Complete(editedOrder.Id, editedOrder.Revision);
+    Check(completed is { Status: "realizada", CancelReason: null, Revision: 3, Number: 1 }, "complete");
+    orderBefore = WorkOrderState();
+    foreach (var (closed, label) in new[] { (cancelled, "cancelled"), (completed, "completed") })
+    {
+        Check(Rejected<DomainStateException>(() => workOrders.Update(closed.Id, closed.Revision, editDraft), $"edit {label}").Message == "Work order is not editable", $"edit {label} message");
+        Check(Rejected<DomainStateException>(() => workOrders.Cancel(closed.Id, closed.Revision, "Motivo"), $"cancel {label}").Message == "Work order is not editable", $"cancel {label} message");
+        Check(Rejected<DomainStateException>(() => workOrders.Complete(closed.Id, closed.Revision), $"complete {label}").Message == "Work order is not editable", $"complete {label} message");
+    }
+    Check(WorkOrderState() == orderBefore, "rejected transitions of closed orders changed stored rows");
+
+    // Summary list, filtered by firm and status.
+    var allOrders = workOrders.List();
+    Check(allOrders.Count == 13 && workOrders.List(firm.Id).Count == 11 && workOrders.List(secondFirm.Id).Count == 2 && workOrders.List(Guid.NewGuid()).Count == 0,
+          "work orders filtered by firm");
+    Check(workOrders.List(status: "cancelada").Single() is { Number: 2, PlotCount: 2 } cancelledSummary && cancelledSummary.Id == secondOrder.Id &&
+          workOrders.List(firm.Id, "realizada").Single().Id == firstOrder.Id && workOrders.List(secondFirm.Id, "emitida").Count == 2 &&
+          allOrders.Single(item => item.Id == firstOrder.Id) is { PlotCount: 1, Revision: 3, Status: "realizada" }, "work orders filtered by status");
+    Check(Rejected<DomainValidationException>(() => workOrders.List(status: "anulada"), "invalid status filter").Message ==
+          "Status must be one of: emitida, realizada, cancelada", "invalid status filter message");
+
+    orderBefore = WorkOrderState();
+    RejectSql("UPDATE work_orders SET status = 'anulada'", "work order status");
+    RejectSql("UPDATE work_orders SET status = 'cancelada', cancel_reason = NULL", "cancelled without reason");
+    RejectSql("UPDATE work_orders SET cancel_reason = 'Motivo' WHERE status = 'emitida'", "reason without cancel");
+    RejectSql("UPDATE work_order_plots SET worked_area_hectares = 0", "positive worked area");
+    RejectSql("UPDATE work_order_lines SET dose_per_hectare = 0", "positive dose");
+    RejectSql("UPDATE commercial_firms SET next_work_order_number = 0", "positive next number");
+    Check(WorkOrderState() == orderBefore, "rejected work order SQL changed stored rows");
+
     // 006 on a database that already holds rows in every earlier table, including a same-name labor.
     Migrate(seedBuilder.ConnectionString, previousMigrations);
     var keptLaborId = Guid.NewGuid();
@@ -547,7 +717,33 @@ try
     Migrate(seedBuilder.ConnectionString, "007_attributes.sql");
     Check(SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString) == rerunBefore, "rerunning 007 changed stored rows");
 
-    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas and recipes with concurrent revisions");
+    // 008 on a database that already holds rows in every earlier table, then rerun with a stored work order.
+    var seedFirmId = Guid.NewGuid();
+    using (var connection = new NpgsqlConnection(seedBuilder.ConnectionString))
+    {
+        connection.Open();
+        using var existing = new NpgsqlCommand($"""
+            INSERT INTO commercial_firms(id,client_id,name) VALUES ('{seedFirmId}','{client.Id}','Firma');
+            INSERT INTO plot_crops(id,plot_id,campaign_id,crop_id,position,role) VALUES ('{Guid.NewGuid()}','{plot.Id}','{campaign.Id}','{keptCropId}',1,'renta');
+            """, connection);
+        existing.ExecuteNonQuery();
+    }
+    earlierRows = SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString);
+    Migrate(seedBuilder.ConnectionString, "008_work_orders.sql");
+    Check(SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString, withNextNumber: false) == earlierRows,
+          "008 changed rows stored by earlier migrations");
+    var seedFirm = new CommercialFirmCatalog(new PostgresCommercialFirmRepository(seedBuilder.ConnectionString)).List().Single();
+    Check(seedFirm is { NextWorkOrderNumber: 1, Revision: 1 }, "008 starts existing firms at number 1");
+    var seedContractor = new ContractorCatalog(new PostgresContractorRepository(seedBuilder.ConnectionString)).List().Single();
+    var seedOrder = new WorkOrderService(new PostgresWorkOrderRepository(seedBuilder.ConnectionString)).Create(seedFirmId,
+        new WorkOrderDraft(issuedOn, keptLaborId, null, seedContractor.Id, field.Id, null, null, null, null, null, [new WorkOrderPlotDraft(plot.Id, 1m)], []));
+    Check(seedOrder.Number == 1, "work order over migrated schema");
+    rerunBefore = SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString) + "|" + WorkOrderStateOf(seedBuilder.ConnectionString);
+    Migrate(seedBuilder.ConnectionString, "008_work_orders.sql");
+    Check(SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString) + "|" + WorkOrderStateOf(seedBuilder.ConnectionString) == rerunBefore,
+          "rerunning 008 changed stored rows");
+
+    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas, recipes and work orders with concurrent revisions and numbering");
     return 0;
 }
 finally

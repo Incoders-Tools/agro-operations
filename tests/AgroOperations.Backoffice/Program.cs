@@ -22,7 +22,7 @@ try
     using (var db = new NpgsqlConnection(scoped.ConnectionString))
     {
         db.Open();
-        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql" })
+        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql" })
         {
             var file = Path.Combine(root, "src", "AgroOperations.Api", "Persistence", "Migrations", name);
             using var migration = new NpgsqlCommand(File.ReadAllText(file), db);
@@ -57,11 +57,17 @@ try
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException) { await Task.Delay(250); }
         }
         if (health?.StatusCode != HttpStatusCode.OK) throw new Exception("Test API did not start");
-        foreach (var route in new[] { "clients", "fields", "plots", "crops", "campaigns", "labor-types", "plot-campaign-areas", "recipes", "recipe-lines", "stages", "contractors", "inputs", "commercial-firms", "plot-crops" })
+        foreach (var route in new[] { "clients", "fields", "plots", "crops", "campaigns", "labor-types", "plot-campaign-areas", "recipes", "recipe-lines", "stages", "contractors", "inputs", "commercial-firms", "plot-crops", "work-orders" })
             if ((await client.GetAsync($"/api/v1/{route}")).StatusCode != HttpStatusCode.Unauthorized ||
                 (await client.PostAsJsonAsync($"/api/v1/{route}", new { name = "Example" })).StatusCode != HttpStatusCode.Unauthorized ||
                 (await client.PutAsJsonAsync($"/api/v1/{route}/{Guid.NewGuid()}", new { name = "Example", revision = 1 })).StatusCode != HttpStatusCode.Unauthorized)
                 throw new Exception($"Anonymous {route} route accessible");
+        var anonymousOrder = Guid.NewGuid();
+        if ((await client.GetAsync($"/api/v1/work-orders/{anonymousOrder}")).StatusCode != HttpStatusCode.Unauthorized ||
+            (await client.GetAsync($"/api/v1/work-orders?firmId={anonymousOrder}&status=emitida")).StatusCode != HttpStatusCode.Unauthorized ||
+            (await client.PostAsJsonAsync($"/api/v1/work-orders/{anonymousOrder}/cancel", new { revision = 1, reason = "Motivo" })).StatusCode != HttpStatusCode.Unauthorized ||
+            (await client.PostAsJsonAsync($"/api/v1/work-orders/{anonymousOrder}/complete", new { revision = 1 })).StatusCode != HttpStatusCode.Unauthorized)
+            throw new Exception("Anonymous work order route accessible");
         var login = await client.PostAsJsonAsync("/api/v1/session", new { password });
         if (login.StatusCode != HttpStatusCode.OK) throw new Exception("Local session unavailable");
         using var session = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
@@ -360,6 +366,146 @@ try
             !await IsError(await Send(HttpMethod.Put, $"/api/v1/inputs/{inputId}", new { commercialName = "Producto de prueba", unit = "l", doseMin = 4m, doseMax = 3m, revision = 2 }), HttpStatusCode.BadRequest) ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/inputs"))![0].GetProperty("unit").GetString() != "kg")
             throw new Exception("Rejected input update overwrote record");
+
+        // 008 work orders: codedPlotId (3 ha) is in richFieldId of client richId, whose firm is firmId; samplePlot is in another client's field.
+        var rangedInput = await Send(HttpMethod.Post, "/api/v1/inputs", new { commercialName = "Producto con rango", unit = "l", doseMin = 1m, doseMax = 2m });
+        if (rangedInput.StatusCode != HttpStatusCode.Created) throw new Exception("Ranged input create failed");
+        var rangedInputId = (await Body(rangedInput)).GetProperty("id").GetGuid();
+        var orderBody = new { firmId, issuedOn = (string?)"2026-11-24", laborTypeId, stageId = (Guid?)stageId, contractorId, fieldId = richFieldId,
+            campaignId = (Guid?)campaignId, cropId = (Guid?)soyId, variety = (string?)"NK 855 VIP3", observations = (string?)"Observación ficticia",
+            responsibleEngineer = (string?)"Ingeniero ficticio", plots = new object[] { new { plotId = codedPlotId, workedAreaHectares = 3.5m } },
+            lines = new object[] { new { inputId = rangedInputId, dosePerHectare = 2.5m }, new { inputId, dosePerHectare = 1m } } };
+        async Task<string> OrderState() => await client.GetStringAsync("/api/v1/work-orders") + "|" + await client.GetStringAsync("/api/v1/commercial-firms");
+        var withoutCsrf = Guid.NewGuid();
+        if ((await client.PostAsJsonAsync("/api/v1/work-orders", orderBody)).StatusCode != HttpStatusCode.Forbidden ||
+            (await client.PutAsJsonAsync($"/api/v1/work-orders/{withoutCsrf}", orderBody)).StatusCode != HttpStatusCode.Forbidden ||
+            (await client.PostAsJsonAsync($"/api/v1/work-orders/{withoutCsrf}/cancel", new { revision = 1, reason = "Motivo" })).StatusCode != HttpStatusCode.Forbidden ||
+            (await client.PostAsJsonAsync($"/api/v1/work-orders/{withoutCsrf}/complete", new { revision = 1 })).StatusCode != HttpStatusCode.Forbidden ||
+            await Count("work-orders") != 0)
+            throw new Exception("Work order write accepted without CSRF");
+        var emptyOrders = await OrderState();
+        var samplePlotId = samplePlot.GetProperty("id").GetGuid();
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { plots = new object[] { new { plotId = samplePlotId, workedAreaHectares = 1m } } }),
+                HttpStatusCode.BadRequest, "Every plot must belong to the work order's field") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { fieldId = fieldId, plots = new object[] { new { plotId = samplePlotId, workedAreaHectares = 1m } } }),
+                HttpStatusCode.BadRequest, "Field must belong to the firm's client") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { plots = new object[0] }), HttpStatusCode.BadRequest, "At least one plot is required") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { issuedOn = (string?)null }), HttpStatusCode.BadRequest, "Issued on is required") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { lines = new object[] { new { inputId, dosePerHectare = 0m } } }), HttpStatusCode.BadRequest,
+                "Dose must be positive and fit numeric(12,4)") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { plots = new object[] { new { plotId = codedPlotId, workedAreaHectares = 0m } } }),
+                HttpStatusCode.BadRequest, "Worked area must be positive and fit numeric(12,4)") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { lines = new object[] { new { inputId = Guid.NewGuid(), dosePerHectare = 1m } } }),
+                HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { firmId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { contractorId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            await OrderState() != emptyOrders)
+            throw new Exception("Rejected work order create changed stored records or the next number");
+        var firmNext = async () => (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/commercial-firms"))!.Single(item => item.GetProperty("id").GetGuid() == firmId);
+        if ((await firmNext()).GetProperty("nextWorkOrderNumber").GetInt32() != 1) throw new Exception("Firm next number not exposed");
+        var createdOrder = await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody);
+        var orderRow = await Body(createdOrder);
+        var orderId = orderRow.GetProperty("id").GetGuid();
+        var orderPlot = orderRow.GetProperty("plots")[0];
+        var orderLines = orderRow.GetProperty("lines");
+        if (createdOrder.StatusCode != HttpStatusCode.Created || orderRow.GetProperty("number").GetInt32() != 1 || orderRow.GetProperty("status").GetString() != "emitida" ||
+            orderRow.GetProperty("issuedOn").GetString() != "2026-11-24" || orderRow.GetProperty("variety").GetString() != "NK 855 VIP3" ||
+            orderPlot.GetProperty("areaHectares").GetDecimal() != 3m || orderPlot.GetProperty("workedAreaHectares").GetDecimal() != 3.5m ||
+            !orderPlot.GetProperty("workedAreaExceedsPlot").GetBoolean() || orderLines.GetArrayLength() != 2 ||
+            orderLines[0].GetProperty("total").GetDecimal() != 8.75m || !orderLines[0].GetProperty("doseOutOfRange").GetBoolean() ||
+            orderLines[0].GetProperty("dosePerHectare").GetDecimal() != 2.5m || orderLines[0].GetProperty("unit").GetString() != "l" ||
+            orderLines[1].GetProperty("total").GetDecimal() != 3.5m || orderLines[1].GetProperty("doseOutOfRange").GetBoolean() ||
+            orderLines[1].GetProperty("unit").GetString() != "kg" || orderLines[1].GetProperty("position").GetInt32() != 2)
+            throw new Exception($"Work order create: {(int)createdOrder.StatusCode}");
+        var orderDetail = await client.GetAsync($"/api/v1/work-orders/{orderId}");
+        var orderSummaries = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/work-orders");
+        if (orderDetail.StatusCode != HttpStatusCode.OK || (await Body(orderDetail)).GetProperty("lines").GetArrayLength() != 2 ||
+            orderSummaries is not { Length: 1 } || orderSummaries[0].GetProperty("plotCount").GetInt32() != 1 || orderSummaries[0].GetProperty("number").GetInt32() != 1 ||
+            orderSummaries[0].GetProperty("firmId").GetGuid() != firmId || orderSummaries[0].GetProperty("fieldId").GetGuid() != richFieldId ||
+            (await client.GetAsync($"/api/v1/work-orders/{Guid.NewGuid()}")).StatusCode != HttpStatusCode.NotFound ||
+            (await firmNext()).GetProperty("nextWorkOrderNumber").GetInt32() != 2)
+            throw new Exception("Work order detail or list mismatch");
+
+        // The firm PUT sets the next number only when sent; it must exceed every issued number.
+        var firmNow = await firmNext();
+        var firmRevision = firmNow.GetProperty("revision").GetInt64();
+        var firmName = firmNow.GetProperty("name").GetString();
+        var issuedOrders = await OrderState();
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/commercial-firms/{firmId}", new { name = firmName, revision = firmRevision, nextWorkOrderNumber = 1 }),
+                HttpStatusCode.BadRequest, "Next number must be greater than 1") ||
+            await OrderState() != issuedOrders)
+            throw new Exception("Next number onto an issued number accepted");
+        var renumberedFirm = await Send(HttpMethod.Put, $"/api/v1/commercial-firms/{firmId}", new { name = firmName, revision = firmRevision, nextWorkOrderNumber = 50 });
+        if (renumberedFirm.StatusCode != HttpStatusCode.OK || (await Body(renumberedFirm)).GetProperty("nextWorkOrderNumber").GetInt32() != 50)
+            throw new Exception("Next number update failed");
+        var keptNumber = await Send(HttpMethod.Put, $"/api/v1/commercial-firms/{firmId}", new { name = firmName, revision = firmRevision + 1 });
+        if (keptNumber.StatusCode != HttpStatusCode.OK || (await Body(keptNumber)).GetProperty("nextWorkOrderNumber").GetInt32() != 50)
+            throw new Exception("Omitted next number changed it");
+        var laterOrder = await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody with { lines = new object[0] });
+        var laterRow = await Body(laterOrder);
+        var laterId = laterRow.GetProperty("id").GetGuid();
+        if (laterOrder.StatusCode != HttpStatusCode.Created || laterRow.GetProperty("number").GetInt32() != 50 || laterRow.GetProperty("lines").GetArrayLength() != 0)
+            throw new Exception("Custom next number not honored");
+
+        // Update is a full replace of header, plots and lines; firm and number stay.
+        var editBody = orderBody with { stageId = (Guid?)null, variety = (string?)null, plots = new object[] { new { plotId = codedPlotId, workedAreaHectares = 2m } }, lines = new object[0] };
+        issuedOrders = await OrderState();
+        var orderDetailBefore = await client.GetStringAsync($"/api/v1/work-orders/{orderId}");
+        if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/work-orders/{orderId}", new { editBody.issuedOn, editBody.laborTypeId, editBody.contractorId,
+                editBody.fieldId, editBody.plots, editBody.lines, revision = 2 }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/work-orders/{orderId}", new { editBody.issuedOn, editBody.laborTypeId, editBody.contractorId,
+                editBody.fieldId, plots = new object[] { new { plotId = samplePlotId, workedAreaHectares = 1m } }, revision = 1 }), HttpStatusCode.BadRequest,
+                "Every plot must belong to the work order's field") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/work-orders/{orderId}", new { editBody.issuedOn, laborTypeId = Guid.NewGuid(), editBody.contractorId,
+                editBody.fieldId, editBody.plots, revision = 1 }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/work-orders/{Guid.NewGuid()}", new { editBody.issuedOn, editBody.laborTypeId, editBody.contractorId,
+                editBody.fieldId, editBody.plots, revision = 1 }), HttpStatusCode.NotFound, "Record not found") ||
+            await OrderState() != issuedOrders || await client.GetStringAsync($"/api/v1/work-orders/{orderId}") != orderDetailBefore)
+            throw new Exception("Rejected work order update changed stored records");
+        var editedOrder = await Send(HttpMethod.Put, $"/api/v1/work-orders/{orderId}", new { firmId = Guid.NewGuid(), number = 99, editBody.issuedOn, editBody.laborTypeId,
+            editBody.contractorId, editBody.fieldId, editBody.campaignId, editBody.cropId, editBody.observations, editBody.responsibleEngineer, editBody.plots, editBody.lines, revision = 1 });
+        var editedRow = await Body(editedOrder);
+        if (editedOrder.StatusCode != HttpStatusCode.OK || editedRow.GetProperty("number").GetInt32() != 1 || editedRow.GetProperty("firmId").GetGuid() != firmId ||
+            editedRow.GetProperty("revision").GetInt64() != 2 || editedRow.GetProperty("stageId").ValueKind != JsonValueKind.Null || !Absent(editedRow, "variety") ||
+            editedRow.GetProperty("lines").GetArrayLength() != 0 || editedRow.GetProperty("plots")[0].GetProperty("workedAreaExceedsPlot").GetBoolean())
+            throw new Exception($"Work order update: {(int)editedOrder.StatusCode}");
+
+        // Filters by firm and status.
+        if ((await Ids($"work-orders?firmId={firmId}")).Length != 2 || (await Ids($"work-orders?firmId={Guid.NewGuid()}")).Length != 0 ||
+            (await Ids("work-orders?status=emitida")).Length != 2 || (await Ids($"work-orders?firmId={firmId}&status=cancelada")).Length != 0 ||
+            !await IsError(await client.GetAsync("/api/v1/work-orders?status=anulada"), HttpStatusCode.BadRequest, "Status must be one of: emitida, realizada, cancelada"))
+            throw new Exception("Work order filters mismatch");
+
+        // Cancel keeps the number and the order stays queryable; closed orders are not editable.
+        issuedOrders = await OrderState();
+        if (!await IsError(await Send(HttpMethod.Post, $"/api/v1/work-orders/{laterId}/cancel", new { revision = 1, reason = " " }), HttpStatusCode.BadRequest, "Reason is required") ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/work-orders/{laterId}/cancel", new { revision = 2, reason = "Lluvia" }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/work-orders/{Guid.NewGuid()}/cancel", new { revision = 1, reason = "Lluvia" }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/work-orders/{Guid.NewGuid()}/complete", new { revision = 1 }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await Send(HttpMethod.Post, $"/api/v1/work-orders/{orderId}/complete", new { revision = 1 }), HttpStatusCode.Conflict, "Stale revision") ||
+            await OrderState() != issuedOrders)
+            throw new Exception("Rejected cancel or complete changed stored records");
+        var cancelledOrder = await Send(HttpMethod.Post, $"/api/v1/work-orders/{laterId}/cancel", new { revision = 1, reason = "Lluvia" });
+        var cancelledRow = await Body(cancelledOrder);
+        if (cancelledOrder.StatusCode != HttpStatusCode.OK || cancelledRow.GetProperty("status").GetString() != "cancelada" ||
+            cancelledRow.GetProperty("cancelReason").GetString() != "Lluvia" || cancelledRow.GetProperty("number").GetInt32() != 50 ||
+            (await client.GetFromJsonAsync<JsonElement>($"/api/v1/work-orders/{laterId}")).GetProperty("status").GetString() != "cancelada" ||
+            !(await Ids("work-orders?status=cancelada")).SequenceEqual([laterId]))
+            throw new Exception("Cancel failed or hid the work order");
+        var completedOrder = await Send(HttpMethod.Post, $"/api/v1/work-orders/{orderId}/complete", new { revision = 2 });
+        if (completedOrder.StatusCode != HttpStatusCode.OK || (await Body(completedOrder)).GetProperty("status").GetString() != "realizada")
+            throw new Exception("Complete failed");
+        issuedOrders = await OrderState();
+        foreach (var (closedId, closedRevision) in new[] { (laterId, 2L), (orderId, 3L) })
+            if (!await IsError(await Send(HttpMethod.Put, $"/api/v1/work-orders/{closedId}", new { editBody.issuedOn, editBody.laborTypeId, editBody.contractorId,
+                    editBody.fieldId, editBody.plots, revision = closedRevision }), HttpStatusCode.Conflict, "Work order is not editable") ||
+                !await IsError(await Send(HttpMethod.Post, $"/api/v1/work-orders/{closedId}/cancel", new { revision = closedRevision, reason = "Motivo" }), HttpStatusCode.Conflict, "Work order is not editable") ||
+                !await IsError(await Send(HttpMethod.Post, $"/api/v1/work-orders/{closedId}/complete", new { revision = closedRevision }), HttpStatusCode.Conflict, "Work order is not editable"))
+                throw new Exception("Closed work order accepted a write");
+        if (await OrderState() != issuedOrders) throw new Exception("Rejected writes to closed work orders changed stored records");
+        var afterCancel = await Send(HttpMethod.Post, "/api/v1/work-orders", orderBody);
+        if (afterCancel.StatusCode != HttpStatusCode.Created || (await Body(afterCancel)).GetProperty("number").GetInt32() != 51 || await Count("work-orders") != 3)
+            throw new Exception("Create after cancel did not take the following number");
         if ((await Send(HttpMethod.Post, "/api/v1/plot-campaign-areas", new { plotId = Guid.NewGuid(), campaignId, areaHectares = 1m })).StatusCode != HttpStatusCode.NotFound ||
             (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/plot-campaign-areas"))!.Length != 0)
             throw new Exception("Orphan plot campaign area changed stored records");

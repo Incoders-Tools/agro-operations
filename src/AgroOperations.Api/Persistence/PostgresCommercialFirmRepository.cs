@@ -1,14 +1,15 @@
 using AgroOperations.Api.Domain;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace AgroOperations.Api.Persistence;
 
 public sealed class PostgresCommercialFirmRepository(string connectionString) : ICommercialFirmRepository
 {
-    private const string Columns = "id,client_id,name,tax_id,revision";
+    private const string Columns = "id,client_id,name,tax_id,next_work_order_number,revision";
 
     private static CommercialFirm Map(NpgsqlDataReader r) =>
-        new(r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3), r.GetInt64(4));
+        new(r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3), r.GetInt32(4), r.GetInt64(5));
 
     public CommercialFirm Create(Guid clientId, string name, string? taxId)
     {
@@ -31,28 +32,49 @@ public sealed class PostgresCommercialFirmRepository(string connectionString) : 
         }
     }
 
-    public CommercialFirm Update(Guid id, long revision, string name, string? taxId)
+    public CommercialFirm Update(Guid id, long revision, string name, string? taxId, int? nextWorkOrderNumber)
     {
         using var db = new NpgsqlConnection(connectionString);
         db.Open();
-        using var cmd = new NpgsqlCommand($"UPDATE commercial_firms SET name=@name,tax_id=@taxId,revision=revision+1 WHERE id=@id AND revision=@revision RETURNING {Columns}", db);
+        // The row lock waits for any work order create of this firm, so the highest number read next is final.
+        using var tx = db.BeginTransaction();
+        using (var current = new NpgsqlCommand("SELECT revision FROM commercial_firms WHERE id=@id FOR UPDATE", db, tx))
+        {
+            current.Parameters.AddWithValue("id", id);
+            if (current.ExecuteScalar() is not long stored) throw new DomainNotFoundException();
+            if (stored != revision) throw new DomainConflictException();
+        }
+        if (nextWorkOrderNumber is { } next)
+        {
+            using var highest = new NpgsqlCommand("SELECT coalesce(max(number),0) FROM work_orders WHERE firm_id=@id", db, tx);
+            highest.Parameters.AddWithValue("id", id);
+            var issued = (int)highest.ExecuteScalar()!;
+            if (next <= issued) throw new DomainValidationException($"Next number must be greater than {issued}");
+        }
+        using var cmd = new NpgsqlCommand($"""
+            UPDATE commercial_firms SET name=@name,tax_id=@taxId,
+              next_work_order_number=coalesce(@next,next_work_order_number),revision=revision+1
+            WHERE id=@id RETURNING {Columns}
+            """, db, tx);
         cmd.Parameters.AddWithValue("id", id);
-        cmd.Parameters.AddWithValue("revision", revision);
         cmd.Parameters.AddWithValue("name", name);
         cmd.Parameters.AddWithValue("taxId", (object?)taxId ?? DBNull.Value);
+        cmd.Parameters.Add(new NpgsqlParameter("next", NpgsqlDbType.Integer) { Value = (object?)nextWorkOrderNumber ?? DBNull.Value });
         try
         {
+            CommercialFirm firm;
             using (var row = cmd.ExecuteReader())
-                if (row.Read()) return Map(row);
+            {
+                row.Read();
+                firm = Map(row);
+            }
+            tx.Commit();
+            return firm;
         }
         catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
         {
             throw new DomainDuplicateException();
         }
-        using var exists = new NpgsqlCommand("SELECT EXISTS(SELECT 1 FROM commercial_firms WHERE id=@id)", db);
-        exists.Parameters.AddWithValue("id", id);
-        if ((bool)exists.ExecuteScalar()!) throw new DomainConflictException();
-        throw new DomainNotFoundException();
     }
 
     public IReadOnlyList<CommercialFirm> List(Guid? clientId)
