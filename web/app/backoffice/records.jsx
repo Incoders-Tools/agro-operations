@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { send } from './api.mjs';
 import { Field, SchemaControl } from './field.jsx';
 import { entities, fieldApplies, formFor, payloadFor, rowLabel, searchRecords } from './schema.mjs';
@@ -9,6 +9,31 @@ export function SectionHeader({ identity, title, description, count }) {
   return <header><div><p className="bo-kicker">Registro privado · {identity.email}</p><h1>{title}</h1>
     <p>{description ?? 'Consulta y administra los datos guardados en PostgreSQL local.'}</p></div>
     {count !== undefined && <span className="bo-count">{count} {count === 1 ? 'registro' : 'registros'}</span>}</header>;
+}
+
+/** A visible loading message (S5). */
+export const Loading = ({ label }) => <p className="bo-loading" role="status">{label}</p>;
+
+/**
+ * Content that waits for its data (S5). Before the first load only the loader shows, never an empty list or a form;
+ * while it reloads, the content stays in view but inert (no click, focus or submit) under the loader.
+ */
+export function Busy({ ready = true, busy, label, className, children }) {
+  if (!ready) return <Loading label={label} />;
+  return <div className="bo-busy-zone">
+    {busy && <Loading label={label} />}
+    <div className={className} aria-busy={busy || undefined} inert={busy || undefined}>{children}</div>
+  </div>;
+}
+
+/** [busy, track]: `track(promise)` counts the request until it settles; busy while any is in flight. */
+export function usePending() {
+  const [pending, setPending] = useState(0);
+  const track = useCallback(promise => {
+    setPending(count => count + 1);
+    return Promise.resolve(promise).finally(() => setPending(count => count - 1));
+  }, []);
+  return [pending > 0, track];
 }
 
 export const editorTitle = (entity, record) => {

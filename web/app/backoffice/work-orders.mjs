@@ -9,7 +9,7 @@ export const statuses = [
 ];
 
 let lineKey = 0;
-export const newLine = () => ({ key: ++lineKey, inputId: '', dose: '', term: '' });
+export const newLine = () => ({ key: ++lineKey, inputId: '', dose: '' });
 
 const pad = number => String(number).padStart(2, '0');
 // Local calendar date, so an order created late in the evening is not dated tomorrow.
@@ -107,7 +107,7 @@ export function plotCropPrefill(plotCrops, campaignId) {
 
 export const laborLabel = labor => labor ? (labor.abbreviation ? `${labor.name} (${labor.abbreviation})` : labor.name) : 'Sin referencia';
 
-/** OT labor select: one optgroup per category in reference order, "Otras" last; options show the abbreviation. */
+/** OT labor combobox: one group per category in reference order, "Otras" last; options show the abbreviation. */
 export const laborOptionGroups = labors => laborGroups(labors).map(group => ({
   label: group.label, options: group.labors.map(labor => ({ value: labor.id, label: laborLabel(labor) })),
 }));

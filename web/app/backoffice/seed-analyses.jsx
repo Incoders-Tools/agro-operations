@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
-import { Field, optionNodes } from './field.jsx';
-import { RecordDetail, SectionHeader } from './records.jsx';
+import { ComboField, Field, optionNodes } from './field.jsx';
+import { Busy, RecordDetail, SectionHeader, usePending } from './records.jsx';
 import {
   emptySeedAnalysis, formatNumber, fractions, searchSeeds, seedFromRecord, seedPayload, seedProblem, seedQuery, seedingRate, treatments,
 } from './analyses.mjs';
@@ -12,9 +12,10 @@ import { displayDate } from './work-orders.mjs';
 const references = ['clients', 'crops', 'campaigns'];
 const nameOf = (rows, id) => rows.find(row => row.id === id)?.name;
 const percent = value => value == null ? null : `${formatNumber(Number(value), 2)} %`;
-const options = rows => rows.map(row => ({ value: row.id, label: row.name }));
+const options = rows => rows.map(row => ({ value: row.id, label: row.name, detail: row.taxId ? `CUIT ${row.taxId}` : undefined }));
 const title = (row, refs) => [nameOf(refs.crops, row.cropId) ?? 'Sin referencia', row.variety].filter(Boolean).join(' · ');
 
+// Native select, only for the calculator's fixed unit; entities use ComboField (S2).
 function Select({ id, label, value, onChange, options: list, placeholder, optional, hint, required = !optional }) {
   return <Field id={id} label={label} optional={optional} hint={hint}>{hintId =>
     <select id={id} value={value} required={required} aria-describedby={hintId} onChange={event => onChange(event.target.value)}>
@@ -53,18 +54,18 @@ function SeedForm({ record, refs, labs, csrfToken, onSaved, onCancel }) {
   return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar análisis de semillas' : 'Nuevo análisis de semillas'}</h2>
     <form onSubmit={save}>
       <div className="bo-pair">
-        <Select id="bo-seed-client" label="Cliente" value={form.clientId} onChange={clientId => set({ clientId })} options={options(refs.clients)}
-          placeholder="Selecciona un cliente" hint="Productor de procedencia de la semilla." />
-        <Select id="bo-seed-crop" label="Cultivo" value={form.cropId} onChange={cropId => set({ cropId })} options={options(refs.crops)}
-          placeholder="Selecciona un cultivo" />
+        <ComboField id="bo-seed-client" label="Cliente" value={form.clientId} onChange={clientId => set({ clientId })} options={options(refs.clients)}
+          placeholder="Busca por nombre o CUIT" hint="Productor de procedencia de la semilla." />
+        <ComboField id="bo-seed-crop" label="Cultivo" value={form.cropId} onChange={cropId => set({ cropId })} options={options(refs.crops)}
+          placeholder="Busca y elige un cultivo" />
         <Field id="bo-seed-variety" label="Variedad o híbrido" optional>
           <input id="bo-seed-variety" type="text" maxLength={200} value={form.variety} onChange={event => set({ variety: event.target.value })} /></Field>
-        <Select id="bo-seed-campaign" label="Campaña" optional value={form.campaignId} onChange={campaignId => set({ campaignId })}
-          options={options(refs.campaigns)} placeholder="Sin indicar" />
+        <ComboField id="bo-seed-campaign" label="Campaña" optional value={form.campaignId} onChange={campaignId => set({ campaignId })}
+          options={options(refs.campaigns)} none="Sin indicar" />
         <Field id="bo-seed-date" label="Fecha de análisis">
           <input id="bo-seed-date" type="date" required value={form.analyzedOn} onChange={event => set({ analyzedOn: event.target.value })} /></Field>
-        <Select id="bo-seed-lab" label="Laboratorio" optional value={form.laboratoryId} onChange={laboratoryId => set({ laboratoryId })}
-          options={options(labs)} placeholder="Sin indicar" hint={labs.length ? undefined : 'Aún no hay laboratorios de semillas en Proveedores.'} />
+        <ComboField id="bo-seed-lab" label="Laboratorio" optional value={form.laboratoryId} onChange={laboratoryId => set({ laboratoryId })}
+          options={options(labs)} none="Sin indicar" hint={labs.length ? undefined : 'Aún no hay laboratorios de semillas en Proveedores.'} />
         <NumberInput id="bo-seed-weight" label="Peso de 1000 semillas (g)" value={form.thousandSeedWeightG}
           onChange={thousandSeedWeightG => set({ thousandSeedWeightG })} />
         <NumberInput id="bo-seed-vigor" label="Vigor (%)" max="100" value={form.vigorPct} onChange={vigorPct => set({ vigorPct })} />
@@ -160,20 +161,27 @@ export default function SeedAnalysesSection({ identity }) {
   const [view, setView] = useState({ mode: 'list' });
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  // S5: the list, the form and the detail wait for their first load and block while they reload.
+  const [loaded, setLoaded] = useState({ refs: false, rows: false });
+  const [refsLoading, trackRefs] = usePending();
+  const [rowsLoading, trackRows] = usePending();
 
-  const loadRefs = useCallback(async () => {
-    try { setRefs(Object.fromEntries(await Promise.all(references.map(async key => [key, await api(key)])))); }
-    catch (cause) { setError(cause.message); }
-    api('providers?kind=laboratorio_semillas').then(list => { setLabs(list); setLabError(''); }).catch(cause => setLabError(cause.message));
-  }, []);
+  const loadRefs = useCallback(() => trackRefs(Promise.all([
+    (async () => {
+      try { setRefs(Object.fromEntries(await Promise.all(references.map(async key => [key, await api(key)])))); }
+      catch (cause) { setError(cause.message); }
+    })(),
+    api('providers?kind=laboratorio_semillas').then(list => { setLabs(list); setLabError(''); }).catch(cause => setLabError(cause.message)),
+  ])).finally(() => setLoaded(current => ({ ...current, refs: true }))), [trackRefs]);
   // Only the latest request updates the list, so a slow earlier filter cannot overwrite a newer one.
-  const loadRows = useCallback(async () => {
+  const loadRows = useCallback(() => trackRows((async () => {
     const current = ++request.current;
     try {
       const list = await api(seedQuery(filters));
       if (current === request.current) { setRows(list); setError(''); }
     } catch (cause) { if (current === request.current) setError(cause.message); }
-  }, [filters]);
+    finally { if (current === request.current) setLoaded(state => ({ ...state, rows: true })); }
+  })()), [filters, trackRows]);
   useEffect(() => { loadRefs(); }, [loadRefs]);
   useEffect(() => { loadRows(); }, [loadRows]);
 
@@ -187,27 +195,30 @@ export default function SeedAnalysesSection({ identity }) {
   const filtered = filters.clientId || filters.cropId || term.trim();
 
   return <>
-    <SectionHeader identity={identity} title="Análisis de semillas" count={view.mode === 'list' ? shown.length : undefined}
+    <SectionHeader identity={identity} title="Análisis de semillas" count={view.mode === 'list' && loaded.rows ? shown.length : undefined}
       description="Calidad de semilla por cultivo y variedad o híbrido según el productor de procedencia, con la calculadora de densidad de siembra." />
     {notice && <p className="bo-notice" role="status">{notice}</p>}
     {error && <p className="bo-error" role="alert">{error}</p>}
     {labError && <p className="bo-warning" role="status">No se pudieron cargar los laboratorios: {labError}</p>}
-    {view.mode === 'form' && <SeedForm key={view.record?.id ?? 'new'} record={view.record} refs={refs} labs={labs} csrfToken={identity.csrfToken}
-      onSaved={saved} onCancel={() => show(view.record ? { mode: 'detail', id: view.record.id } : { mode: 'list' })} />}
-    {view.mode === 'detail' && <SeedDetail key={view.id} id={view.id} refs={refs} labs={labs}
-      onBack={() => show({ mode: 'list' })} onEdit={record => show({ mode: 'form', record })} />}
+    {view.mode !== 'list' && <Busy ready={loaded.refs} busy={refsLoading} label="Cargando clientes, cultivos y laboratorios…">
+      {view.mode === 'form' && <SeedForm key={view.record?.id ?? 'new'} record={view.record} refs={refs} labs={labs} csrfToken={identity.csrfToken}
+        onSaved={saved} onCancel={() => show(view.record ? { mode: 'detail', id: view.record.id } : { mode: 'list' })} />}
+      {view.mode === 'detail' && <SeedDetail key={view.id} id={view.id} refs={refs} labs={labs}
+        onBack={() => show({ mode: 'list' })} onEdit={record => show({ mode: 'form', record })} />}
+    </Busy>}
     {view.mode === 'list' && <section className="bo-list" aria-label="Listado de análisis de semillas">
       <div className="bo-section-head"><h2>Análisis</h2><div>
-        <button type="button" onClick={() => show({ mode: 'form', record: null })}>Nuevo análisis</button>
-        <button type="button" onClick={() => { setNotice(''); loadRows(); loadRefs(); }}>Actualizar</button></div></div>
+        <button type="button" disabled={!loaded.refs || refsLoading} onClick={() => show({ mode: 'form', record: null })}>Nuevo análisis</button>
+        <button type="button" disabled={refsLoading || rowsLoading} onClick={() => { setNotice(''); loadRows(); loadRefs(); }}>Actualizar</button></div></div>
       <div className="bo-filters">
-        <Select id="bo-seed-filter-client" label="Cliente" required={false} value={filters.clientId} options={options(refs.clients)} placeholder="Todos"
+        <ComboField id="bo-seed-filter-client" label="Cliente" required={false} value={filters.clientId} options={options(refs.clients)} none="Todos"
           onChange={clientId => setFilters(current => ({ ...current, clientId }))} />
-        <Select id="bo-seed-filter-crop" label="Cultivo" required={false} value={filters.cropId} options={options(refs.crops)} placeholder="Todos"
+        <ComboField id="bo-seed-filter-crop" label="Cultivo" required={false} value={filters.cropId} options={options(refs.crops)} none="Todos"
           onChange={cropId => setFilters(current => ({ ...current, cropId }))} />
         <Field id="bo-seed-filter-variety" label="Buscar variedad" optional hint={`${shown.length} de ${rows.length}`}>{hintId =>
           <input id="bo-seed-filter-variety" type="search" value={term} aria-describedby={hintId} onChange={event => setTerm(event.target.value)} />}</Field>
       </div>
+      <Busy ready={loaded.rows && loaded.refs} busy={rowsLoading || refsLoading} label="Cargando análisis de semillas…">
       {!shown.length ? <p className="bo-empty">{filtered ? 'Ningún análisis coincide con los filtros o la búsqueda.' : 'Aún no hay análisis de semillas. Crea el primero con “Nuevo análisis”.'}</p> :
         <table className="bo-table"><thead><tr><th>Cultivo y variedad</th><th>Cliente</th><th>Fecha</th><th>PG con curasemilla</th><th>PG sin curasemilla</th><th>P1000</th></tr></thead>
           <tbody>{shown.map(row => <tr key={row.id}>
@@ -218,6 +229,7 @@ export default function SeedAnalysesSection({ identity }) {
             <td data-label="PG sin curasemilla">{percent(row.germinationUntreatedPct) ?? <span className="bo-muted">Sin dato</span>}</td>
             <td data-label="P1000">{row.thousandSeedWeightG == null ? <span className="bo-muted">Sin dato</span> : `${formatNumber(Number(row.thousandSeedWeightG), 2)} g`}</td>
           </tr>)}</tbody></table>}
+      </Busy>
     </section>}
   </>;
 }

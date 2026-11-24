@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, send } from './api.mjs';
-import { Field, optionNodes } from './field.jsx';
+import { ComboField, Field, optionNodes, useFocusAfterRender } from './field.jsx';
+import { Busy, usePending } from './records.jsx';
 import {
   emptySoilAnalysis, formatNumber, newResult, parameterHistory, samplingMethods, soilFromRecord, soilParameters, soilPayload, soilProblem,
   soilUnits, sortSoilAnalyses,
@@ -14,6 +15,7 @@ const nameOf = (rows, id) => rows.find(row => row.id === id)?.name;
 const count = n => `${n} ${n === 1 ? 'resultado' : 'resultados'}`;
 const measure = row => [formatNumber(Number(row.value), 4), row.unit].filter(Boolean).join(' ');
 
+// Native select, only for the fixed sampling methods; campaigns and laboratories use ComboField (S2).
 function Select({ id, label, value, onChange, options, placeholder, optional, hint }) {
   return <Field id={id} label={label} optional={optional} hint={hint}>{hintId =>
     <select id={id} value={value} required={!optional} aria-describedby={hintId} onChange={event => onChange(event.target.value)}>
@@ -37,6 +39,13 @@ function SoilForm({ plot, record, campaigns, labs, csrfToken, onSaved, onCancel 
   const setResult = (key, changes) => set({ results: form.results.map(row => row.key === key ? { ...row, ...changes } : row) });
   const stations = form.samplingMethod === 'estaciones';
   const options = rows => rows.map(row => ({ value: row.id, label: row.name }));
+  const focusLater = useFocusAfterRender();
+  // The new result's first field gets the focus (S3).
+  function addResult() {
+    const row = newResult();
+    set({ results: [...form.results, row] });
+    focusLater(`bo-soil-result-${row.key}-parameter`);
+  }
 
   async function save(event) {
     event.preventDefault();
@@ -55,13 +64,13 @@ function SoilForm({ plot, record, campaigns, labs, csrfToken, onSaved, onCancel 
     {!record && <p className="bo-context">Se registra en el lote {rowLabel('plots', plot)}.</p>}
     <form onSubmit={save}>
       <div className="bo-pair">
-        <Select id="bo-soil-campaign" label="Campaña" value={form.campaignId} onChange={campaignId => set({ campaignId })}
-          options={options(campaigns)} placeholder="Selecciona una campaña" />
+        <ComboField id="bo-soil-campaign" label="Campaña" value={form.campaignId} onChange={campaignId => set({ campaignId })}
+          options={options(campaigns)} placeholder="Busca y elige una campaña" />
         <TextInput id="bo-soil-sampled" label="Fecha de muestreo" type="date" optional={false} value={form.sampledOn}
           onChange={sampledOn => set({ sampledOn })} />
         <TextInput id="bo-soil-analyzed" label="Fecha de análisis" type="date" value={form.analyzedOn} onChange={analyzedOn => set({ analyzedOn })} />
-        <Select id="bo-soil-lab" label="Laboratorio" optional value={form.laboratoryId} onChange={laboratoryId => set({ laboratoryId })}
-          options={options(labs)} placeholder="Sin indicar"
+        <ComboField id="bo-soil-lab" label="Laboratorio" optional value={form.laboratoryId} onChange={laboratoryId => set({ laboratoryId })}
+          options={options(labs)} none="Sin indicar"
           hint={labs.length ? undefined : 'Aún no hay laboratorios de suelos en Proveedores.'} />
         <Select id="bo-soil-method" label="Método de muestreo" value={form.samplingMethod} onChange={samplingMethod => set({ samplingMethod })}
           options={samplingMethods} hint={stations ? 'Cada resultado indica su estación.' : 'Un valor por parámetro para todo el lote.'} />
@@ -94,7 +103,7 @@ function SoilForm({ plot, record, campaigns, labs, csrfToken, onSaved, onCancel 
               aria-label={`Quitar resultado ${index + 1}`}>Quitar</button>
           </li>;
         })}</ol>
-        <button type="button" className="bo-link" onClick={() => set({ results: [...form.results, newResult()] })}>Agregar resultado</button>
+        <button type="button" className="bo-link" onClick={addResult}>Agregar resultado</button>
       </fieldset>
 
       <Field id="bo-soil-notes" label="Observaciones" optional>
@@ -115,20 +124,27 @@ export default function SoilAnalysesPanel({ plot, campaigns, csrfToken }) {
   const [editor, setEditor] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // S5: the list waits for the analyses and laboratories; opening one to edit blocks the list until it arrives.
+  const [loaded, setLoaded] = useState({ rows: false, labs: false });
+  const [opening, setOpening] = useState(false);
+  const [loading, track] = usePending();
 
-  const load = useCallback(async () => {
+  const load = useCallback(() => track((async () => {
     try { setRows(await api(`soil-analyses?plotId=${encodeURIComponent(plot.id)}`)); setError(''); }
     catch (cause) { setError(cause.message); }
-  }, [plot.id]);
+    finally { setLoaded(current => ({ ...current, rows: true })); }
+  })()), [plot.id, track]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    api('providers?kind=laboratorio_suelos').then(list => { setLabs(list); setLabError(''); }).catch(cause => setLabError(cause.message));
-  }, []);
+    track(api('providers?kind=laboratorio_suelos').then(list => { setLabs(list); setLabError(''); }).catch(cause => setLabError(cause.message)))
+      .finally(() => setLoaded(current => ({ ...current, labs: true })));
+  }, [track]);
 
   async function edit(row) {
-    setError(''); setNotice('');
+    setError(''); setNotice(''); setOpening(true);
     try { setEditor({ record: await api(`soil-analyses/${row.id}`) }); }
     catch (cause) { setError(cause.message); }
+    finally { setOpening(false); }
   }
   function saved() {
     setNotice(editor?.record ? 'Análisis de suelo actualizado.' : 'Análisis de suelo creado.');
@@ -138,17 +154,19 @@ export default function SoilAnalysesPanel({ plot, campaigns, csrfToken }) {
   const analyses = sortSoilAnalyses(rows);
   const history = parameterHistory(analyses);
   const campaignName = id => nameOf(campaigns, id) ?? 'Sin referencia';
+  const ready = loaded.rows && loaded.labs;
   return <>
     {editor && <SoilForm key={editor.record?.id ?? 'new'} plot={plot} record={editor.record} campaigns={campaigns} labs={labs}
       csrfToken={csrfToken} onSaved={saved} onCancel={() => setEditor(null)} />}
     <section className="bo-list" aria-label="Listado de análisis de suelo">
       <div className="bo-section-head"><h2>Análisis de suelo</h2><div>
-        <button type="button" onClick={() => { setEditor({ record: null }); setNotice(''); setError(''); }}>Nuevo análisis</button>
-        <button type="button" onClick={() => { setNotice(''); load(); }}>Actualizar</button></div></div>
+        <button type="button" disabled={!ready || loading || opening} onClick={() => { setEditor({ record: null }); setNotice(''); setError(''); }}>Nuevo análisis</button>
+        <button type="button" disabled={loading} onClick={() => { setNotice(''); load(); }}>Actualizar</button></div></div>
       <p className="bo-list-note">Todos los análisis del lote, de todas las campañas, del más reciente al más antiguo.</p>
       {notice && <p className="bo-notice" role="status">{notice}</p>}
       {error && <p className="bo-error" role="alert">{error}</p>}
       {labError && <p className="bo-warning" role="status">No se pudieron cargar los laboratorios: {labError}</p>}
+      <Busy ready={ready} busy={loading || opening} label="Cargando análisis de suelo…">
       {!analyses.length ? <p className="bo-empty">Este lote aún no tiene análisis de suelo.</p> :
         <table className="bo-table"><thead><tr><th>Campaña</th><th>Muestreo</th><th>Análisis</th><th>Laboratorio</th><th>Método</th><th>Resultados</th>
           <th><span className="bo-sr">Acciones</span></th></tr></thead>
@@ -167,6 +185,7 @@ export default function SoilAnalysesPanel({ plot, campaigns, csrfToken }) {
                 aria-label={`Editar análisis de suelo del ${displayDate(row.sampledOn)}`}>Editar</button></td>
             </tr>;
           })}</tbody></table>}
+      </Busy>
     </section>
     {history.length > 0 && <section className="bo-list" aria-label="Historial por parámetro">
       <h2>Historial por parámetro</h2>

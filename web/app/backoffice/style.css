@@ -49,7 +49,7 @@
 .bo-plot-on{border-color:#5f9c90;background:#f1f7f3}
 .bo-total{margin:0;font-size:14px}
 .bo-lines{list-style:none;margin:0;padding:0;display:grid;gap:12px}
-.bo-line{display:grid;grid-template-columns:minmax(120px,1fr) minmax(160px,1.5fr) minmax(100px,.8fr) minmax(60px,auto) minmax(90px,auto) auto;gap:14px;align-items:end;border-top:1px solid #d7e0da;padding-top:12px}
+.bo-line{display:grid;grid-template-columns:minmax(180px,2fr) minmax(100px,.8fr) minmax(60px,auto) minmax(90px,auto) auto;gap:14px;align-items:end;border-top:1px solid #d7e0da;padding-top:12px}
 .bo-line>.bo-warning{grid-column:1/-1}
 .bo-readout{display:grid;gap:10px;min-width:0}
 .bo-readout span{font-size:13px;font-weight:700}
@@ -68,7 +68,7 @@
 .bo-status-emitida{background:#e3eef5;color:#24506b}
 .bo-status-realizada{background:#e1efe7;color:#1d5049}
 .bo-status-cancelada{background:#f3e3dd;color:#813c24}
-@media(max-width:950px){.bo-line{grid-template-columns:repeat(2,minmax(0,1fr))}.bo-line>.bo-field:nth-child(2){grid-column:1/-1}}
+@media(max-width:950px){.bo-line{grid-template-columns:repeat(2,minmax(0,1fr))}.bo-line>.bo-field:first-child{grid-column:1/-1}}
 @media(max-width:560px){.bo-line{grid-template-columns:1fr;border:1px solid #d7e0da;padding:14px;background:white}.bo-line>*{grid-column:1/-1}
 .bo-group{padding:14px}.bo-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .bo-table tr{display:grid;gap:4px;border-top:1px solid #d7e0da;padding:10px 0}.bo-table td{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px;border:0;padding:2px 0}
@@ -142,3 +142,36 @@
 @media(min-width:951px){.bo-side{position:sticky;top:24px;max-height:calc(100vh - 48px);overflow:auto;padding:3px}.bo-side .bo-editor{position:static;max-height:none;overflow:visible}}
 @media(max-width:560px){.bo-inline-form{grid-template-columns:1fr}.bo-filters-single{grid-template-columns:1fr}.bo-quote-line{border:1px solid var(--brand-line-soft);padding:14px;background:var(--brand-paper)}
 .bo-table-scroll{overflow:visible;padding:0}.bo-compare tbody th,.bo-compare tfoot th{display:block;border:0;padding:2px 0 6px}.bo-compare td.bo-cheapest{padding:6px 8px}}
+/* S1: room for accented capitals (Ó, Á) between the kicker and the page title. */
+.bo-main h1,.bo-login h1{line-height:1.15;padding-top:.04em}
+.bo-kicker{margin:0 0 14px}
+/* S4: on desktop the menu stays fixed to the viewport; the nav scrolls on its own so "Cerrar sesión" is always visible. */
+@media(min-width:951px){.bo-sidebar{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;gap:28px}
+.bo-sidebar nav{flex:1 1 auto;min-height:0;overflow-y:auto;align-content:start;padding:3px;margin:-3px;overscroll-behavior:contain}
+.bo-sidebar>.bo-mark,.bo-sidebar>p,.bo-logout{flex:none}}
+/* S5: loading state (records.jsx Loading and Busy). A reloading block stays in view but inert under the message. */
+.bo-loading{display:flex;align-items:center;gap:10px;margin:0 0 18px;padding:13px 16px;background:var(--brand-surface);border:1px solid var(--brand-line);border-left:3px solid var(--brand-primary);color:var(--brand-ink);font-size:14px;line-height:1.4}
+.bo-loading::before{content:'';flex:none;width:14px;height:14px;border-radius:50%;border:2px solid var(--brand-line);border-top-color:var(--brand-primary);animation:bo-spin .8s linear infinite}
+@keyframes bo-spin{to{transform:rotate(360deg)}}
+.bo-busy-zone{position:relative;min-width:0}
+.bo-busy-zone>.bo-loading{position:absolute;z-index:30;top:12px;left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100% - 24px);box-shadow:0 8px 24px color-mix(in srgb,var(--brand-ink) 16%,transparent)}
+.bo-busy-zone>[aria-busy=true]{opacity:.5;pointer-events:none}
+@media(prefers-reduced-motion:reduce){.bo-loading::before{animation:none}}
+/* S2: entity combobox (combobox.jsx): one search field with its listbox popup. */
+.bo-combobox{position:relative;min-width:0}
+.bo-combobox::after{content:'';position:absolute;right:14px;top:50%;margin-top:-2px;border:5px solid transparent;border-top-color:var(--brand-muted);pointer-events:none}
+.bo-app .bo-combobox>input[role=combobox]{width:100%;margin:0;padding:12px 36px 12px 12px;border:1px solid var(--brand-line);border-radius:3px;background:var(--brand-paper);color:var(--brand-ink);font:inherit;text-overflow:ellipsis}
+.bo-app .bo-combobox>input[role=combobox]:disabled{background:var(--brand-surface);color:var(--brand-muted);cursor:not-allowed}
+.bo-combobox-popup{position:absolute;z-index:40;left:0;right:0;top:calc(100% + 4px);background:var(--brand-paper);border:1px solid var(--brand-line);border-radius:3px;box-shadow:0 10px 28px color-mix(in srgb,var(--brand-ink) 18%,transparent)}
+.bo-combobox-popup[hidden]{display:none}
+.bo-app .bo-combobox [role=listbox]{list-style:none;margin:0;padding:4px 0;max-height:min(320px,50vh);overflow-y:auto;overscroll-behavior:contain}
+.bo-app .bo-combobox [role=listbox]:empty{display:none}
+.bo-app .bo-combobox [role=none]{list-style:none;margin:0;padding:0}
+.bo-app .bo-combobox li{display:block;border:0;margin:0;padding:0}
+.bo-app .bo-combobox li[role=option]{display:grid;gap:2px;padding:10px 12px;cursor:pointer;font-size:14px;line-height:1.35;color:var(--brand-ink);overflow-wrap:anywhere}
+.bo-app .bo-combobox li[role=option] small{display:block;margin:0;font-size:12px;color:var(--brand-muted)}
+.bo-app .bo-combobox li[role=option].bo-active{background:var(--brand-tint);box-shadow:inset 3px 0 0 var(--brand-primary)}
+.bo-app .bo-combobox .bo-chosen-option>span{font-weight:700}
+.bo-app .bo-combobox .bo-none>span{color:var(--brand-muted)}
+.bo-combobox-group{display:block;padding:10px 12px 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-muted)}
+.bo-app .bo-combobox-note{margin:0;padding:10px 12px;font-size:12px;line-height:1.5;color:var(--brand-muted);border-top:1px solid var(--brand-line-soft)}

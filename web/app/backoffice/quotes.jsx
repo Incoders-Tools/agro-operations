@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
-import { Field } from './field.jsx';
+import { ComboField, Field, useFocusAfterRender } from './field.jsx';
 import { InputPicker, Select } from './providers.jsx';
-import { RecordDetail, SectionHeader } from './records.jsx';
+import { Busy, RecordDetail, SectionHeader, usePending } from './records.jsx';
 import {
   comparisonPayload, comparisonQuery, comparisonStatuses, comparisonTable, currencies, decidePayload, emptyQuote, formatMoney, newQuoteLine,
   quoteFromRecord, quoteLineTotal, quotePayload, quoteTotal,
@@ -13,7 +13,7 @@ import { optionLabel } from './schema.mjs';
 import { displayDate, formatAmount, todayIso } from './work-orders.mjs';
 
 const nameOf = (rows, id) => rows.find(row => row.id === id)?.name ?? 'Sin referencia';
-const options = rows => rows.map(row => ({ value: row.id, label: row.name }));
+const options = rows => rows.map(row => ({ value: row.id, label: row.name, detail: row.taxId ? `CUIT ${row.taxId}` : undefined }));
 const lineModes = [{ value: 'input', label: 'Insumo del catálogo' }, { value: 'text', label: 'Texto libre' }];
 const Status = ({ status }) => <span className={`bo-status bo-status-${status}`}>{optionLabel(comparisonStatuses, status)}</span>;
 
@@ -39,8 +39,8 @@ function ComparisonForm({ record, clients, clientId, csrfToken, onSaved, onCance
     <form onSubmit={save}>
       <div className="bo-pair">
         {record ? <Field id="bo-cmp-client" label="Cliente"><output id="bo-cmp-client">{nameOf(clients, record.clientId)}</output></Field>
-          : <Select id="bo-cmp-client" label="Cliente" value={form.clientId} onChange={value => set({ clientId: value })} options={options(clients)}
-            placeholder="Selecciona un cliente" />}
+          : <ComboField id="bo-cmp-client" label="Cliente" value={form.clientId} onChange={value => set({ clientId: value })} options={options(clients)}
+            placeholder="Busca por nombre o CUIT" />}
         <Field id="bo-cmp-title" label="Título" hint="Qué se cotiza, por ejemplo “Herbicidas barbecho 2026”.">{hintId =>
           <input id="bo-cmp-title" type="text" required maxLength={200} value={form.title} aria-describedby={hintId}
             onChange={event => set({ title: event.target.value })} />}</Field>
@@ -62,6 +62,13 @@ function QuoteForm({ comparison, record, providers, inputs, csrfToken, onSaved, 
   const set = changes => setForm(current => ({ ...current, ...changes }));
   const setLine = (key, changes) => setForm(current => ({ ...current, lines: current.lines.map(line => line.key === key ? { ...line, ...changes } : line) }));
   const unitOf = id => inputs.find(input => input.id === id)?.unit ?? '';
+  const focusLater = useFocusAfterRender();
+  // A new line starts as a catalog input, whose search field gets the focus (S3).
+  function addLine() {
+    const line = newQuoteLine();
+    set({ lines: [...form.lines, line] });
+    focusLater(line.mode === 'input' ? `bo-quote-line-${line.key}-input` : `bo-quote-line-${line.key}-mode`);
+  }
   // Suppliers of inputs, plus the quote's current provider if its kind changed since.
   const choices = providers.filter(provider => provider.kind === 'insumos' || provider.id === record?.providerId);
 
@@ -78,8 +85,8 @@ function QuoteForm({ comparison, record, providers, inputs, csrfToken, onSaved, 
   return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar presupuesto' : 'Nuevo presupuesto'}</h2>
     <form onSubmit={save}>
       <div className="bo-pair">
-        <Select id="bo-quote-provider" label="Proveedor" value={form.providerId} onChange={providerId => set({ providerId })} options={options(choices)}
-          placeholder="Selecciona un proveedor" hint={choices.length ? 'Proveedores de tipo Insumos.' : 'Aún no hay proveedores de tipo Insumos.'} />
+        <ComboField id="bo-quote-provider" label="Proveedor" value={form.providerId} onChange={providerId => set({ providerId })} options={options(choices)}
+          placeholder="Busca por nombre o CUIT" hint={choices.length ? 'Proveedores de tipo Insumos.' : 'Aún no hay proveedores de tipo Insumos.'} />
         <Field id="bo-quote-received" label="Fecha de recepción">
           <input id="bo-quote-received" type="date" required value={form.receivedOn} onChange={event => set({ receivedOn: event.target.value })} /></Field>
         <Select id="bo-quote-currency" label="Moneda" value={form.currency} onChange={currency => set({ currency })} options={currencies}
@@ -116,7 +123,7 @@ function QuoteForm({ comparison, record, providers, inputs, csrfToken, onSaved, 
               onClick={() => set({ lines: form.lines.filter(row => row.key !== line.key) })} aria-label={`Quitar producto ${index + 1}`}>Quitar</button>
           </li>;
         })}</ol>
-        <div className="bo-section-head"><button type="button" className="bo-link" onClick={() => set({ lines: [...form.lines, newQuoteLine()] })}>Agregar producto</button>
+        <div className="bo-section-head"><button type="button" className="bo-link" onClick={addLine}>Agregar producto</button>
           <p className="bo-total" aria-live="polite">Total del presupuesto: <strong>{formatMoney(quoteTotal(form.lines), form.currency)}</strong></p></div>
       </fieldset>
       {error && <p className="bo-error" role="alert">{error}</p>}
@@ -173,8 +180,8 @@ function DecideForm({ detail, providers, csrfToken, onSaved }) {
   }
   return <section className="bo-editor bo-analysis-form" aria-label="Decidir"><h2>Decidir</h2>
     <form onSubmit={decide}>
-      <Select id="bo-decide-quote" label="Presupuesto elegido" value={form.quoteId} onChange={quoteId => setForm(current => ({ ...current, quoteId }))}
-        placeholder="Selecciona un presupuesto" options={quotes.map(quote => ({
+      <ComboField id="bo-decide-quote" label="Presupuesto elegido" value={form.quoteId} onChange={quoteId => setForm(current => ({ ...current, quoteId }))}
+        placeholder="Busca por proveedor" options={quotes.map(quote => ({
           value: quote.id, label: `${nameOf(providers, quote.providerId)} · ${displayDate(quote.receivedOn)} · ${formatMoney(quote.total, quote.currency)}`,
         }))} />
       <Field id="bo-decide-reason" label="Motivo de la elección" hint="Por qué conviene: precio, plazo, entrega, financiación.">{hintId =>
@@ -192,7 +199,9 @@ function ComparisonDetail({ id, refs, csrfToken, onBack, onChanged }) {
   // editing: null | { kind: 'comparison' } | { kind: 'quote', record }
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
-  const load = useCallback(() => api(`quote-comparisons/${id}`).then(found => { setDetail(found); setError(''); }).catch(cause => setError(cause.message)), [id]);
+  const [loading, track] = usePending();
+  const load = useCallback(() => track(api(`quote-comparisons/${id}`).then(found => { setDetail(found); setError(''); }).catch(cause => setError(cause.message))),
+    [id, track]);
   useEffect(() => { load(); }, [load]);
 
   function changed(message) { setEditing(null); setNotice(message); load(); onChanged(); }
@@ -215,9 +224,10 @@ function ComparisonDetail({ id, refs, csrfToken, onBack, onChanged }) {
     <div className="bo-section-head">{back}<div>
       {open && <button type="button" onClick={() => { setNotice(''); setEditing({ kind: 'comparison' }); }}>Editar</button>}
       {!open && <button type="button" disabled={busy} onClick={reopen}>{busy ? 'Reabriendo…' : 'Reabrir'}</button>}
-      <button type="button" onClick={() => { setNotice(''); load(); }}>Actualizar</button></div></div>
+      <button type="button" disabled={loading} onClick={() => { setNotice(''); load(); }}>Actualizar</button></div></div>
     {notice && <p className="bo-notice" role="status">{notice}</p>}
     {error && <p className="bo-error" role="alert">{error}</p>}
+    <Busy busy={loading} label="Cargando comparación…" className="bo-stack">
     <RecordDetail title={comparison.title} items={[
       ['Cliente', nameOf(refs.clients, comparison.clientId)], ['Fecha de solicitud', displayDate(comparison.requestedOn)],
       ['Estado', <Status status={comparison.status} />],
@@ -248,6 +258,7 @@ function ComparisonDetail({ id, refs, csrfToken, onBack, onChanged }) {
       <ComparisonTable detail={detail} providers={refs.providers} /></section>
     {open && quotes.length > 0 && <DecideForm key={comparison.revision} detail={detail} providers={refs.providers} csrfToken={csrfToken}
       onSaved={() => changed('Comparación decidida.')} />}
+    </Busy>
   </div>;
 }
 
@@ -284,42 +295,51 @@ export default function QuoteComparisonsSection({ identity, initial = {} }) {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const request = useRef(0);
+  // S5: the list, the new form and the detail wait for their first load and block while they reload.
+  const [loaded, setLoaded] = useState({ refs: false, rows: false });
+  const [refsLoading, trackRefs] = usePending();
+  const [rowsLoading, trackRows] = usePending();
 
-  const loadRefs = useCallback(async () => {
+  const loadRefs = useCallback(() => trackRefs((async () => {
     try { setRefs(Object.fromEntries(await Promise.all(references.map(async key => [key, await api(key)])))); }
     catch (cause) { setError(cause.message); }
-  }, []);
+    finally { setLoaded(current => ({ ...current, refs: true })); }
+  })()), [trackRefs]);
   // Only the latest request updates the list, so a slow earlier filter cannot overwrite a newer one.
-  const loadRows = useCallback(async () => {
+  const loadRows = useCallback(() => trackRows((async () => {
     const current = ++request.current;
     try {
       const list = await api(comparisonQuery(filters));
       if (current === request.current) { setRows(list); setError(''); }
     } catch (cause) { if (current === request.current) setError(cause.message); }
-  }, [filters]);
+    finally { if (current === request.current) setLoaded(state => ({ ...state, rows: true })); }
+  })()), [filters, trackRows]);
   useEffect(() => { loadRefs(); }, [loadRefs]);
   useEffect(() => { loadRows(); }, [loadRows]);
 
   const show = next => { setView(next); setNotice(''); setError(''); };
   return <>
-    <SectionHeader identity={identity} title="Comparación de presupuestos" count={view.mode === 'list' ? rows.length : undefined}
+    <SectionHeader identity={identity} title="Comparación de presupuestos" count={view.mode === 'list' && loaded.rows ? rows.length : undefined}
       description="Presupuestos de distintos proveedores para un cliente: compara precios por producto, elige uno y deja el motivo." />
     {notice && <p className="bo-notice" role="status">{notice}</p>}
     {error && <p className="bo-error" role="alert">{error}</p>}
-    {view.mode === 'new' && <ComparisonForm clients={refs.clients} clientId={filters.clientId} csrfToken={identity.csrfToken}
-      onCancel={() => show({ mode: 'list' })} onSaved={saved => { loadRows(); show({ mode: 'detail', id: saved.id }); setNotice('Comparación creada. Agrega los presupuestos recibidos.'); }} />}
-    {view.mode === 'detail' && <ComparisonDetail key={view.id} id={view.id} refs={refs} csrfToken={identity.csrfToken}
-      onBack={() => show({ mode: 'list' })} onChanged={loadRows} />}
+    {view.mode !== 'list' && <Busy ready={loaded.refs} busy={refsLoading} label="Cargando clientes, proveedores e insumos…">
+      {view.mode === 'new' && <ComparisonForm clients={refs.clients} clientId={filters.clientId} csrfToken={identity.csrfToken}
+        onCancel={() => show({ mode: 'list' })} onSaved={saved => { loadRows(); show({ mode: 'detail', id: saved.id }); setNotice('Comparación creada. Agrega los presupuestos recibidos.'); }} />}
+      {view.mode === 'detail' && <ComparisonDetail key={view.id} id={view.id} refs={refs} csrfToken={identity.csrfToken}
+        onBack={() => show({ mode: 'list' })} onChanged={loadRows} />}
+    </Busy>}
     {view.mode === 'list' && <section className="bo-list" aria-label="Listado de comparaciones de presupuestos">
       <div className="bo-section-head"><h2>Comparaciones</h2><div>
-        <button type="button" onClick={() => show({ mode: 'new' })}>Nueva comparación</button>
-        <button type="button" onClick={() => { setNotice(''); loadRows(); loadRefs(); }}>Actualizar</button></div></div>
+        <button type="button" disabled={!loaded.refs || refsLoading} onClick={() => show({ mode: 'new' })}>Nueva comparación</button>
+        <button type="button" disabled={refsLoading || rowsLoading} onClick={() => { setNotice(''); loadRows(); loadRefs(); }}>Actualizar</button></div></div>
       <div className="bo-filters">
-        <Select id="bo-cmp-filter-client" label="Cliente" required={false} value={filters.clientId} options={options(refs.clients)} placeholder="Todos"
+        <ComboField id="bo-cmp-filter-client" label="Cliente" required={false} value={filters.clientId} options={options(refs.clients)} none="Todos"
           onChange={clientId => setFilters(current => ({ ...current, clientId }))} />
         <Select id="bo-cmp-filter-status" label="Estado" required={false} value={filters.status} options={comparisonStatuses} placeholder="Todos"
           onChange={status => setFilters(current => ({ ...current, status }))} />
       </div>
+      <Busy ready={loaded.rows && loaded.refs} busy={rowsLoading || refsLoading} label="Cargando comparaciones…">
       {!rows.length ? <p className="bo-empty">{filters.clientId || filters.status ? 'Ninguna comparación coincide con los filtros.' : 'Aún no hay comparaciones. Crea la primera con “Nueva comparación”.'}</p> :
         <table className="bo-table"><thead><tr><th>Título</th><th>Cliente</th><th>Fecha de solicitud</th><th>Estado</th></tr></thead>
           <tbody>{rows.map(row => <tr key={row.id}>
@@ -327,6 +347,7 @@ export default function QuoteComparisonsSection({ identity, initial = {} }) {
             <td data-label="Cliente">{nameOf(refs.clients, row.clientId)}</td>
             <td data-label="Fecha de solicitud">{displayDate(row.requestedOn)}</td>
             <td data-label="Estado"><Status status={row.status} /></td></tr>)}</tbody></table>}
+      </Busy>
     </section>}
   </>;
 }

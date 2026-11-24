@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.mjs';
-import { RecordDetail, RecordForm, RecordList, SectionHeader } from './records.jsx';
+import { Busy, RecordDetail, RecordForm, RecordList, SectionHeader, usePending } from './records.jsx';
 import SoilAnalysesPanel from './soil-analyses.jsx';
 import { ClientProviderLinks, providerLabel } from './providers.jsx';
 import { ClientComparisons } from './quotes.jsx';
@@ -21,26 +21,34 @@ export default function ClientsSection({ identity, navigate }) {
   const [totals, setTotals] = useState({ fields: [], plots: [] });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // Which level finished its first load (S5): the catalogs, and the client, field and plot whose children are listed.
+  const [loaded, setLoaded] = useState({ base: false, clientId: null, fieldId: null, plotId: null });
+  const [loading, track] = usePending();
 
-  const load = useCallback(async (entity, query) => {
+  const load = useCallback((entity, query) => track((async () => {
     try {
       const list = await api(query ? `${entity}?${query}` : entity);
       setRows(current => ({ ...current, [entity]: list }));
     } catch (cause) { setError(cause.message); }
-  }, []);
-  const loadTotals = useCallback(async () => {
+  })()), [track]);
+  const loadTotals = useCallback(() => track((async () => {
     try {
       const [fields, plots] = await Promise.all([api('fields'), api('plots')]);
       setTotals({ fields, plots });
     } catch (cause) { setError(cause.message); }
-  }, []);
-  useEffect(() => { load('clients'); load('crops'); load('campaigns'); load('providers'); loadTotals(); }, [load, loadTotals]);
+  })()), [track]);
+  const settle = (key, id) => () => setLoaded(current => ({ ...current, [key]: id }));
+  useEffect(() => {
+    Promise.all([load('clients'), load('crops'), load('campaigns'), load('providers'), loadTotals()]).then(settle('base', true));
+  }, [load, loadTotals]);
   useEffect(() => {
     if (!path.clientId) return;
-    load('commercial-firms', `clientId=${path.clientId}`); load('fields', `clientId=${path.clientId}`);
+    Promise.all([load('commercial-firms', `clientId=${path.clientId}`), load('fields', `clientId=${path.clientId}`)])
+      .then(settle('clientId', path.clientId));
   }, [path.clientId, load]);
-  useEffect(() => { if (path.fieldId) load('plots', `fieldId=${path.fieldId}`); }, [path.fieldId, load]);
-  useEffect(() => { if (path.plotId) load('plot-crops', `plotId=${path.plotId}`); }, [path.plotId, load]);
+  useEffect(() => { if (path.fieldId) load('plots', `fieldId=${path.fieldId}`).then(settle('fieldId', path.fieldId)); }, [path.fieldId, load]);
+  useEffect(() => { if (path.plotId) load('plot-crops', `plotId=${path.plotId}`).then(settle('plotId', path.plotId)); }, [path.plotId, load]);
+  const ready = loaded.base && ['clientId', 'fieldId', 'plotId'].every(key => !path[key] || loaded[key] === path[key]);
 
   const client = rows.clients.find(row => row.id === path.clientId);
   const field = path.clientId && rows.fields.find(row => row.id === path.fieldId && row.clientId === path.clientId);
@@ -79,7 +87,7 @@ export default function ClientsSection({ identity, navigate }) {
   const optionSets = {
     crops: rows.crops.map(row => ({ value: row.id, label: row.name })),
     campaigns: rows.campaigns.map(row => ({ value: row.id, label: row.name })),
-    clients: rows.clients.map(row => ({ value: row.id, label: row.name })),
+    clients: rows.clients.map(row => ({ value: row.id, label: row.name, detail: row.taxId ? `CUIT ${row.taxId}` : undefined })),
     fieldsByClient: fieldMoveGroups(rows.clients, totals.fields),
   };
   const missing = target.entity === 'plot-crops' && !target.record && (!rows.crops.length || !rows.campaigns.length)
@@ -94,7 +102,7 @@ export default function ClientsSection({ identity, navigate }) {
     nameOf(rows.campaigns, b.campaignId).localeCompare(nameOf(rows.campaigns, a.campaignId)) || a.position - b.position);
 
   return <>
-    <SectionHeader identity={identity} title="Clientes" count={level ? undefined : rows.clients.length}
+    <SectionHeader identity={identity} title="Clientes" count={level || !loaded.base ? undefined : rows.clients.length}
       description="Aquí administras cada cliente con sus firmas comerciales y sus campos; cada campo, con sus lotes; cada lote, con sus cultivos por campaña y sus análisis de suelo." />
     <nav className="bo-breadcrumb" aria-label="Ubicación"><ol>
       <li><button type="button" onClick={() => go({ clientId: null, fieldId: null, plotId: null })} aria-current={!level ? 'page' : undefined}>Clientes</button></li>
@@ -104,7 +112,9 @@ export default function ClientsSection({ identity, navigate }) {
     </ol></nav>
     {notice && <p className="bo-notice" role="status">{notice}</p>}
     {error && <p className="bo-error" role="alert">{error}</p>}
-    <div className="bo-columns"><div className="bo-stack">
+    <Busy ready={ready} busy={loading} className="bo-columns"
+      label={path.plotId ? 'Cargando lote…' : path.fieldId ? 'Cargando campo…' : path.clientId ? 'Cargando cliente…' : 'Cargando clientes…'}>
+      <div className="bo-stack">
       {!level && <RecordList entity="clients" rows={rows.clients} searchable onRefresh={refresh('clients')}
         onSelect={row => go({ clientId: row.id, fieldId: null, plotId: null })} selectLabel="Ver campos y lotes" onEdit={row => open('clients', row)}
         detail={row => [clientCounts(totals.fields, totals.plots, row.id), entities.clients.detail(row)].filter(Boolean).join(' · ')}
@@ -148,6 +158,6 @@ export default function ClientsSection({ identity, navigate }) {
       <RecordForm key={`${target.entity}-${target.record?.id ?? 'new'}-${formKey}`} entity={target.entity} record={target.record}
         parent={parent} optionSets={optionSets} csrfToken={identity.csrfToken} missing={missing} context={context}
         onCancel={editor ? () => { setEditor(null); setFormKey(key => key + 1); } : undefined} onSaved={result => saved(target.entity, target.record, result)} />
-    </div>
+    </Busy>
   </>;
 }

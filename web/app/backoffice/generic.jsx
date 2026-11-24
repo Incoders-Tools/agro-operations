@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, send } from './api.mjs';
-import { Field } from './field.jsx';
-import { RecordList, SectionHeader } from './records.jsx';
+import { ComboField, Field } from './field.jsx';
+import { Busy, RecordList, SectionHeader, usePending } from './records.jsx';
 import { rowLabel } from './schema.mjs';
 
 // Planning and provenance sections that keep the earlier generic editor.
@@ -44,14 +44,17 @@ export default function GenericSection({ group, identity }) {
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loading, track] = usePending();
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(() => track((async () => {
     setError('');
     try {
       const keys = [group, ...meta.parents.map(parent => parent.group)];
       setRows(Object.fromEntries(await Promise.all(keys.map(async key => [key, await api(key)]))));
     } catch (cause) { setError(cause.message); }
-  }, [group, meta]);
+    finally { setLoaded(true); }
+  })()), [group, meta, track]);
   useEffect(() => { refresh(); }, [refresh]);
 
   function edit(row) {
@@ -94,20 +97,18 @@ export default function GenericSection({ group, identity }) {
   const text = (id, label, key, props = {}) => <Field id={id} label={label}>
     <input id={id} value={form[key]} onChange={event => setForm({ ...form, [key]: event.target.value })} required {...props} /></Field>;
   return <>
-    <SectionHeader identity={identity} title={meta.title} count={list.length} />
+    <SectionHeader identity={identity} title={meta.title} count={loaded ? list.length : undefined} />
     {error && <p className="bo-error" role="alert">{error}</p>}
-    <div className="bo-columns">
+    <Busy ready={loaded} busy={loading} label={`Cargando ${meta.title.toLowerCase()}…`} className="bo-columns">
       <RecordList entity={group} title="Registros" rows={list} onRefresh={refresh} label={meta.primaryLabel} selectedId={editing?.id}
         detail={meta.secondaryLabel ?? (row => `${meta.parents.map(parent => parentName(parent, row[parent.key])).join(' · ')} · Revisión ${row.revision}`)}
         onEdit={meta.readOnly ? undefined : edit} empty={`Aún no hay ${meta.title.toLowerCase()}. Crea el primer registro desde el formulario.`} />
       {!meta.readOnly && <section className="bo-editor"><h2>{editing ? `Editar ${meta.singular}` : `${meta.feminine ? 'Nueva' : 'Nuevo'} ${meta.singular}`}</h2>
         <form onSubmit={save}>
-          {!editing && meta.parents.map(parent => <Field key={parent.key} id={`bo-parent-${parent.key}`} label={parent.label}>
-            <select id={`bo-parent-${parent.key}`} value={form.parents[parent.key] ?? ''} required
-              onChange={event => setForm({ ...form, parents: { ...form.parents, [parent.key]: event.target.value } })}>
-              <option value="">Selecciona un registro</option>
-              {(rows[parent.group] ?? []).map(option => <option key={option.id} value={option.id}>{labelOf(parent.group, option)}</option>)}
-            </select></Field>)}
+          {!editing && meta.parents.map(parent => <ComboField key={parent.key} id={`bo-parent-${parent.key}`} label={parent.label}
+            value={form.parents[parent.key] ?? ''} placeholder="Busca y elige un registro"
+            options={(rows[parent.group] ?? []).map(option => ({ value: option.id, label: labelOf(parent.group, option) }))}
+            onChange={value => setForm(current => ({ ...current, parents: { ...current.parents, [parent.key]: value } }))} />)}
           {meta.area && text('bo-area', 'Superficie (ha)', 'area', { type: 'number', min: '0.0001', max: '99999999.9999', step: '0.0001' })}
           {meta.stage && <>
             <Field id="bo-stage" label="Etapa del ciclo"><select id="bo-stage" value={form.stage} onChange={event => setForm({ ...form, stage: event.target.value })}>
@@ -124,6 +125,6 @@ export default function GenericSection({ group, identity }) {
             {editing && <button type="button" onClick={() => { setEditing(null); setForm(emptyForm); }}>Cancelar</button>}</div>
           {!editing && !parentsReady && <p>Primero crea los registros relacionados: {meta.parents.map(parent => parent.label.toLowerCase()).join(', ')}.</p>}
         </form></section>}
-    </div>
+    </Busy>
   </>;
 }

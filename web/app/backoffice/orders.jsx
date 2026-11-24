@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
-import { Field, optionNodes } from './field.jsx';
-import { RecordDetail, SectionHeader } from './records.jsx';
-import { fieldPlotCount, optionLabel, rowLabel, searchRecords } from './schema.mjs';
+import { ComboField, Field, optionNodes, useFocusAfterRender } from './field.jsx';
+import { Busy, Loading, RecordDetail, SectionHeader, usePending } from './records.jsx';
+import { fieldPlotCount, optionLabel, rowLabel } from './schema.mjs';
 import {
   clientFirms, displayDate, doseRange, emptyOrder, exceedsPlot, fieldNames, laborLabel, laborOptionGroups, lineTotal, newLine, orderFromRecord,
   orderLabel, orderPayload, orderQuery, plotCropPrefill, plotGroups, statuses, workedTotal,
@@ -25,9 +25,10 @@ function Readout({ label, children }) {
   return <div className="bo-readout"><span>{label}</span><output>{children}</output></div>;
 }
 
-function Select({ id, label, value, onChange, options, placeholder, optional, hint, required = !optional, disabled }) {
+// Native select, only for the fixed status list; entities use ComboField (S2).
+function Select({ id, label, value, onChange, options, placeholder, optional, hint, required = !optional }) {
   return <Field id={id} label={label} optional={optional} hint={hint}>{hintId =>
-    <select id={id} value={value} required={required} disabled={disabled} aria-describedby={hintId} onChange={event => onChange(event.target.value)}>
+    <select id={id} value={value} required={required} aria-describedby={hintId} onChange={event => onChange(event.target.value)}>
       <option value="">{placeholder}</option>
       {optionNodes(options)}
     </select>}</Field>;
@@ -44,11 +45,12 @@ function doseWarning(range, input) {
 // The form starts from the client (S4); its plots may come from any of its fields (S3).
 function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
   const [form, setForm] = useState(() => record ? orderFromRecord(record) : emptyOrder());
-  const [clientTerm, setClientTerm] = useState('');
   const [plotTerm, setPlotTerm] = useState('');
   const [clientPlots, setClientPlots] = useState([]);
+  const [plotsLoading, setPlotsLoading] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const focusLater = useFocusAfterRender();
   const firm = byId(refs['commercial-firms'], form.firmId);
   // Editing keeps the firm, so the client follows from it.
   const clientId = record ? firm?.clientId ?? '' : form.clientId;
@@ -59,9 +61,11 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
 
   useEffect(() => {
     let active = true;
-    if (!fieldKey) { setClientPlots([]); return undefined; }
+    if (!fieldKey) { setClientPlots([]); setPlotsLoading(false); return undefined; }
+    setPlotsLoading(true);
     Promise.all(fieldKey.split(',').map(fieldId => api(`plots?fieldId=${fieldId}`)))
-      .then(lists => { if (active) setClientPlots(lists.flat()); }).catch(cause => { if (active) setError(cause.message); });
+      .then(lists => { if (active) setClientPlots(lists.flat()); }).catch(cause => { if (active) setError(cause.message); })
+      .finally(() => { if (active) setPlotsLoading(false); });
     return () => { active = false; };
   }, [fieldKey]);
 
@@ -86,6 +90,12 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
   }
   const setWorked = (plotId, worked) => set({ plots: form.plots.map(row => row.plotId === plotId ? { ...row, worked } : row) });
   const setLine = (key, changes) => set({ lines: form.lines.map(line => line.key === key ? { ...line, ...changes } : line) });
+  // The new line's input search gets the focus (S3).
+  function addLine() {
+    const line = newLine();
+    set({ lines: [...form.lines, line] });
+    focusLater(`bo-wo-line-${line.key}-input`);
+  }
 
   async function save(event) {
     event.preventDefault();
@@ -100,9 +110,9 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
     finally { setBusy(false); }
   }
 
-  const options = (rows, label = row => row.name) => rows.map(row => ({ value: row.id, label: label(row) }));
-  const foundClients = searchRecords('clients', refs.clients, clientTerm);
-  const clientOptions = options(client && !foundClients.includes(client) ? [client, ...foundClients] : foundClients);
+  const options = (rows, label = row => row.name, detail = row => row.taxId ? `CUIT ${row.taxId}` : undefined) =>
+    rows.map(row => ({ value: row.id, label: label(row), detail: detail(row) }));
+  const inputOptions = options(refs.inputs, row => rowLabel('inputs', row), row => [row.activeIngredient, row.unit].filter(Boolean).join(' · '));
   const { firms } = clientFirms(refs['commercial-firms'], clientId);
   const groups = plotGroups(fields, clientPlots, plotTerm);
   const shownPlots = groups.reduce((sum, group) => sum + group.plots.length, 0);
@@ -115,24 +125,23 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
     <form onSubmit={save}>
       {record ? <p className="bo-context">Firma {firm?.name ?? 'Sin referencia'} · cliente {client?.name ?? 'Sin referencia'}. La firma y el número no cambian.</p>
         : <div className="bo-pair">
-          <Field id="bo-wo-client-search" label="Buscar cliente" optional hint={`${foundClients.length} de ${refs.clients.length}`}>{hintId =>
-            <input id="bo-wo-client-search" type="search" value={clientTerm} aria-describedby={hintId} onChange={event => setClientTerm(event.target.value)} />}</Field>
-          <Select id="bo-wo-client" label="Cliente" value={clientId} onChange={chooseClient} options={clientOptions}
-            placeholder={foundClients.length ? 'Selecciona un cliente' : 'Sin coincidencias'} />
-          <Select id="bo-wo-firm" label="Firma comercial" value={form.firmId} disabled={!client} onChange={firmId => set({ firmId })}
-            options={options(firms)} placeholder={client ? 'Selecciona una firma' : 'Primero elige el cliente'} hint={firmHint} />
+          <ComboField id="bo-wo-client" label="Cliente" value={clientId} onChange={chooseClient} options={options(refs.clients)}
+            placeholder="Busca por nombre o CUIT" hint={`${refs.clients.length} clientes. Escribe para filtrar y elige con las flechas y Enter.`} />
+          <ComboField id="bo-wo-firm" label="Firma comercial" value={form.firmId} disabled={!client} onChange={firmId => set({ firmId })}
+            options={options(firms)} placeholder={client ? 'Busca y elige una firma' : 'Primero elige el cliente'} hint={firmHint} />
         </div>}
       <Field id="bo-wo-date" label="Fecha">
         <input id="bo-wo-date" type="date" value={form.issuedOn} required onChange={event => set({ issuedOn: event.target.value })} /></Field>
-      <Select id="bo-wo-labor" label="Labor" value={form.laborTypeId} onChange={laborTypeId => set({ laborTypeId })}
-        options={laborOptionGroups(refs['labor-types'])} placeholder="Selecciona una labor" />
-      <Select id="bo-wo-stage" label="Etapa" optional value={form.stageId} onChange={stageId => set({ stageId })}
-        options={options(refs.stages)} placeholder="Sin indicar" />
-      <Select id="bo-wo-contractor" label="Contratista" value={form.contractorId} onChange={contractorId => set({ contractorId })}
-        options={options(refs.contractors)} placeholder="Selecciona un contratista" />
+      <ComboField id="bo-wo-labor" label="Labor" value={form.laborTypeId} onChange={laborTypeId => set({ laborTypeId })}
+        options={laborOptionGroups(refs['labor-types'])} placeholder="Busca por nombre o abreviatura" />
+      <ComboField id="bo-wo-stage" label="Etapa" optional value={form.stageId} onChange={stageId => set({ stageId })}
+        options={options(refs.stages)} none="Sin indicar" />
+      <ComboField id="bo-wo-contractor" label="Contratista" value={form.contractorId} onChange={contractorId => set({ contractorId })}
+        options={options(refs.contractors)} placeholder="Busca y elige un contratista" />
       <fieldset className="bo-group"><legend>Campos y lotes</legend>
         {!client ? <p className="bo-muted">Elige un cliente para ver sus campos y lotes.</p>
-          : !fields.length ? <p className="bo-muted">Este cliente aún no tiene campos. Cárgalos en Clientes.</p> : <>
+          : !fields.length ? <p className="bo-muted">Este cliente aún no tiene campos. Cárgalos en Clientes.</p>
+          : plotsLoading ? <Loading label="Cargando campos y lotes…" /> : <>
             <Field id="bo-wo-plot-filter" label="Filtrar campos y lotes" optional
               hint={`${shownPlots} de ${clientPlots.length} lotes a la vista · ${form.plots.length} seleccionados. Busca por campo, lote o código.`}>{hintId =>
                 <input id="bo-wo-plot-filter" type="search" value={plotTerm} aria-describedby={hintId} onChange={event => setPlotTerm(event.target.value)} />}</Field>
@@ -158,11 +167,11 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
         <p className="bo-total" role="status">Total a trabajar: <strong>{total} ha</strong> en {form.plots.length} {form.plots.length === 1 ? 'lote' : 'lotes'}</p>
       </fieldset>
 
-      <Select id="bo-wo-campaign" label="Campaña" optional value={form.campaignId} options={options(refs.campaigns)} placeholder="Sin indicar"
+      <ComboField id="bo-wo-campaign" label="Campaña" optional value={form.campaignId} options={options(refs.campaigns)} none="Sin indicar"
         onChange={campaignId => { set({ campaignId }); prefill({ ...form, campaignId }); }}
         hint="Con una campaña y un solo lote, el cultivo se completa con el primer cultivo del lote." />
-      <Select id="bo-wo-crop" label="Cultivo" optional value={form.cropId} onChange={cropId => set({ cropId })}
-        options={options(refs.crops)} placeholder="Sin indicar" />
+      <ComboField id="bo-wo-crop" label="Cultivo" optional value={form.cropId} onChange={cropId => set({ cropId })}
+        options={options(refs.crops)} none="Sin indicar" />
       <Field id="bo-wo-variety" label="Variedad o híbrido" optional>
         <input id="bo-wo-variety" type="text" maxLength={200} value={form.variety} onChange={event => set({ variety: event.target.value })} /></Field>
 
@@ -170,16 +179,12 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
         {!form.lines.length && <p className="bo-muted">Sin insumos.</p>}
         <ol className="bo-lines">{form.lines.map((line, index) => {
           const input = byId(refs.inputs, line.inputId);
-          const found = searchRecords('inputs', refs.inputs, line.term);
-          const shown = input && !found.includes(input) ? [input, ...found] : found;
           const lineTotalValue = input ? lineTotal(line.dose, total) : null;
           const warning = doseWarning(input && doseRange(line.dose, input), input);
           const id = `bo-wo-line-${line.key}`;
           return <li key={line.key} className="bo-line">
-            <Field id={`${id}-search`} label="Buscar insumo" optional>
-              <input id={`${id}-search`} type="search" value={line.term} onChange={event => setLine(line.key, { term: event.target.value })} /></Field>
-            <Select id={`${id}-input`} label={`Insumo ${index + 1}`} value={line.inputId} onChange={inputId => setLine(line.key, { inputId })}
-              options={options(shown, row => rowLabel('inputs', row))} placeholder={found.length ? 'Selecciona un insumo' : 'Sin coincidencias'} />
+            <ComboField id={`${id}-input`} label={`Insumo ${index + 1}`} value={line.inputId}
+              onChange={inputId => setLine(line.key, { inputId })} options={inputOptions} placeholder="Busca por nombre o principio activo" />
             <Field id={`${id}-dose`} label="Dosis por ha">
               <input id={`${id}-dose`} type="number" min="0.0001" max="99999999.9999" step="0.0001" required={Boolean(line.inputId)} value={line.dose}
                 onChange={event => setLine(line.key, { dose: event.target.value })} /></Field>
@@ -190,7 +195,7 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
             {warning && <p className="bo-warning" role="status">⚠ {warning}</p>}
           </li>;
         })}</ol>
-        <button type="button" className="bo-link" onClick={() => set({ lines: [...form.lines, newLine()] })}>Agregar insumo</button>
+        <button type="button" className="bo-link" onClick={addLine}>Agregar insumo</button>
       </fieldset>
 
       <Field id="bo-wo-notes" label="Observaciones" optional>
@@ -215,10 +220,11 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
 
   const load = useCallback(async () => {
     try {
+      // The order shows once its plots are in too, so the plot table never lists them as missing.
       const loaded = await api(`work-orders/${id}`);
-      setOrder(loaded);
       const fieldIds = [...new Set(loaded.plots.map(row => row.fieldId))];
       setPlots((await Promise.all(fieldIds.map(fieldId => api(`plots?fieldId=${fieldId}`)))).flat());
+      setOrder(loaded);
     } catch (cause) { setError(cause.message); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
@@ -298,19 +304,25 @@ export default function WorkOrdersSection({ identity }) {
   const [view, setView] = useState({ mode: 'list' });
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  // S5: the list and the form wait for their first load and block while they reload.
+  const [loaded, setLoaded] = useState({ refs: false, orders: false });
+  const [refsLoading, trackRefs] = usePending();
+  const [ordersLoading, trackOrders] = usePending();
 
-  const loadRefs = useCallback(async () => {
+  const loadRefs = useCallback(() => trackRefs((async () => {
     try { setRefs(Object.fromEntries(await Promise.all(references.map(async key => [key, await api(key)])))); }
     catch (cause) { setError(cause.message); }
-  }, []);
+    finally { setLoaded(current => ({ ...current, refs: true })); }
+  })()), [trackRefs]);
   // Only the latest request updates the list, so a slow earlier search cannot overwrite a newer one.
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(() => trackOrders((async () => {
     const current = ++request.current;
     try {
       const rows = await api(orderQuery(filters));
       if (current === request.current) { setOrders(rows); setError(''); }
     } catch (cause) { if (current === request.current) setError(cause.message); }
-  }, [filters]);
+    finally { if (current === request.current) setLoaded(state => ({ ...state, orders: true })); }
+  })()), [filters, trackOrders]);
   useEffect(() => { loadRefs(); }, [loadRefs]);
   useEffect(() => { loadOrders(); }, [loadOrders]);
   // The search is sent 300 ms after the last keystroke.
@@ -327,28 +339,31 @@ export default function WorkOrdersSection({ identity }) {
   }
   const show = next => { setView(next); setNotice(''); setError(''); };
 
-  const firmOptions = refs['commercial-firms'].map(row => ({ value: row.id, label: row.name }));
+  const firmOptions = refs['commercial-firms'].map(row => ({ value: row.id, label: row.name, detail: row.taxId ? `CUIT ${row.taxId}` : undefined }));
+  const refsReady = loaded.refs && !refsLoading;
   return <>
-    <SectionHeader identity={identity} title="Órdenes de trabajo" count={view.mode === 'list' ? orders.length : undefined}
+    <SectionHeader identity={identity} title="Órdenes de trabajo" count={view.mode === 'list' && loaded.orders ? orders.length : undefined}
       description="Cada orden se numera por firma comercial. Una orden cancelada conserva su número y sigue en el listado." />
     {notice && <p className="bo-notice" role="status">{notice}</p>}
     {error && <p className="bo-error" role="alert">{error}</p>}
-    {view.mode === 'form' && <OrderForm key={view.record?.id ?? 'new'} record={view.record} refs={refs} csrfToken={identity.csrfToken}
-      onSaved={saved} onCancel={() => show(view.record ? { mode: 'detail', id: view.record.id } : { mode: 'list' })} />}
+    {view.mode === 'form' && <Busy ready={loaded.refs} busy={refsLoading} label="Cargando catálogos de la orden…">
+      <OrderForm key={view.record?.id ?? 'new'} record={view.record} refs={refs} csrfToken={identity.csrfToken}
+        onSaved={saved} onCancel={() => show(view.record ? { mode: 'detail', id: view.record.id } : { mode: 'list' })} /></Busy>}
     {view.mode === 'detail' && <OrderDetail key={view.id} id={view.id} refs={refs} csrfToken={identity.csrfToken}
       onBack={() => show({ mode: 'list' })} onEdit={record => show({ mode: 'form', record })} onChanged={loadOrders} />}
     {view.mode === 'list' && <section className="bo-list" aria-label="Listado de órdenes de trabajo">
       <div className="bo-section-head"><h2>Órdenes</h2><div>
-        <button type="button" onClick={() => show({ mode: 'form', record: null })}>Nueva orden</button>
-        <button type="button" onClick={() => { setNotice(''); loadOrders(); loadRefs(); }}>Actualizar</button></div></div>
+        <button type="button" disabled={!refsReady} onClick={() => show({ mode: 'form', record: null })}>Nueva orden</button>
+        <button type="button" disabled={refsLoading || ordersLoading} onClick={() => { setNotice(''); loadOrders(); loadRefs(); }}>Actualizar</button></div></div>
       <div className="bo-filters">
         <Field id="bo-wo-filter-q" label="Buscar" optional hint="Número, firma, campo, lote o código de lote.">{hintId =>
           <input id="bo-wo-filter-q" type="search" value={term} aria-describedby={hintId} onChange={event => setTerm(event.target.value)} />}</Field>
-        <Select id="bo-wo-filter-firm" label="Firma" required={false} value={filters.firmId} options={firmOptions} placeholder="Todas"
+        <ComboField id="bo-wo-filter-firm" label="Firma" required={false} value={filters.firmId} options={firmOptions} none="Todas"
           onChange={firmId => setFilters(current => ({ ...current, firmId }))} />
         <Select id="bo-wo-filter-status" label="Estado" required={false} value={filters.status} options={statuses} placeholder="Todos"
           onChange={status => setFilters(current => ({ ...current, status }))} />
       </div>
+      <Busy ready={loaded.orders && loaded.refs} busy={ordersLoading || refsLoading} label="Cargando órdenes…">
       {!orders.length ? <p className="bo-empty">{filters.firmId || filters.status || filters.q.trim() ? 'Ninguna orden coincide con la búsqueda o los filtros.' : 'Aún no hay órdenes de trabajo. Emite la primera con “Nueva orden”.'}</p> :
         <table className="bo-table bo-orders"><thead><tr><th>Nº</th><th>Fecha</th><th>Firma</th><th>Labor</th><th>Campos</th><th>Estado</th><th><span className="bo-sr">Acciones</span></th></tr></thead>
           <tbody>{orders.map(order => {
@@ -363,6 +378,7 @@ export default function WorkOrdersSection({ identity }) {
               <td data-label="PDF"><PrintLink id={order.id} label={`Imprimir o guardar en PDF la orden ${orderLabel(firm, order.number)}`} /></td>
             </tr>;
           })}</tbody></table>}
+      </Busy>
     </section>}
   </>;
 }

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.mjs';
 import { InputPrices } from './providers.jsx';
-import { RecordForm, RecordList, SectionHeader } from './records.jsx';
+import { Busy, RecordForm, RecordList, SectionHeader, usePending } from './records.jsx';
 import { entities, websiteHref } from './schema.mjs';
 
 const descriptions = {
@@ -30,11 +30,13 @@ export default function CatalogSection({ entity, identity }) {
   const [editing, setEditing] = useState(null);
   const [formKey, setFormKey] = useState(0);
   const [error, setError] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  const [loading, track] = usePending();
 
   const load = useCallback(() => {
     setError('');
-    return api(entity).then(setRows).catch(cause => setError(cause.message));
-  }, [entity]);
+    return track(api(entity).then(setRows).catch(cause => setError(cause.message))).finally(() => setLoaded(true));
+  }, [entity, track]);
   useEffect(() => { load(); }, [load]);
 
   function reset() { setEditing(null); setFormKey(key => key + 1); }
@@ -42,13 +44,13 @@ export default function CatalogSection({ entity, identity }) {
     onCancel={editing ? reset : undefined} onSaved={() => { reset(); load(); }} />;
   // An edited input also shows its latest reference price per provider (S3), under the form.
   return <>
-    <SectionHeader identity={identity} title={meta.title} description={descriptions[entity]} count={rows.length} />
+    <SectionHeader identity={identity} title={meta.title} description={descriptions[entity]} count={loaded ? rows.length : undefined} />
     {error && <p className="bo-error" role="alert">{error}</p>}
-    <div className="bo-columns">
+    <Busy ready={loaded} busy={loading} label={`Cargando ${meta.title.toLowerCase()}…`} className="bo-columns">
       <RecordList entity={entity} rows={meta.sort ? meta.sort(rows) : rows} searchable={Boolean(meta.search)} onRefresh={load} detail={details[entity]}
         onEdit={row => { setEditing(row); setFormKey(key => key + 1); }} selectedId={editing?.id}
         empty={`Aún no hay ${meta.title.toLowerCase()}. Crea el primer registro desde el formulario.`} />
       {entity === 'inputs' && editing ? <div className="bo-stack bo-side">{form}<InputPrices key={editing.id} input={editing} /></div> : form}
-    </div>
+    </Busy>
   </>;
 }

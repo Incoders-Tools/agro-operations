@@ -2,17 +2,18 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, send } from './api.mjs';
-import { Field, optionNodes } from './field.jsx';
-import { RecordDetail, RecordForm, RecordList, SectionHeader } from './records.jsx';
+import { ComboField, Field, optionNodes } from './field.jsx';
+import { Busy, RecordDetail, RecordForm, RecordList, SectionHeader, usePending } from './records.jsx';
 import {
   currencies, emptyPrice, filterProviders, formatMoney, latestPricesByProvider, priceFromRecord, pricePayload, providerKinds, sortPrices,
 } from './providers.mjs';
-import { contactRoles, entities, optionLabel, searchRecords, websiteHref } from './schema.mjs';
+import { contactRoles, entities, optionLabel, websiteHref } from './schema.mjs';
 import { displayDate } from './work-orders.mjs';
 
 const nameOf = (rows, id) => rows.find(row => row.id === id)?.name ?? 'Sin referencia';
 export const providerLabel = provider => `${provider.name} · ${optionLabel(providerKinds, provider.kind)}`;
 
+// Native select, only for small fixed lists (kind, currency, line mode, status); entities use ComboField (S2).
 export function Select({ id, label, value, onChange, options, placeholder, optional, hint, required = !optional }) {
   return <Field id={id} label={label} optional={optional} hint={hint}>{hintId =>
     <select id={id} value={value} required={required} aria-describedby={hintId} onChange={event => onChange(event.target.value)}>
@@ -21,18 +22,10 @@ export function Select({ id, label, value, onChange, options, placeholder, optio
     </select>}</Field>;
 }
 
-/** A catalog input chosen from a select narrowed by a search box; the chosen input stays listed while it is filtered out. */
+/** A catalog input chosen in one search field (S2), by commercial name or active ingredient. */
 export function InputPicker({ id, label, inputs, value, onChange }) {
-  const [term, setTerm] = useState('');
-  const found = searchRecords('inputs', inputs, term);
-  const chosen = inputs.find(input => input.id === value);
-  const shown = chosen && !found.includes(chosen) ? [chosen, ...found] : found;
-  return <>
-    <Field id={`${id}-search`} label={`Buscar ${label.toLowerCase()}`} optional>
-      <input id={`${id}-search`} type="search" value={term} onChange={event => setTerm(event.target.value)} /></Field>
-    <Select id={id} label={label} value={value} onChange={onChange} placeholder={shown.length ? 'Selecciona un insumo' : 'Sin coincidencias'}
-      options={shown.map(input => ({ value: input.id, label: `${input.commercialName} (${input.unit})` }))} />
-  </>;
+  return <ComboField id={id} label={label} value={value} onChange={onChange} placeholder="Busca por nombre o principio activo"
+    options={inputs.map(input => ({ value: input.id, label: `${input.commercialName} (${input.unit})`, detail: input.activeIngredient ?? undefined }))} />;
 }
 
 /**
@@ -46,7 +39,10 @@ export function ClientProviderLinks({ side, ownerId, options, csrfToken, title, 
   const [choice, setChoice] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const load = useCallback(() => api(`client-providers?${own}=${ownerId}`).then(setLinks).catch(cause => setError(cause.message)), [own, ownerId]);
+  const [loaded, setLoaded] = useState(false);
+  const [loading, track] = usePending();
+  const load = useCallback(() => track(api(`client-providers?${own}=${ownerId}`).then(setLinks).catch(cause => setError(cause.message)))
+    .finally(() => setLoaded(true)), [own, ownerId, track]);
   useEffect(() => { load(); }, [load]);
 
   const linked = new Set(links.map(link => link[other]));
@@ -65,17 +61,20 @@ export function ClientProviderLinks({ side, ownerId, options, csrfToken, title, 
   };
   const id = `bo-links-${side}`;
   return <section className="bo-list" aria-label={title}>
-    <div className="bo-section-head"><h2>{title}</h2><div><button type="button" onClick={() => { setError(''); load(); }}>Actualizar</button></div></div>
+    <div className="bo-section-head"><h2>{title}</h2><div><button type="button" disabled={loading} onClick={() => { setError(''); load(); }}>Actualizar</button></div></div>
     {error && <p className="bo-error" role="alert">{error}</p>}
+    <Busy ready={loaded} busy={loading} label="Cargando vínculos…">
     {links.length === 0 ? <p className="bo-empty">{empty}</p> : <ul>{[...links].sort((a, b) => label(a[other]).localeCompare(label(b[other]), 'es'))
       .map(link => <li key={link.id}><div className="bo-row"><strong>{label(link[other])}</strong></div>
         <button type="button" disabled={busy} onClick={() => change(() => send(`client-providers/${link.id}`, 'DELETE', undefined, csrfToken))}
           aria-label={`Quitar ${label(link[other])}`}>Quitar</button></li>)}</ul>}
     <form className="bo-inline-form" onSubmit={add}>
-      <Select id={id} label={side === 'client' ? 'Agregar proveedor' : 'Agregar cliente'} value={choice} onChange={setChoice}
-        placeholder={available.length ? 'Selecciona' : 'No quedan registros para vincular'} options={available.map(row => ({ value: row.id, label: describe(row) }))} />
+      <ComboField id={id} label={side === 'client' ? 'Agregar proveedor' : 'Agregar cliente'} value={choice} onChange={setChoice}
+        disabled={!available.length} placeholder={available.length ? 'Busca y elige' : 'No quedan registros para vincular'}
+        options={available.map(row => ({ value: row.id, label: describe(row), detail: row.taxId ? `CUIT ${row.taxId}` : undefined }))} />
       <div className="bo-actions"><button type="submit" disabled={busy || !choice}>{busy ? 'Guardando…' : 'Vincular'}</button></div>
     </form>
+    </Busy>
   </section>;
 }
 
@@ -128,15 +127,23 @@ function PricesPanel({ provider, csrfToken }) {
   const [inputs, setInputs] = useState([]);
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
-  const load = useCallback(() => api(`provider-prices?providerId=${provider.id}`).then(setPrices).catch(cause => setError(cause.message)), [provider.id]);
-  useEffect(() => { load(); api('inputs').then(setInputs).catch(cause => setError(cause.message)); }, [load]);
+  const [loaded, setLoaded] = useState({ prices: false, inputs: false });
+  const [loading, track] = usePending();
+  const load = useCallback(() => track(api(`provider-prices?providerId=${provider.id}`).then(setPrices).catch(cause => setError(cause.message)))
+    .finally(() => setLoaded(current => ({ ...current, prices: true }))), [provider.id, track]);
+  useEffect(() => {
+    load();
+    track(api('inputs').then(setInputs).catch(cause => setError(cause.message))).finally(() => setLoaded(current => ({ ...current, inputs: true })));
+  }, [load, track]);
+  const ready = loaded.prices && loaded.inputs;
   const inputName = id => inputs.find(input => input.id === id)?.commercialName ?? 'Sin referencia';
   return <>
     <section className="bo-list" aria-label="Precios de referencia">
       <div className="bo-section-head"><h2>Precios de referencia</h2><div>
-        <button type="button" onClick={() => setEditing({ record: null })}>Nuevo precio</button>
-        <button type="button" onClick={() => { setError(''); load(); }}>Actualizar</button></div></div>
+        <button type="button" disabled={!ready || loading} onClick={() => setEditing({ record: null })}>Nuevo precio</button>
+        <button type="button" disabled={loading} onClick={() => { setError(''); load(); }}>Actualizar</button></div></div>
       {error && <p className="bo-error" role="alert">{error}</p>}
+      <Busy ready={ready} busy={loading} label="Cargando precios…">
       {!prices.length ? <p className="bo-empty">Este proveedor aún no tiene precios de referencia.</p> :
         <table className="bo-table"><thead><tr><th>Insumo</th><th>Precio</th><th>Unidad</th><th>Vigente desde</th><th>Notas</th><th><span className="bo-sr">Acciones</span></th></tr></thead>
           <tbody>{sortPrices(prices).map(price => <tr key={price.id}>
@@ -148,6 +155,7 @@ function PricesPanel({ provider, csrfToken }) {
             <td data-label="Acciones"><button type="button" className="bo-link" onClick={() => setEditing({ record: price })}
               aria-label={`Editar precio de ${inputName(price.inputId)} del ${displayDate(price.validOn)}`}>Editar</button></td>
           </tr>)}</tbody></table>}
+      </Busy>
     </section>
     {editing && <PriceForm key={editing.record?.id ?? 'new'} provider={provider} record={editing.record} inputs={inputs} csrfToken={csrfToken}
       onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
@@ -197,12 +205,21 @@ export default function ProvidersSection({ identity }) {
   const [editor, setEditor] = useState(null);
   const [formKey, setFormKey] = useState(0);
   const [error, setError] = useState('');
+  // S5: the list waits for providers and clients; a provider's detail waits for its contacts.
+  const [loaded, setLoaded] = useState({ base: false, providerId: null });
+  const [loading, track] = usePending();
 
-  const load = useCallback(() => api('providers').then(setRows).catch(cause => setError(cause.message)), []);
+  const load = useCallback(() => track(api('providers').then(setRows).catch(cause => setError(cause.message))), [track]);
   const loadContacts = useCallback(() => providerId
-    ? api(`provider-contacts?providerId=${providerId}`).then(setContacts).catch(cause => setError(cause.message)) : null, [providerId]);
-  useEffect(() => { load(); api('clients').then(setClients).catch(cause => setError(cause.message)); }, [load]);
+    ? track(api(`provider-contacts?providerId=${providerId}`).then(setContacts).catch(cause => setError(cause.message)))
+      .finally(() => setLoaded(current => ({ ...current, providerId })))
+    : null, [providerId, track]);
+  useEffect(() => {
+    Promise.all([load(), track(api('clients').then(setClients).catch(cause => setError(cause.message)))])
+      .finally(() => setLoaded(current => ({ ...current, base: true })));
+  }, [load, track]);
   useEffect(() => { setContacts([]); loadContacts(); }, [loadContacts]);
+  const ready = loaded.base && (!providerId || loaded.providerId === providerId);
 
   const provider = rows.find(row => row.id === providerId);
   function open(entity, record = null) { setEditor({ entity, record }); setFormKey(key => key + 1); setError(''); }
@@ -217,13 +234,13 @@ export default function ProvidersSection({ identity }) {
   const sortedContacts = [...contacts].sort((a, b) => roleOrder.get(a.role) - roleOrder.get(b.role) || a.name.localeCompare(b.name, 'es'));
 
   return <>
-    <SectionHeader identity={identity} title="Proveedores" count={provider ? undefined : shown.length}
+    <SectionHeader identity={identity} title="Proveedores" count={provider || !loaded.base ? undefined : shown.length}
       description="Firmas donde los clientes compran insumos y proveedores de servicios: laboratorios de suelos y semillas, plataformas virtuales y otros. Los contratistas siguen en su propio catálogo." />
     {provider && <nav className="bo-breadcrumb" aria-label="Ubicación"><ol>
       <li><button type="button" onClick={() => go(null)}>Proveedores</button></li>
       <li><button type="button" aria-current="page" onClick={() => go(provider.id)}>{provider.name}</button></li></ol></nav>}
     {error && <p className="bo-error" role="alert">{error}</p>}
-    <div className="bo-columns"><div className="bo-stack">
+    <Busy ready={ready} busy={loading} label={providerId ? 'Cargando proveedor…' : 'Cargando proveedores…'} className="bo-columns"><div className="bo-stack">
       {!provider && <>
         <div className="bo-filters bo-filters-single">
           <Select id="bo-provider-kind" label="Tipo" required={false} value={kind} onChange={setKind} placeholder="Todos los tipos" options={providerKinds} />
@@ -249,6 +266,6 @@ export default function ProvidersSection({ identity }) {
         parent={{ providerId }} csrfToken={identity.csrfToken}
         context={target.entity === 'provider-contacts' && !target.record ? `Se crea en el proveedor ${provider?.name}.` : undefined}
         onCancel={editor ? () => { setEditor(null); setFormKey(key => key + 1); } : undefined} onSaved={saved} />
-    </div>
+    </Busy>
   </>;
 }
