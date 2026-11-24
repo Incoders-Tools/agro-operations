@@ -10,6 +10,9 @@ const conflicts = {
   'Stale revision': stale,
   'Work order is not editable': 'Esta orden ya no se puede editar.',
   'Duplicate number': 'Otra orden tomó ese número. Actualiza e intenta de nuevo.',
+  'Duplicate link': 'Ese proveedor ya está vinculado a este cliente.',
+  'Comparison is not open': 'Esta comparación ya está decidida. Reábrela para cambiarla.',
+  'Comparison is not decided': 'Esta comparación ya está abierta. Actualiza la vista.',
 };
 
 const required = {
@@ -25,6 +28,12 @@ const required = {
   'Sampled on': 'La fecha de muestreo es obligatoria.',
   'Analyzed on': 'La fecha de análisis es obligatoria.',
   Parameter: 'Cada resultado necesita su parámetro.',
+  Provider: 'Elige un proveedor.',
+  Input: 'Elige un insumo.',
+  'Valid on': 'Indica desde cuándo rige el precio.',
+  'Received on': 'Indica la fecha de recepción del presupuesto.',
+  'Requested on': 'Indica la fecha de solicitud.',
+  Title: 'El título es obligatorio.',
 };
 
 const validations = {
@@ -56,7 +65,17 @@ const validations = {
   'Laboratory must be a soil laboratory': 'Elige un laboratorio de suelos.',
   'Laboratory must be a seed laboratory': 'Elige un laboratorio de semillas.',
   'Map link must be a single address without spaces': 'El enlace al shape o KML no puede tener espacios.',
+  // Providers, prices and quote comparisons (S3, S4). The contact role matches exactly, ahead of the plot crop "Role must be one of".
+  'Role must be one of: ventas, tecnico, otro': 'Elige el rol del contacto: Ventas, Técnico u Otro.',
+  'Currency must be ARS or USD': 'Elige la moneda: ARS o USD.',
+  'Price must be positive and fit numeric(14,4)': 'El precio debe ser mayor que cero y tener hasta 4 decimales.',
+  'Quantity must be positive': 'La cantidad de cada línea debe ser mayor que cero.',
+  'Unit price must be zero or positive': 'El precio unitario debe ser cero o positivo.',
+  'Each line needs an input or a product': 'Cada línea necesita un insumo o un producto.',
 };
+
+// The same API text can mean different things per request: "Reason is required" cancels an order or decides a comparison.
+const byPath = [[/^quote-comparisons\/[^/]+\/decide$/, { 'Reason is required': 'Indica el motivo de la elección.' }]];
 
 // Messages that list the accepted values end with that list, so they match by prefix.
 const choices = [
@@ -65,13 +84,16 @@ const choices = [
   ['Category must be one of', 'La categoría no es válida.'],
   ['Stage must be', 'Elige una etapa válida.'],
   ['Status must be one of', 'Elige un estado válido.'],
+  ['Kind must be one of', 'Elige un tipo de proveedor válido.'],
 ];
 
 // A firm's next work order number must exceed its highest issued one, which the message names.
 const nextNumber = /^Next number must be greater than (\d+)$/;
 
-function validationMessage(text) {
+function validationMessage(text, path) {
   if (typeof text !== 'string') return generic;
+  const specific = path && byPath.find(([pattern]) => pattern.test(path))?.[1][text];
+  if (specific) return specific;
   if (validations[text]) return validations[text];
   const issued = nextNumber.exec(text)?.[1];
   if (issued) return `El próximo número debe ser mayor que ${issued}.`;
@@ -80,14 +102,14 @@ function validationMessage(text) {
   return choices.find(([prefix]) => text.startsWith(prefix))?.[1] ?? generic;
 }
 
-export function errorMessage(status, body, { login = false } = {}) {
+export function errorMessage(status, body, { login = false, path } = {}) {
   const text = body && typeof body === 'object' ? body.error : undefined;
   if (status === 401) return login ? 'Contraseña incorrecta. Inténtalo de nuevo.' : 'La sesión terminó. Ingresa de nuevo.';
   if (status === 403) return 'No se pudo validar la solicitud. Actualiza la sesión.';
   if (status === 409) return conflicts[text] ?? stale;
   if (status === 404) return 'El registro relacionado ya no existe. Actualiza los listados.';
   if (status >= 500) return 'La API privada no responde. Inicia el servidor local.';
-  if (status === 400) return validationMessage(text);
+  if (status === 400) return validationMessage(text, path);
   return generic;
 }
 
@@ -97,7 +119,7 @@ export async function api(path, options = {}) {
   const response = await fetch(`/api/v1/${path}`, { cache: 'no-store', credentials: 'same-origin', ...options });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new Error(errorMessage(response.status, body, { login: path === 'session' && options.method === 'POST' }));
+    throw new Error(errorMessage(response.status, body, { login: path === 'session' && options.method === 'POST', path }));
   }
   return response.status === 204 ? null : response.json();
 }

@@ -4,13 +4,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.mjs';
 import { RecordDetail, RecordForm, RecordList, SectionHeader } from './records.jsx';
 import SoilAnalysesPanel from './soil-analyses.jsx';
+import { ClientProviderLinks, providerLabel } from './providers.jsx';
+import { ClientComparisons } from './quotes.jsx';
 import { clientCounts, entities, fieldMoveGroups, fieldPlotCount, moveNotice, optionLabel, plotCropDetail, rowLabel, tenures } from './schema.mjs';
 
 const children = { clients: 'fields', fields: 'plots', plots: 'plot-crops' };
 
 // Client -> fields -> plots -> crops per campaign (S4). Children are always created inside the selected parent.
-export default function ClientsSection({ identity }) {
-  const [rows, setRows] = useState({ clients: [], 'commercial-firms': [], fields: [], plots: [], 'plot-crops': [], crops: [], campaigns: [] });
+export default function ClientsSection({ identity, navigate }) {
+  const [rows, setRows] = useState({ clients: [], 'commercial-firms': [], fields: [], plots: [], 'plot-crops': [], crops: [], campaigns: [], providers: [] });
   const [path, setPath] = useState({ clientId: null, fieldId: null, plotId: null });
   // editor: { entity, record } for an explicit edit or "new" target; null shows the default "new child" form.
   const [editor, setEditor] = useState(null);
@@ -32,7 +34,7 @@ export default function ClientsSection({ identity }) {
       setTotals({ fields, plots });
     } catch (cause) { setError(cause.message); }
   }, []);
-  useEffect(() => { load('clients'); load('crops'); load('campaigns'); loadTotals(); }, [load, loadTotals]);
+  useEffect(() => { load('clients'); load('crops'); load('campaigns'); load('providers'); loadTotals(); }, [load, loadTotals]);
   useEffect(() => {
     if (!path.clientId) return;
     load('commercial-firms', `clientId=${path.clientId}`); load('fields', `clientId=${path.clientId}`);
@@ -120,6 +122,9 @@ export default function ClientsSection({ identity }) {
           detail={row => [entities.fields.detail(row), fieldPlotCount(totals.plots, row.id)].filter(Boolean).join(' · ')}
           description={`Los campos de ${client.name} y sus lotes se administran aquí: crea un campo con “Nuevo campo” y ábrelo para cargar sus lotes.`}
           onNew={() => open('fields')} newLabel="Nuevo campo" empty="Este cliente aún no tiene campos." />
+        <ClientProviderLinks key={`providers-${client.id}`} side="client" ownerId={client.id} options={rows.providers} describe={providerLabel}
+          csrfToken={identity.csrfToken} title="Proveedores del cliente" empty={`${client.name} aún no tiene proveedores vinculados.`} />
+        <ClientComparisons key={`quotes-${client.id}`} client={client} navigate={navigate} />
       </>}
       {level === 'fields' && <>
         <RecordDetail title="Datos del campo" onEdit={() => open('fields', field)} items={[

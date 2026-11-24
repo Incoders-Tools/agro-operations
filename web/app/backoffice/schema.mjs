@@ -17,12 +17,24 @@ export const laborCategories = [
   ['cosecha', 'Cosecha y poscosecha'], ['forrajes', 'Forrajes y ganadería'], ['infraestructura', 'Mantenimiento de infraestructura'],
 ].map(([value, label]) => ({ value, label }));
 
+// Providers (S3, S4): input suppliers and service providers; contractors stay their own catalog.
+export const providerKinds = [
+  { value: 'insumos', label: 'Insumos' },
+  { value: 'laboratorio_suelos', label: 'Laboratorio de suelos' },
+  { value: 'laboratorio_semillas', label: 'Laboratorio de semillas' },
+  { value: 'plataforma_virtual', label: 'Plataforma virtual' },
+  { value: 'otro', label: 'Otro' },
+];
+export const contactRoles = [{ value: 'ventas', label: 'Ventas' }, { value: 'tecnico', label: 'Técnico' }, { value: 'otro', label: 'Otro' }];
+
 export const optionLabel = (options, value) => options.find(option => option.value === value)?.label ?? value;
 
 const name = { key: 'name', label: 'Nombre', type: 'text', maxLength: 200 };
 const taxId = { key: 'taxId', label: 'CUIT', type: 'text', optional: true, inputMode: 'numeric', hint: '11 dígitos, con o sin guiones.' };
 const email = { key: 'email', label: 'Email', type: 'email', optional: true };
 const phone = { key: 'phone', label: 'Teléfono', type: 'tel', optional: true };
+const website = { key: 'website', label: 'Sitio web', type: 'text', inputMode: 'url', optional: true, maxLength: 300, hint: 'Ej. www.ejemplo.com.ar' };
+const notes = { key: 'notes', label: 'Notas', type: 'textarea', optional: true };
 const yieldKg = { type: 'number', optional: true, min: '0', max: '9999999999.99', step: '0.01' };
 const dose = { type: 'number', optional: true, min: '0.0001', step: '0.0001' };
 const joined = parts => parts.filter(Boolean).join(' · ');
@@ -95,12 +107,23 @@ export const entities = {
   contractors: {
     title: 'Contratistas', singular: 'contratista', search: ['name', 'taxId'],
     fields: [
-      name, taxId, phone, email,
-      { key: 'website', label: 'Sitio web', type: 'text', inputMode: 'url', optional: true, maxLength: 300, hint: 'Ej. www.ejemplo.com.ar' },
-      { key: 'notes', label: 'Notas', type: 'textarea', optional: true },
+      name, taxId, phone, email, website, notes,
       { key: 'ownEquipment', label: 'Equipo propio', type: 'checkbox', hint: 'Maquinaria del propio cliente (PROPIO en la planilla).' },
     ],
     detail: row => joined([row.ownEquipment && 'Equipo propio', row.taxId && `CUIT ${row.taxId}`, row.phone, row.email]),
+  },
+  providers: {
+    title: 'Proveedores', singular: 'proveedor', search: ['name', 'taxId', 'email', row => optionLabel(providerKinds, row.kind)],
+    fields: [
+      name, { key: 'kind', label: 'Tipo', type: 'select', options: providerKinds, initial: 'insumos' },
+      taxId, website, phone, email, notes,
+    ],
+    detail: row => joined([optionLabel(providerKinds, row.kind), row.taxId && `CUIT ${row.taxId}`, row.phone, row.email]),
+  },
+  'provider-contacts': {
+    title: 'Contactos', singular: 'contacto', parent: 'providerId',
+    fields: [name, { key: 'role', label: 'Rol', type: 'select', options: contactRoles, initial: 'ventas' }, phone, email, notes],
+    detail: row => joined([optionLabel(contactRoles, row.role), row.phone, row.email]),
   },
   inputs: {
     title: 'Insumos', singular: 'insumo', search: ['commercialName', 'activeIngredient'],

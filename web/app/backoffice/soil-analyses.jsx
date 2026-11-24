@@ -83,11 +83,11 @@ function SoilForm({ plot, record, campaigns, labs, csrfToken, onSaved, onCancel 
               required={filled || index === 0} onChange={parameter => setResult(row.key, { parameter })} />
             <TextInput id={`${id}-value`} label="Valor" type="number" optional={false} step="any" value={row.value}
               required={filled || index === 0} onChange={value => setResult(row.key, { value })} />
-            <TextInput id={`${id}-unit`} label="Unidad" list="bo-soil-units" value={row.unit} maxLength={40}
+            <TextInput id={`${id}-unit`} label="Unidad" list="bo-soil-units" value={row.unit} maxLength={30}
               onChange={unit => setResult(row.key, { unit })} />
-            <TextInput id={`${id}-depth`} label="Profundidad" value={row.depth} placeholder="0-20 cm" maxLength={40}
+            <TextInput id={`${id}-depth`} label="Profundidad" value={row.depth} placeholder="0-20 cm" maxLength={30}
               onChange={depth => setResult(row.key, { depth })} />
-            {stations && <TextInput id={`${id}-station`} label="Estación" optional={false} value={row.station} maxLength={40}
+            {stations && <TextInput id={`${id}-station`} label="Estación" optional={false} value={row.station} maxLength={60}
               required={filled} onChange={station => setResult(row.key, { station })} />}
             <button type="button" className="bo-link" disabled={form.results.length === 1}
               onClick={() => set({ results: form.results.filter(other => other.key !== row.key) })}

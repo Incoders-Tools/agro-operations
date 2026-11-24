@@ -66,6 +66,8 @@ function format(units) {
   const fraction = (units % scale).toString().padStart(4, '0').replace(/0+$/, '');
   return fraction ? `${whole}.${fraction}` : String(whole);
 }
+// Shared with the quote line totals (providers.mjs).
+export { parse as parseDecimal, format as formatDecimal, scale as decimalScale };
 
 /** Sum of the ha a trabajar; blank or invalid entries count as zero (the form flags them). */
 export const workedTotal = plots => format(plots.reduce((sum, plot) => sum + (parse(plot.worked) ?? 0n), 0n));

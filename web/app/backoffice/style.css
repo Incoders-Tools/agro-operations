@@ -117,3 +117,28 @@
 .bo-formulas code{font-family:var(--brand-font-text);color:var(--brand-ink);background:var(--brand-tint);padding:2px 6px;border-radius:3px;overflow-wrap:anywhere}
 @media(max-width:950px){.bo-soil-line,.bo-soil-stations{grid-template-columns:repeat(2,minmax(0,1fr))}.bo-soil-line>.bo-field:first-child{grid-column:1/-1}}
 @media(max-width:560px){.bo-soil-line,.bo-soil-stations{grid-template-columns:1fr;border:1px solid var(--brand-line-soft);padding:14px;background:var(--brand-paper)}.bo-soil-line>*{grid-column:1/-1}}
+/* Providers and quote comparisons (providers.jsx, quotes.jsx): link forms, quote lines, the comparison table. */
+.bo-filters-single{grid-template-columns:minmax(0,320px)}
+.bo-inline-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:end;border-top:1px solid var(--brand-line-soft);padding-top:16px;margin-top:8px}
+.bo-inline-form select,.bo-list .bo-inline-form select{width:100%;padding:12px;border:1px solid var(--brand-line);background:var(--brand-paper);color:var(--brand-ink);border-radius:3px;font:inherit}
+.bo-inline-form label{font-size:13px;font-weight:700}
+.bo-quote-line{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;align-items:end;border-top:1px solid var(--brand-line-soft);padding-top:12px}
+.bo-quote-line>.bo-link{justify-self:start}
+.bo-group .bo-section-head{align-items:center}
+.bo-table-scroll{overflow-x:auto;padding:0 3px 3px}
+.bo-compare th small,.bo-offer small{display:block;font-weight:400;font-size:12px;color:var(--brand-muted);margin-top:4px}
+.bo-compare tbody th,.bo-compare tfoot th{text-align:left;font-size:14px;color:var(--brand-ink);padding:12px 8px;border-top:1px solid var(--brand-line-soft);vertical-align:top}
+.bo-compare tfoot td,.bo-compare tfoot th{border-top:2px solid var(--brand-line)}
+.bo-offer{display:block}
+.bo-offer+.bo-offer{margin-top:6px}
+.bo-compare td.bo-cheapest{background:var(--brand-tint);box-shadow:inset 3px 0 0 var(--brand-primary)}
+.bo-compare .bo-chosen,.bo-table tr.bo-chosen td{background:var(--brand-surface);outline:1px dashed var(--brand-accent);outline-offset:-1px}
+.bo-compare td.bo-cheapest.bo-chosen{background:var(--brand-tint)}
+.bo-badge{display:inline-block;margin:6px 0 0 6px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:var(--brand-primary);color:var(--brand-paper);white-space:nowrap}
+.bo-compare .bo-badge{margin-left:0}
+.bo-status-abierta{background:var(--brand-tint);color:var(--brand-primary-dark)}
+.bo-status-decidida{background:var(--brand-primary);color:var(--brand-paper)}
+.bo-editor output{padding:12px 0;overflow-wrap:anywhere}
+@media(min-width:951px){.bo-side{position:sticky;top:24px;max-height:calc(100vh - 48px);overflow:auto;padding:3px}.bo-side .bo-editor{position:static;max-height:none;overflow:visible}}
+@media(max-width:560px){.bo-inline-form{grid-template-columns:1fr}.bo-filters-single{grid-template-columns:1fr}.bo-quote-line{border:1px solid var(--brand-line-soft);padding:14px;background:var(--brand-paper)}
+.bo-table-scroll{overflow:visible;padding:0}.bo-compare tbody th,.bo-compare tfoot th{display:block;border:0;padding:2px 0 6px}.bo-compare td.bo-cheapest{padding:6px 8px}}

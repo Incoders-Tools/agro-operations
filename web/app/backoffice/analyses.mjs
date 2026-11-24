@@ -54,7 +54,7 @@ export function soilFromRecord(record) {
 export function soilPayload(form, { plotId, revision } = {}) {
   const stations = form.samplingMethod === 'estaciones';
   const payload = {
-    plotId, campaignId: form.campaignId, sampledOn: optional(form.sampledOn), analyzedOn: optional(form.analyzedOn),
+    plotId, campaignId: optional(form.campaignId), sampledOn: optional(form.sampledOn), analyzedOn: optional(form.analyzedOn),
     laboratoryId: optional(form.laboratoryId), samplingMethod: form.samplingMethod, samplingDetail: optional(form.samplingDetail),
     mapLink: optional(form.mapLink), notes: optional(form.notes),
     results: form.results.filter(row => !blank(row)).map(row => ({
@@ -126,7 +126,7 @@ export const seedFromRecord = record => Object.fromEntries([...seedText, ...seed
 /** Every measured value is optional and goes as null when empty; zero is a measured value. */
 export function seedPayload(form, { revision } = {}) {
   const payload = {
-    clientId: form.clientId, cropId: form.cropId, variety: optional(form.variety), campaignId: optional(form.campaignId),
+    clientId: optional(form.clientId), cropId: optional(form.cropId), variety: optional(form.variety), campaignId: optional(form.campaignId),
     analyzedOn: optional(form.analyzedOn), laboratoryId: optional(form.laboratoryId),
     ...Object.fromEntries(seedNumbers.map(key => [key, number(form[key])])), notes: optional(form.notes),
   };

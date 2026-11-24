@@ -6,16 +6,24 @@ import CatalogSection from './catalogs.jsx';
 import ClientsSection from './clients.jsx';
 import GenericSection, { genericGroups } from './generic.jsx';
 import WorkOrdersSection from './orders.jsx';
+import ProvidersSection from './providers.jsx';
+import QuoteComparisonsSection from './quotes.jsx';
 import SeedAnalysesSection from './seed-analyses.jsx';
 import { entities } from './schema.mjs';
 
 // Sidebar navigation. To add a section, add its key here and a case in renderSection.
 const navigation = [
-  { title: 'Operación', items: [{ key: 'work-orders', title: 'Órdenes de trabajo' }, { key: 'clients', title: 'Clientes' }] },
+  {
+    title: 'Operación',
+    items: [
+      { key: 'work-orders', title: 'Órdenes de trabajo' }, { key: 'clients', title: 'Clientes' },
+      { key: 'quote-comparisons', title: 'Comparación de presupuestos' },
+    ],
+  },
   {
     title: 'Catálogos',
     items: [
-      ...['contractors', 'inputs', 'labor-types', 'stages', 'crops', 'campaigns'].map(key => ({ key, title: entities[key].title })),
+      ...['contractors', 'providers', 'inputs', 'labor-types', 'stages', 'crops', 'campaigns'].map(key => ({ key, title: entities[key].title })),
       { key: 'seed-analyses', title: 'Análisis de semillas' },
     ],
   },
@@ -23,9 +31,12 @@ const navigation = [
   { title: 'Auditoría', items: [{ key: 'import-records', title: genericGroups['import-records'].title }] },
 ];
 
-function renderSection(key, identity) {
+// `params` carries the target of a cross-section link, such as the client whose quote comparisons to show.
+function renderSection(key, identity, params, navigate) {
   if (key === 'work-orders') return <WorkOrdersSection identity={identity} />;
-  if (key === 'clients') return <ClientsSection identity={identity} />;
+  if (key === 'clients') return <ClientsSection identity={identity} navigate={navigate} />;
+  if (key === 'providers') return <ProvidersSection identity={identity} />;
+  if (key === 'quote-comparisons') return <QuoteComparisonsSection key={JSON.stringify(params)} identity={identity} initial={params} />;
   if (key === 'seed-analyses') return <SeedAnalysesSection identity={identity} />;
   if (entities[key]) return <CatalogSection key={key} entity={key} identity={identity} />;
   return <GenericSection key={key} group={key} identity={identity} />;
@@ -36,6 +47,8 @@ export default function Backoffice() {
   const [loading, setLoading] = useState(true);
   const [password, setPassword] = useState('');
   const [section, setSection] = useState('clients');
+  const [params, setParams] = useState({});
+  const navigate = (key, next = {}) => { setSection(key); setParams(next); setError(''); };
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -84,13 +97,13 @@ export default function Backoffice() {
       <nav aria-label="Registros operativos">{navigation.map(group => [
         <p key={group.title} className="bo-nav-group">{group.title}</p>,
         ...group.items.map(item => <button key={item.key} type="button" className={item.key === section ? 'bo-selected' : ''}
-          onClick={() => { setSection(item.key); setError(''); }} aria-current={item.key === section ? 'page' : undefined}>{item.title}</button>),
+          onClick={() => navigate(item.key)} aria-current={item.key === section ? 'page' : undefined}>{item.title}</button>),
       ])}</nav><p>Una receta es un plan interno de tratamiento: no es una prescripción oficial emitida ni prueba de que la labor se haya realizado.</p>
       <button type="button" className="bo-logout" disabled={busy} onClick={logout}>Cerrar sesión</button>
     </aside>
     <main className="bo-main">
       {error && <p className="bo-error" role="alert">{error}</p>}
-      {renderSection(section, identity)}
+      {renderSection(section, identity, params, navigate)}
     </main>
   </div>;
 }

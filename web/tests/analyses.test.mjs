@@ -209,3 +209,11 @@ test('S1 S2 analysis 400 messages map to Spanish', () => {
   assert.equal(errorMessage(400, { error: 'Role must be one of: renta, servicio' }), 'Elige renta o servicio.');
   assert.equal(errorMessage(400, { error: 'Unmapped english text' }), generic);
 });
+
+test('unselected references are sent as null so the API can name the missing field', () => {
+  const soil = soilPayload({ ...emptySoilAnalysis(), results: [] }, { plotId: 'p1' });
+  assert.equal(soil.campaignId, null);
+  const seed = seedPayload(emptySeedAnalysis());
+  assert.equal(seed.clientId, null);
+  assert.equal(seed.cropId, null);
+});
