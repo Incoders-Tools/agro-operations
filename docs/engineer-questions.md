@@ -2,13 +2,15 @@
 
 Open questions to resolve with the engineers before or during the next meetings. Each one names the evidence that
 raised it and the current behaviour, so the answer can be applied directly. Mark an item `[x]` and add the answer
-underneath when it is resolved. Public repository: no client, contractor or person names here.
+underneath when it is resolved. Answers already given by the engineers' domain reference document are marked with it. Public repository: no client, contractor or person names here.
 
 ## Work orders (OT)
 
-- [ ] Q1. Can a client issue OTs under more than one commercial firm? Evidence: 29 of 31 firms in the workbook carry
+- [x] Q1. Can a client issue OTs under more than one commercial firm? Evidence: 29 of 31 firms in the workbook carry
   the client's own name; 2 do not match any client. Current behaviour: each client gets a firm with its name, and
   more firms can be added.
+  Answer (domain reference, point 1): yes, a client may be made up of several commercial firms. Still open: the 2
+  workbook firms that match no client — which client do they belong to?
 - [ ] Q2. In about 3% of historical OTs the products or doses differ between plots of the same OT. Is that one OT,
   or should it be split into one OT per product mix? Current behaviour: inputs and doses apply to every plot of the OT.
 - [ ] Q3. 32 historical OTs show two labors, 116 two dates and 19 two crop stages. Data-entry mistakes, or a real
@@ -31,11 +33,17 @@ underneath when it is resolved. Public repository: no client, contractor or pers
 
 - [ ] Q12. The plot master stores one area, and the OT stores the plot area and the worked area. When they differ,
   which area is authoritative, and does it change per campaign?
-- [ ] Q13. Season columns hold crop sequences such as "TRIGO/SOJA". Confirm it means first and second crop of the
+  Partly answered (domain reference, point 2): a plot's area can change between campaigns. Still open: which area an
+  OT should propose when the campaign area and the master area differ.
+- [x] Q13. Season columns hold crop sequences such as "TRIGO/SOJA". Confirm it means first and second crop of the
   same campaign, and how pastures lasting several campaigns should be recorded.
+  Answer (domain reference, point 3): one or two crops per campaign, each for income (renta) or service (servicio);
+  pastures can last more than one campaign and are recorded in each campaign they occupy.
 - [ ] Q14. Client notes list product stock held by each client. Should the system track client stock and discount it
   when an OT is issued?
 - [ ] Q15. Field tenure (own, fixed rent, percentage rent): who owns this data and does it affect any document?
+  Partly answered (domain reference, point 2): the three tenure types are confirmed. Still open: does tenure affect
+  any document or report?
 
 ## Brand
 
