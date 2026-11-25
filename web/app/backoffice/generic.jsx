@@ -5,6 +5,7 @@ import { api, send } from './api.mjs';
 import { ComboField, Field } from './field.jsx';
 import { Busy, RecordList, SectionHeader, usePending } from './records.jsx';
 import { rowLabel } from './schema.mjs';
+import { displayUnit } from './units.mjs';
 
 // Planning and provenance sections that keep the earlier generic editor.
 export const genericGroups = {
@@ -25,7 +26,7 @@ export const genericGroups = {
   'recipe-lines': {
     title: 'Líneas de receta', singular: 'línea de receta', feminine: true, dose: true,
     parents: [{ group: 'recipes', key: 'recipeId', label: 'Receta' }],
-    primaryLabel: row => `${row.productName} · ${row.doseValue} ${row.doseUnit}`,
+    primaryLabel: row => `${row.productName} · ${row.doseValue} ${displayUnit(row.doseUnit)}`,
   },
   'import-records': {
     title: 'Procedencia', singular: 'registro de procedencia', readOnly: true, parents: [],

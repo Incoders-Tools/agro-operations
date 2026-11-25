@@ -10,6 +10,7 @@ import {
   quoteFromRecord, quoteLineTotal, quotePayload, quoteTotal,
 } from './providers.mjs';
 import { optionLabel } from './schema.mjs';
+import { displayUnit } from './units.mjs';
 import { displayDate, formatAmount, todayIso } from './work-orders.mjs';
 
 const nameOf = (rows, id) => rows.find(row => row.id === id)?.name ?? 'Sin referencia';
@@ -98,9 +99,11 @@ function QuoteForm({ comparison, record, providers, inputs, csrfToken, onSaved, 
         <ol className="bo-lines">{form.lines.map((line, index) => {
           const id = `bo-quote-line-${line.key}`;
           const total = quoteLineTotal(line.quantity, line.unitPrice);
+          // S8: once an input is chosen, the quantity is the next thing to type.
           const chooseInput = inputId => {
             const followsInput = !line.unit.trim() || line.unit === unitOf(line.inputId);
             setLine(line.key, followsInput ? { inputId, unit: unitOf(inputId) } : { inputId });
+            if (inputId) focusLater(`${id}-quantity`);
           };
           return <li key={line.key} className="bo-quote-line">
             <Select id={`${id}-mode`} label={`Producto ${index + 1}`} value={line.mode} onChange={mode => setLine(line.key, { mode })} options={lineModes} />
@@ -150,8 +153,8 @@ function ComparisonTable({ detail, providers }) {
           return <td key={cell.quoteId} data-label={heading(column)} className={[cell.cheapest && 'bo-cheapest', column.chosen && 'bo-chosen'].filter(Boolean).join(' ') || undefined}>
             {!cell.offers.length ? <span className="bo-muted">No cotiza</span> : <>
               {cell.offers.map((offer, position) => <span key={position} className="bo-offer">
-                <strong>{formatMoney(offer.unitPrice, offer.currency)}</strong> / {offer.unit}
-                <small>{formatAmount(offer.quantity)} {offer.unit} · {formatMoney(offer.lineTotal, offer.currency)}</small></span>)}
+                <strong>{formatMoney(offer.unitPrice, offer.currency)}</strong> / {displayUnit(offer.unit)}
+                <small>{formatAmount(offer.quantity)} {displayUnit(offer.unit)} · {formatMoney(offer.lineTotal, offer.currency)}</small></span>)}
               {cell.cheapest && <span className="bo-badge">Más barato en {column.currency}</span>}</>}
           </td>;
         })}</tr>)}</tbody>

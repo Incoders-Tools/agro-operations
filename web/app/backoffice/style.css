@@ -34,8 +34,6 @@
 .bo-breadcrumb li+li::before{content:'›';color:#7d918c;margin-right:6px}
 .bo-breadcrumb button{border:0;background:transparent;color:#276e69;cursor:pointer;text-decoration:underline;padding:6px 4px;font:inherit;overflow-wrap:anywhere;text-align:left}
 .bo-breadcrumb button[aria-current]{color:#17363c;text-decoration:none;font-weight:700}
-.bo-sidebar nav .bo-nav-group{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#8fb3a8;margin:16px 12px 4px}
-.bo-sidebar nav .bo-nav-group:first-child{margin-top:0}
 @media(min-width:951px){.bo-editor{position:sticky;top:24px;max-height:calc(100vh - 48px);overflow:auto}}
 @media(max-width:560px){.bo-detail dl>div{grid-template-columns:1fr;gap:4px}.bo-list li{flex-wrap:wrap}}
 /* Work orders (orders.jsx): full-width form, plot cards, input lines as a grid row that stacks as a card when narrow. */
@@ -147,7 +145,8 @@
 .bo-kicker{margin:0 0 14px}
 /* S4: on desktop the menu stays fixed to the viewport; the nav scrolls on its own so "Cerrar sesión" is always visible. */
 @media(min-width:951px){.bo-sidebar{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;gap:28px}
-.bo-sidebar nav{flex:1 1 auto;min-height:0;overflow-y:auto;align-content:start;padding:3px;margin:-3px;overscroll-behavior:contain}
+.bo-sidebar nav{flex:1 1 auto;min-height:0;overflow-y:auto;align-content:start;padding:3px;margin:-3px;overscroll-behavior:contain;
+  scrollbar-width:thin;scrollbar-color:var(--brand-primary) transparent}
 .bo-sidebar>.bo-mark,.bo-sidebar>p,.bo-logout{flex:none}}
 /* S5: loading state (records.jsx Loading and Busy). A reloading block stays in view but inert under the message. */
 .bo-loading{display:flex;align-items:center;gap:10px;margin:0 0 18px;padding:13px 16px;background:var(--brand-surface);border:1px solid var(--brand-line);border-left:3px solid var(--brand-primary);color:var(--brand-ink);font-size:14px;line-height:1.4}
@@ -175,3 +174,53 @@
 .bo-app .bo-combobox .bo-none>span{color:var(--brand-muted)}
 .bo-combobox-group{display:block;padding:10px 12px 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-muted)}
 .bo-app .bo-combobox-note{margin:0;padding:10px 12px;font-size:12px;line-height:1.5;color:var(--brand-muted);border-top:1px solid var(--brand-line-soft)}
+/* S6: collapsible menu groups (workspace.jsx, navigation.mjs). Only the open groups list their sections, so the menu fits
+   a 1280x800 screen without a scrollbar; if many groups are open, the nav scrolls with a thin brand-coloured bar. */
+.bo-sidebar nav{gap:2px}
+.bo-nav-section,.bo-nav-items{display:grid;gap:2px}
+.bo-nav-items[hidden]{display:none}
+.bo-sidebar nav button{padding:10px 12px}
+.bo-sidebar nav .bo-nav-group{align-items:center;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#8fb3a8;padding:10px 12px;margin-top:4px}
+.bo-sidebar nav .bo-nav-section:first-child .bo-nav-group{margin-top:0}
+.bo-sidebar nav .bo-nav-group::after{content:'';flex:none;width:6px;height:6px;margin:0 4px 3px 12px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);transition:transform .15s}
+.bo-sidebar nav .bo-nav-group[aria-expanded=true]::after{transform:rotate(45deg)}
+.bo-sidebar nav .bo-nav-group:hover{background:transparent;color:#e8f1eb}
+.bo-sidebar nav .bo-nav-group[aria-disabled=true]{cursor:default;color:#b4d1c8}
+.bo-sidebar nav::-webkit-scrollbar{width:6px}
+.bo-sidebar nav::-webkit-scrollbar-thumb{background:var(--brand-primary);border-radius:3px}
+.bo-sidebar nav::-webkit-scrollbar-track{background:transparent}
+@media(max-width:950px){.bo-nav-section,.bo-nav-items,.bo-nav-items[hidden]{display:contents}.bo-sidebar nav .bo-nav-group{display:none}}
+@media(prefers-reduced-motion:reduce){.bo-sidebar nav .bo-nav-group::after{transition:none}}
+/* S1: a filter row and a form row share one top line. Each field keeps its own height (align-items:start), the label row
+   is one fixed line, the controls share one height and the hint is its own row below, so it never moves a neighbour. */
+.bo-filters,.bo-pair{align-items:start}
+.bo-field{align-content:start}
+.bo-filters .bo-field>label{line-height:20px;min-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bo-app .bo-field>input:not([type=checkbox]):not([type=radio]),.bo-app .bo-field>select,.bo-app .bo-combobox>input[role=combobox]{font:inherit;min-height:46px;line-height:20px}
+.bo-filters .bo-field>input,.bo-filters .bo-field>select,.bo-app .bo-filters .bo-combobox>input[role=combobox]{height:46px}
+/* S7, S9: OT detail. Header data in 2-3 columns with the status pill and the actions; plots and inputs side by side from
+   1200px, stacked below that. */
+.bo-wo-summary{padding:20px 24px}
+.bo-wo-summary-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:8px 20px;margin-bottom:14px}
+.bo-wo-heading{min-width:0}
+.bo-list .bo-wo-heading h2{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;overflow-wrap:anywhere}
+.bo-wo-heading .bo-status{font-size:13px;padding:4px 12px;border-radius:12px}
+.bo-wo-reason{margin:8px 0 0;font-size:13px;line-height:1.5;color:var(--brand-danger);overflow-wrap:anywhere}
+.bo-wo-actions{display:flex;flex-wrap:wrap;align-items:center;gap:0 4px}
+.bo-wo-facts{display:grid;grid-template-columns:minmax(0,1fr);gap:10px 24px;margin:0}
+.bo-wo-facts>div{min-width:0;border-top:1px solid var(--brand-line-soft);padding-top:8px}
+.bo-wo-facts dt{font-size:12px;font-weight:700;color:var(--brand-muted);margin:0 0 2px}
+.bo-wo-facts dd{margin:0;font-size:14px;overflow-wrap:anywhere;white-space:pre-line}
+.bo-wo-facts .bo-wo-wide{grid-column:1/-1}
+.bo-wo-tables{display:grid;gap:24px;min-width:0;align-items:start}
+.bo-wo-tables>.bo-list{padding:20px}
+.bo-wo-tables h2{font-size:18px;margin:0 0 10px}
+.bo-wo-tables .bo-total{margin-top:10px}
+.bo-table.bo-compact{font-size:13px}
+.bo-table.bo-compact th{padding:8px 6px}
+.bo-table.bo-compact td{padding:8px 6px}
+.bo-table .bo-num{text-align:right;white-space:nowrap}
+.bo-table td.bo-num>.bo-warning-inline{white-space:normal;text-align:right}
+@media(min-width:561px){.bo-wo-facts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(min-width:1200px){.bo-wo-facts{grid-template-columns:repeat(3,minmax(0,1fr))}.bo-wo-tables{grid-template-columns:minmax(0,2fr) minmax(0,3fr)}}
+@media(max-width:560px){.bo-wo-summary{padding:20px}.bo-table .bo-num,.bo-table td.bo-num>.bo-warning-inline{text-align:left;white-space:normal}}

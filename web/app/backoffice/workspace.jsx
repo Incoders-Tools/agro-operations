@@ -1,35 +1,38 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { api, sessionEndedMessage } from './api.mjs';
+import { brandName, brandTagline } from './brand.mjs';
 import CatalogSection from './catalogs.jsx';
 import ClientsSection from './clients.jsx';
 import GenericSection, { genericGroups } from './generic.jsx';
+import { groupOpen, menuReducer, menuStorageKey, readMenuState } from './navigation.mjs';
 import WorkOrdersSection from './orders.jsx';
 import ProvidersSection from './providers.jsx';
 import QuoteComparisonsSection from './quotes.jsx';
 import SeedAnalysesSection from './seed-analyses.jsx';
 import { entities } from './schema.mjs';
 
-// Sidebar navigation. To add a section, add its key here and a case in renderSection.
+// Sidebar navigation, in collapsible groups (S6). To add a section, add its key here and a case in renderSection.
 const navigation = [
   {
-    title: 'Operación',
+    key: 'operation', title: 'Operación',
     items: [
       { key: 'work-orders', title: 'Órdenes de trabajo' }, { key: 'clients', title: 'Clientes' },
       { key: 'quote-comparisons', title: 'Comparación de presupuestos' },
     ],
   },
   {
-    title: 'Catálogos',
+    key: 'catalogs', title: 'Catálogos',
     items: [
       ...['contractors', 'providers', 'inputs', 'labor-types', 'stages', 'crops', 'campaigns'].map(key => ({ key, title: entities[key].title })),
       { key: 'seed-analyses', title: 'Análisis de semillas' },
     ],
   },
-  { title: 'Planificación', items: ['plot-campaign-areas', 'recipes', 'recipe-lines'].map(key => ({ key, title: genericGroups[key].title })) },
-  { title: 'Auditoría', items: [{ key: 'import-records', title: genericGroups['import-records'].title }] },
+  { key: 'planning', title: 'Planificación', items: ['plot-campaign-areas', 'recipes', 'recipe-lines'].map(key => ({ key, title: genericGroups[key].title })) },
+  { key: 'audit', title: 'Auditoría', items: [{ key: 'import-records', title: genericGroups['import-records'].title }] },
 ];
+const groupOf = section => navigation.find(group => group.items.some(item => item.key === section))?.key;
 
 // `params` carries the target of a cross-section link, such as the client whose quote comparisons to show.
 function renderSection(key, identity, params, navigate) {
@@ -51,6 +54,21 @@ export default function Backoffice() {
   const navigate = (key, next = {}) => { setSection(key); setParams(next); setError(''); };
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [menu, dispatchMenu] = useReducer(menuReducer, {});
+  const [menuLoaded, setMenuLoaded] = useState(false);
+  const activeGroup = groupOf(section);
+
+  // The open groups are read after mounting (the server render has no localStorage) and saved on every change.
+  useEffect(() => {
+    try { dispatchMenu({ type: 'load', state: readMenuState(window.localStorage.getItem(menuStorageKey)) }); } catch { /* storage blocked */ }
+    setMenuLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (!menuLoaded) return;
+    try { window.localStorage.setItem(menuStorageKey, JSON.stringify(menu)); } catch { /* storage blocked */ }
+  }, [menu, menuLoaded]);
+  // Leaving a section keeps its group open, so the menu does not jump under the pointer.
+  useEffect(() => { if (menuLoaded && activeGroup) dispatchMenu({ type: 'navigate', group: activeGroup }); }, [activeGroup, menuLoaded]);
 
   useEffect(() => {
     let active = true;
@@ -83,7 +101,7 @@ export default function Backoffice() {
 
   if (loading) return <main className="bo-login"><p role="status">Comprobando acceso local…</p></main>;
   if (!identity) return <main className="bo-login">
-    <div className="bo-login-panel"><span className="bo-symbol" aria-hidden="true">✳</span><p className="bo-kicker">Agro · Operaciones</p>
+    <div className="bo-login-panel"><span className="bo-symbol" aria-hidden="true">✳</span><p className="bo-kicker">{brandName} · {brandTagline}</p>
       <h1>Tu espacio de trabajo</h1><p>Este registro es privado. Usa el administrador local temporal para consultar o cargar información.</p>
       <form onSubmit={login}><label htmlFor="bo-password">Contraseña local</label>
         <input id="bo-password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required />
@@ -93,12 +111,19 @@ export default function Backoffice() {
     </div></main>;
 
   return <div className="bo-app">
-    <aside className="bo-sidebar"><div className="bo-mark"><span aria-hidden="true">✳</span><strong>Agro</strong><small>Operaciones</small></div>
-      <nav aria-label="Registros operativos">{navigation.map(group => [
-        <p key={group.title} className="bo-nav-group">{group.title}</p>,
-        ...group.items.map(item => <button key={item.key} type="button" className={item.key === section ? 'bo-selected' : ''}
-          onClick={() => navigate(item.key)} aria-current={item.key === section ? 'page' : undefined}>{item.title}</button>),
-      ])}</nav><p>Una receta es un plan interno de tratamiento: no es una prescripción oficial emitida ni prueba de que la labor se haya realizado.</p>
+    <aside className="bo-sidebar"><div className="bo-mark"><span aria-hidden="true">✳</span><strong>{brandName}</strong><small>{brandTagline}</small></div>
+      <nav aria-label="Registros operativos">{navigation.map(group => {
+        const open = groupOpen(menu, group.key, activeGroup);
+        const listId = `bo-nav-${group.key}`;
+        return <div key={group.key} className="bo-nav-section">
+          <button type="button" id={`${listId}-toggle`} className="bo-nav-group" aria-expanded={open} aria-controls={listId}
+            aria-disabled={group.key === activeGroup || undefined} title={group.key === activeGroup ? 'Contiene la sección abierta' : undefined}
+            onClick={() => dispatchMenu({ type: 'toggle', group: group.key, active: activeGroup })}>{group.title}</button>
+          <div id={listId} className="bo-nav-items" role="group" aria-labelledby={`${listId}-toggle`} hidden={!open}>
+            {group.items.map(item => <button key={item.key} type="button" className={item.key === section ? 'bo-selected' : ''}
+              onClick={() => navigate(item.key)} aria-current={item.key === section ? 'page' : undefined}>{item.title}</button>)}</div>
+        </div>;
+      })}</nav>
       <button type="button" className="bo-logout" disabled={busy} onClick={logout}>Cerrar sesión</button>
     </aside>
     <main className="bo-main">

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { api, sessionEndedMessage } from './api.mjs';
+import { brandName, brandTagline } from './brand.mjs';
+import { displayUnit } from './units.mjs';
 import { cropLabel, displayDate, documentTitle, formatAmount, productLabel } from './work-orders.mjs';
 
 const plotLabel = plot => plot.plotCode ? <><strong>{plot.plotCode}</strong> <span className="ot-sub">{plot.plotName}</span></> : plot.plotName;
@@ -39,7 +41,7 @@ export default function WorkOrderPrint({ id }) {
   const hollow = order.lines.some(line => line.hollowCone);
   return <main className="ot-page">{toolbar}
     <article className={cancelled ? 'ot-sheet ot-cancelled' : 'ot-sheet'} aria-label={`Orden de trabajo Nº ${order.number}`}>
-      <header className="ot-head"><p className="ot-mark"><span aria-hidden="true">✳</span> Agro · Operaciones</p><h1>ORDEN DE TRABAJO</h1></header>
+      <header className="ot-head"><p className="ot-mark"><span aria-hidden="true">✳</span> {brandName} · {brandTagline}</p><h1>ORDEN DE TRABAJO</h1></header>
       {cancelled && <p className="ot-void" role="note"><strong>ANULADA</strong>{order.cancelReason && <span>Motivo: {order.cancelReason}</span>}</p>}
 
       <div className="ot-row ot-row-head">
@@ -74,7 +76,7 @@ export default function WorkOrderPrint({ id }) {
             <thead><tr><th scope="col">Producto</th><th scope="col" className="ot-num">Dosis por ha</th><th scope="col" className="ot-num">Total</th></tr></thead>
             <tbody>{order.lines.map(line => <tr key={line.position}>
               <td>{productLabel(line)}{line.hollowCone && <span className="ot-tag">Cono hueco</span>}</td>
-              <td className="ot-num">{formatAmount(line.dosePerHectare)} {line.unit}/ha</td><td className="ot-num">{formatAmount(line.total)} {line.unit}</td></tr>)}</tbody>
+              <td className="ot-num">{formatAmount(line.dosePerHectare)} {displayUnit(`${line.unit}/ha`)}</td><td className="ot-num">{formatAmount(line.total)} {displayUnit(line.unit)}</td></tr>)}</tbody>
           </table>
           {hollow && <p className="ot-note">Los productos marcados “Cono hueco” requieren aplicación con cono hueco.</p>}</>}
       </section>

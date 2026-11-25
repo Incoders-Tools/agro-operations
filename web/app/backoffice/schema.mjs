@@ -1,5 +1,7 @@
 // Entity definitions shared by the forms and the request payloads. Field keys match the API JSON (camelCase).
 
+import { displayUnit } from './units.mjs';
+
 export const tenures = [
   { value: 'propio', label: 'Propio' },
   { value: 'alquiler_fijo', label: 'Alquiler fijo' },
@@ -143,7 +145,7 @@ export const entities = {
     label: row => row.commercialName,
     detail: row => joined([
       row.activeIngredient, row.category && optionLabel(categories, row.category),
-      (row.doseMin != null || row.doseMax != null) ? `${row.doseMin ?? '…'}–${row.doseMax ?? '…'} ${row.unit}/ha` : row.unit,
+      (row.doseMin != null || row.doseMax != null) ? `${row.doseMin ?? '…'}–${row.doseMax ?? '…'} ${displayUnit(`${row.unit}/ha`)}` : displayUnit(row.unit),
       row.hollowCone && 'Cono hueco',
     ]),
   },

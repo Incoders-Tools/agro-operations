@@ -44,12 +44,14 @@
   .ot-head h1{font-size:21px}
   .ot-table th,.ot-table td{padding:5px 4px}
 }
-@page{size:A4 portrait;margin:12mm 12mm 14mm}
+/* S11: a zero page margin leaves Chrome no room for its header and footer (URL, date, title, page number); the sheet
+   padding keeps the printed margins instead, repeated on every page by box-decoration-break where it is supported. */
+@page{size:A4 portrait;margin:0}
 @media print{
   html,body,.ot-page{background:var(--brand-paper)!important}
   .ot-page{padding:0;min-height:0}
   .ot-toolbar{display:none}
-  .ot-sheet{max-width:none;border:0;padding:0;font-size:11pt}
+  .ot-sheet{max-width:none;border:0;padding:13mm 12mm;font-size:11pt;-webkit-box-decoration-break:clone;box-decoration-break:clone}
   .ot-row{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}
   .ot-foot{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
   .ot-table thead th{background:transparent}

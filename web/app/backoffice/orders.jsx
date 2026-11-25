@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
 import { ComboField, Field, optionNodes, useFocusAfterRender } from './field.jsx';
-import { Busy, Loading, RecordDetail, SectionHeader, usePending } from './records.jsx';
+import { Busy, Loading, SectionHeader, usePending } from './records.jsx';
 import { fieldPlotCount, optionLabel, rowLabel } from './schema.mjs';
+import { displayUnit } from './units.mjs';
 import {
   clientFirms, displayDate, doseRange, emptyOrder, exceedsPlot, fieldNames, laborLabel, laborOptionGroups, lineTotal, newLine, orderFromRecord,
   orderLabel, orderPayload, orderQuery, plotCropPrefill, plotGroups, statuses, workedTotal,
@@ -36,7 +37,7 @@ function Select({ id, label, value, onChange, options, placeholder, optional, hi
 
 function doseWarning(range, input) {
   if (!range) return null;
-  const unit = `${input.unit}/ha`;
+  const unit = displayUnit(`${input.unit}/ha`);
   return range === 'below' ? `La dosis está por debajo de la mínima del insumo (${input.doseMin} ${unit}).`
     : `La dosis está por encima de la máxima del insumo (${input.doseMax} ${unit}).`;
 }
@@ -90,7 +91,7 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
   }
   const setWorked = (plotId, worked) => set({ plots: form.plots.map(row => row.plotId === plotId ? { ...row, worked } : row) });
   const setLine = (key, changes) => set({ lines: form.lines.map(line => line.key === key ? { ...line, ...changes } : line) });
-  // The new line's input search gets the focus (S3).
+  // The new line's input search gets the focus (S3); choosing its input moves the focus to the dose (S8).
   function addLine() {
     const line = newLine();
     set({ lines: [...form.lines, line] });
@@ -112,7 +113,7 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
 
   const options = (rows, label = row => row.name, detail = row => row.taxId ? `CUIT ${row.taxId}` : undefined) =>
     rows.map(row => ({ value: row.id, label: label(row), detail: detail(row) }));
-  const inputOptions = options(refs.inputs, row => rowLabel('inputs', row), row => [row.activeIngredient, row.unit].filter(Boolean).join(' · '));
+  const inputOptions = options(refs.inputs, row => rowLabel('inputs', row), row => [row.activeIngredient, displayUnit(row.unit)].filter(Boolean).join(' · '));
   const { firms } = clientFirms(refs['commercial-firms'], clientId);
   const groups = plotGroups(fields, clientPlots, plotTerm);
   const shownPlots = groups.reduce((sum, group) => sum + group.plots.length, 0);
@@ -184,12 +185,13 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
           const id = `bo-wo-line-${line.key}`;
           return <li key={line.key} className="bo-line">
             <ComboField id={`${id}-input`} label={`Insumo ${index + 1}`} value={line.inputId}
-              onChange={inputId => setLine(line.key, { inputId })} options={inputOptions} placeholder="Busca por nombre o principio activo" />
+              onChange={inputId => { setLine(line.key, { inputId }); if (inputId) focusLater(`${id}-dose`); }} options={inputOptions}
+              placeholder="Busca por nombre o principio activo" />
             <Field id={`${id}-dose`} label="Dosis por ha">
               <input id={`${id}-dose`} type="number" min="0.0001" max="99999999.9999" step="0.0001" required={Boolean(line.inputId)} value={line.dose}
                 onChange={event => setLine(line.key, { dose: event.target.value })} /></Field>
-            <Readout label="Unidad">{input?.unit ?? '—'}</Readout>
-            <Readout label="Total">{lineTotalValue ? `${lineTotalValue} ${input.unit}` : '—'}</Readout>
+            <Readout label="Unidad">{input ? displayUnit(input.unit) : '—'}</Readout>
+            <Readout label="Total">{lineTotalValue ? `${lineTotalValue} ${displayUnit(input.unit)}` : '—'}</Readout>
             <button type="button" className="bo-link" onClick={() => set({ lines: form.lines.filter(row => row.key !== line.key) })}
               aria-label={`Quitar insumo ${index + 1}`}>Quitar</button>
             {warning && <p className="bo-warning" role="status">⚠ {warning}</p>}
@@ -209,7 +211,9 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
     </form></section>;
 }
 
-// One OT with its plots and lines; emitida orders can be edited, completed or cancelled with a reason.
+// One OT with its plots and lines; emitida orders can be edited, completed or cancelled with a reason. S9: the header
+// data in a 2-3 column grid with the status pill (S7) and the actions, then the plots and the inputs side by side when
+// the screen is wide.
 function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
   const [order, setOrder] = useState(null);
   const [plots, setPlots] = useState([]);
@@ -243,53 +247,75 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
   if (!order) return <section className="bo-list"><button type="button" className="bo-link" onClick={onBack}>← Volver al listado</button>
     {error ? <p className="bo-error" role="alert">{error}</p> : <p role="status">Cargando orden…</p>}</section>;
   const firm = byId(refs['commercial-firms'], order.firmId);
+  const label = orderLabel(firm, order.number);
   const issued = order.status === 'emitida';
-  const fieldIds = [...new Set(order.plots.map(row => row.fieldId))];
-  return <div className="bo-stack">
-    <div className="bo-section-head"><button type="button" className="bo-link" onClick={onBack}>← Volver al listado</button>
-      <div><PrintLink id={order.id} label={`Imprimir o guardar en PDF la orden ${orderLabel(firm, order.number)}`} />
-        {issued && <><button type="button" onClick={() => onEdit(order)}>Editar</button>
-          <button type="button" onClick={() => { setAction('complete'); setError(''); }}>Marcar realizada</button>
-          <button type="button" onClick={() => { setAction('cancel'); setError(''); }}>Cancelar orden</button></>}</div></div>
+  const facts = [
+    ['Firma comercial', firm?.name], ['Cliente', firm && nameOf(refs.clients, firm.clientId)], ['Fecha', displayDate(order.issuedOn)],
+    ['Labor', laborLabel(byId(refs['labor-types'], order.laborTypeId))], ['Etapa', nameOf(refs.stages, order.stageId)],
+    ['Contratista', nameOf(refs.contractors, order.contractorId)], ['Campaña', nameOf(refs.campaigns, order.campaignId)],
+    ['Cultivo y variedad', [nameOf(refs.crops, order.cropId), order.variety].filter(Boolean).join(' · ')],
+    ['Ingeniero responsable', order.responsibleEngineer],
+  ];
+  const none = <span className="bo-muted">Sin indicar</span>;
+  const shown = value => value === null || value === undefined || value === '' ? none : value;
+  const dash = <span className="bo-muted">—</span>;
+  return <div className="bo-stack bo-wo-detail">
+    <div className="bo-section-head"><button type="button" className="bo-link" onClick={onBack}>← Volver al listado</button></div>
+    <section className="bo-list bo-wo-summary" aria-labelledby="bo-wo-detail-title">
+      <div className="bo-wo-summary-head">
+        <div className="bo-wo-heading">
+          <h2 id="bo-wo-detail-title">Orden {label} <span className={`bo-status bo-status-${order.status}`}>{optionLabel(statuses, order.status)}</span></h2>
+          {order.status === 'cancelada' && <p className="bo-wo-reason">Motivo de la cancelación: {shown(order.cancelReason)}</p>}
+        </div>
+        <div className="bo-wo-actions">
+          {issued && <><button type="button" className="bo-link" onClick={() => onEdit(order)}>Editar</button>
+            <button type="button" className="bo-link" onClick={() => { setAction('complete'); setError(''); }}>Marcar realizada</button>
+            <button type="button" className="bo-link" onClick={() => { setAction('cancel'); setError(''); }}>Cancelar orden</button></>}
+          <PrintLink id={order.id} label={`Imprimir o guardar en PDF la orden ${label}`} />
+        </div>
+      </div>
+      <dl className="bo-wo-facts">{facts.map(([term, value]) => <div key={term}><dt>{term}</dt><dd>{shown(value)}</dd></div>)}
+        <div className="bo-wo-wide"><dt>Observaciones</dt><dd>{shown(order.observations)}</dd></div></dl>
+    </section>
     {error && <p className="bo-error" role="alert">{error}</p>}
     {action && <section className="bo-editor"><h2>{action === 'cancel' ? 'Cancelar orden' : 'Marcar como realizada'}</h2>
       <form onSubmit={close}>
         {action === 'cancel' ? <Field id="bo-wo-reason" label="Motivo de la cancelación" hint="La orden conserva su número y sigue en el listado.">{hintId =>
           <textarea id="bo-wo-reason" rows={3} maxLength={2000} required value={reason} aria-describedby={hintId} onChange={event => setReason(event.target.value)} />}</Field>
-          : <p>La orden {orderLabel(firm, order.number)} pasará a Realizada y ya no se podrá editar.</p>}
+          : <p>La orden {label} pasará a Realizada y ya no se podrá editar.</p>}
         <div className="bo-actions"><button type="submit" disabled={busy}>{busy ? 'Guardando…' : action === 'cancel' ? 'Confirmar cancelación' : 'Confirmar realizada'}</button>
           <button type="button" onClick={() => setAction(null)}>Volver</button></div>
       </form></section>}
-    <RecordDetail title={`Orden ${orderLabel(firm, order.number)}`} items={[
-      ['Estado', optionLabel(statuses, order.status)], ['Fecha', displayDate(order.issuedOn)],
-      ['Firma comercial', firm?.name], ['Cliente', firm && nameOf(refs.clients, firm.clientId)],
-      ['Labor', laborLabel(byId(refs['labor-types'], order.laborTypeId))], ['Etapa', nameOf(refs.stages, order.stageId)],
-      ['Contratista', nameOf(refs.contractors, order.contractorId)], ['Campos', fieldNames(refs.fields, fieldIds)],
-      ['Campaña', nameOf(refs.campaigns, order.campaignId)], ['Cultivo', nameOf(refs.crops, order.cropId)], ['Variedad o híbrido', order.variety],
-      ['Ingeniero responsable', order.responsibleEngineer], ['Observaciones', order.observations],
-      ...(order.status === 'cancelada' ? [['Motivo de la cancelación', order.cancelReason]] : []),
-    ]} />
-    <section className="bo-list"><h2>Lotes</h2>
-      <table className="bo-table"><thead><tr><th>Campo</th><th>Lote</th><th>Superficie</th><th>ha a trabajar</th></tr></thead>
-        <tbody>{order.plots.map(row => {
-          const plot = byId(plots, row.plotId);
-          return <tr key={row.plotId}><td data-label="Campo">{nameOf(refs.fields, row.fieldId) ?? 'Sin referencia'}</td>
-            <td data-label="Lote">{plot ? rowLabel('plots', plot) : 'Sin referencia'}</td>
-            <td data-label="Superficie">{row.areaHectares} ha</td>
-            <td data-label="ha a trabajar">{row.workedAreaHectares} ha
-              {row.workedAreaExceedsPlot && <span className="bo-warning-inline">⚠ Supera la superficie del lote</span>}</td></tr>;
-        })}</tbody></table>
-      <p className="bo-total">Total a trabajar: <strong>{workedTotal(order.plots.map(row => ({ worked: row.workedAreaHectares })))} ha</strong></p>
-    </section>
-    <section className="bo-list"><h2>Insumos</h2>
-      {!order.lines.length ? <p className="bo-empty">Esta orden no tiene insumos.</p> :
-        <table className="bo-table"><thead><tr><th>Nº</th><th>Insumo</th><th>Dosis por ha</th><th>Total</th></tr></thead>
-          <tbody>{order.lines.map(line => <tr key={line.id}><td data-label="Nº">{line.position}</td>
-            <td data-label="Insumo">{byId(refs.inputs, line.inputId)?.commercialName ?? 'Sin referencia'}</td>
-            <td data-label="Dosis por ha">{line.dosePerHectare} {line.unit}/ha
-              {line.doseOutOfRange && <span className="bo-warning-inline">⚠ Fuera del rango de dosis del insumo</span>}</td>
-            <td data-label="Total">{line.total} {line.unit}</td></tr>)}</tbody></table>}
-    </section>
+    <div className="bo-wo-tables">
+      <section className="bo-list" aria-labelledby="bo-wo-detail-plots"><h2 id="bo-wo-detail-plots">Lotes</h2>
+        <table className="bo-table bo-compact"><thead><tr><th>Campo</th><th>Lote / código</th><th className="bo-num">Has</th><th className="bo-num">Has tarea</th></tr></thead>
+          <tbody>{order.plots.map(row => {
+            const plot = byId(plots, row.plotId);
+            return <tr key={row.plotId}><td data-label="Campo">{nameOf(refs.fields, row.fieldId) ?? 'Sin referencia'}</td>
+              <td data-label="Lote / código">{plot ? rowLabel('plots', plot) : 'Sin referencia'}</td>
+              <td data-label="Has" className="bo-num">{row.areaHectares}</td>
+              <td data-label="Has tarea" className="bo-num">{row.workedAreaHectares}
+                {row.workedAreaExceedsPlot && <span className="bo-warning-inline">⚠ Supera la superficie del lote</span>}</td></tr>;
+          })}</tbody></table>
+        <p className="bo-total">Total a trabajar: <strong>{workedTotal(order.plots.map(row => ({ worked: row.workedAreaHectares })))} ha</strong></p>
+      </section>
+      <section className="bo-list" aria-labelledby="bo-wo-detail-inputs"><h2 id="bo-wo-detail-inputs">Insumos</h2>
+        {!order.lines.length ? <p className="bo-empty">Esta orden no tiene insumos.</p> :
+          <table className="bo-table bo-compact"><thead><tr><th>Producto</th><th>Formulación</th><th className="bo-num">Orden de mezcla</th>
+            <th className="bo-num">Dosis/ha</th><th>Unidad</th><th className="bo-num">Total</th><th>Cono hueco</th></tr></thead>
+            <tbody>{order.lines.map(line => {
+              const input = byId(refs.inputs, line.inputId);
+              return <tr key={line.id}><td data-label="Producto">{input?.commercialName ?? 'Sin referencia'}</td>
+                <td data-label="Formulación">{input?.formulation || dash}</td>
+                <td data-label="Orden de mezcla" className="bo-num">{input?.mixOrder ?? dash}</td>
+                <td data-label="Dosis/ha" className="bo-num">{line.dosePerHectare}
+                  {line.doseOutOfRange && <span className="bo-warning-inline">⚠ Fuera de rango</span>}</td>
+                <td data-label="Unidad">{displayUnit(`${line.unit}/ha`)}</td>
+                <td data-label="Total" className="bo-num">{line.total} {displayUnit(line.unit)}</td>
+                <td data-label="Cono hueco">{input?.hollowCone ? 'Sí' : <span className="bo-muted">No</span>}</td></tr>;
+            })}</tbody></table>}
+      </section>
+    </div>
   </div>;
 }
 

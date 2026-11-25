@@ -8,6 +8,7 @@ import {
   currencies, emptyPrice, filterProviders, formatMoney, latestPricesByProvider, priceFromRecord, pricePayload, providerKinds, sortPrices,
 } from './providers.mjs';
 import { contactRoles, entities, optionLabel, websiteHref } from './schema.mjs';
+import { displayUnit } from './units.mjs';
 import { displayDate } from './work-orders.mjs';
 
 const nameOf = (rows, id) => rows.find(row => row.id === id)?.name ?? 'Sin referencia';
@@ -25,7 +26,7 @@ export function Select({ id, label, value, onChange, options, placeholder, optio
 /** A catalog input chosen in one search field (S2), by commercial name or active ingredient. */
 export function InputPicker({ id, label, inputs, value, onChange }) {
   return <ComboField id={id} label={label} value={value} onChange={onChange} placeholder="Busca por nombre o principio activo"
-    options={inputs.map(input => ({ value: input.id, label: `${input.commercialName} (${input.unit})`, detail: input.activeIngredient ?? undefined }))} />;
+    options={inputs.map(input => ({ value: input.id, label: `${input.commercialName} (${displayUnit(input.unit)})`, detail: input.activeIngredient ?? undefined }))} />;
 }
 
 /**
@@ -149,7 +150,7 @@ function PricesPanel({ provider, csrfToken }) {
           <tbody>{sortPrices(prices).map(price => <tr key={price.id}>
             <td data-label="Insumo">{inputName(price.inputId)}</td>
             <td data-label="Precio">{formatMoney(price.price, price.currency)}</td>
-            <td data-label="Unidad">{price.unit}</td>
+            <td data-label="Unidad">{displayUnit(price.unit)}</td>
             <td data-label="Vigente desde">{displayDate(price.validOn)}</td>
             <td data-label="Notas">{price.notes ?? <span className="bo-muted">Sin notas</span>}</td>
             <td data-label="Acciones"><button type="button" className="bo-link" onClick={() => setEditing({ record: price })}
@@ -183,7 +184,7 @@ export function InputPrices({ input }) {
         <table className="bo-table"><thead><tr><th>Proveedor</th><th>Precio</th><th>Vigente desde</th></tr></thead>
           <tbody>{latest.map(price => <tr key={price.id}>
             <td data-label="Proveedor">{nameOf(providers, price.providerId)}</td>
-            <td data-label="Precio">{formatMoney(price.price, price.currency)} / {price.unit}</td>
+            <td data-label="Precio">{formatMoney(price.price, price.currency)} / {displayUnit(price.unit)}</td>
             <td data-label="Vigente desde">{displayDate(price.validOn)}</td></tr>)}</tbody></table>}
   </section>;
 }

@@ -9,11 +9,12 @@ import {
   soilUnits, sortSoilAnalyses,
 } from './analyses.mjs';
 import { optionLabel, rowLabel, websiteHref } from './schema.mjs';
+import { displayUnit } from './units.mjs';
 import { displayDate } from './work-orders.mjs';
 
 const nameOf = (rows, id) => rows.find(row => row.id === id)?.name;
 const count = n => `${n} ${n === 1 ? 'resultado' : 'resultados'}`;
-const measure = row => [formatNumber(Number(row.value), 4), row.unit].filter(Boolean).join(' ');
+const measure = row => [formatNumber(Number(row.value), 4), displayUnit(row.unit)].filter(Boolean).join(' ');
 
 // Native select, only for the fixed sampling methods; campaigns and laboratories use ComboField (S2).
 function Select({ id, label, value, onChange, options, placeholder, optional, hint }) {
