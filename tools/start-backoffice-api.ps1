@@ -128,6 +128,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect local PostgreSQL schema.' }
 if ([int]$laborCategory.Trim() -eq 0) { Apply-Migration '010_reference_alignment.sql'; Write-Host 'Applied local schema migration 010_reference_alignment.sql.' }
 Ensure-Migration '011_providers_and_quotes.sql' 'public.providers,public.provider_contacts,public.client_providers,public.provider_prices,public.quote_comparisons,public.quotes,public.quote_lines'
 Ensure-Migration '012_analyses.sql' 'public.soil_analyses,public.soil_analysis_results,public.seed_analyses'
+Ensure-Migration '013_staff.sql' 'public.staff'
 
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
 $env:AGRO_LOCAL_ADMIN_EMAIL = $settings.email
