@@ -44,9 +44,9 @@ Owner round of 2026-11-25. Public repository: staff names are entered only in th
   entered in the private DB after T5 (never in the repository).
 
 ## Tasks
-- T1 (S3) worker: migration 013 staff + OT responsible staff + document fields, API, tests.
-- T2 (S1, S2, S4-S9, S11) worker: UI polish, parallel with T1.
-- T3 (S10) worker: help content `docs/help/*.md`, parallel with T1 and T2.
+- T1 (S3) worker: migration 013 staff + OT responsible staff + document fields, API, tests. | done
+- T2 (S1, S2, S4-S9, S11) worker: UI polish, parallel with T1. | done (browser check in T5)
+- T3 (S10) worker: help content `docs/help/*.md`, parallel with T1 and T2. | done
 - T4 (S3, S10, S12) worker: staff UI, OT responsible picker, help panel + renderer, custom validation.
 - T5: launcher 013, real DB apply, staff entry (S13), browser check, push.
 
