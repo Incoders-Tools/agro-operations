@@ -32,35 +32,39 @@ test('the brand comes from one constant used by the page titles', () => {
   assert.equal(brandTitle('Orden de trabajo'), 'Terra IA · Orden de trabajo');
 });
 
-test('menu groups start closed except the active one, which stays open', () => {
+test('the menu is an accordion: only the active section group is open by default', () => {
   const state = readMenuState(null);
   assert.deepEqual(state, {});
   assert.equal(groupOpen(state, 'operation', 'operation'), true);
   assert.equal(groupOpen(state, 'catalogs', 'operation'), false);
-  assert.equal(groupOpen({ operation: false }, 'operation', 'operation'), true);
 });
 
-test('toggling opens and closes a group but never closes the active one', () => {
-  const opened = menuReducer({}, { type: 'toggle', group: 'catalogs', active: 'operation' });
-  assert.deepEqual(opened, { catalogs: true });
-  assert.deepEqual(menuReducer(opened, { type: 'toggle', group: 'catalogs', active: 'operation' }), { catalogs: false });
-  const kept = { operation: true };
-  assert.equal(menuReducer(kept, { type: 'toggle', group: 'operation', active: 'operation' }), kept);
+test('opening a group closes the others, so the menu always fits without a scrollbar', () => {
+  const catalogs = menuReducer({}, { type: 'toggle', group: 'catalogs', active: 'operation' });
+  assert.deepEqual(catalogs, { open: 'catalogs' });
+  assert.equal(groupOpen(catalogs, 'catalogs', 'operation'), true);
+  assert.equal(groupOpen(catalogs, 'operation', 'operation'), false);
+  const audit = menuReducer(catalogs, { type: 'toggle', group: 'audit', active: 'operation' });
+  assert.equal(groupOpen(audit, 'catalogs', 'operation'), false);
+  assert.equal(groupOpen(audit, 'audit', 'operation'), true);
+  // Closing the open group goes back to the active section's group; the active group cannot close itself.
+  assert.deepEqual(menuReducer(audit, { type: 'toggle', group: 'audit', active: 'operation' }), { open: 'operation' });
+  const active = { open: 'operation' };
+  assert.equal(menuReducer(active, { type: 'toggle', group: 'operation', active: 'operation' }), active);
 });
 
-test('navigating keeps the group of the new section open', () => {
-  assert.deepEqual(menuReducer({ catalogs: false }, { type: 'navigate', group: 'catalogs' }), { catalogs: true });
-  const open = { audit: true };
-  assert.equal(menuReducer(open, { type: 'navigate', group: 'audit' }), open);
+test('navigating opens only the group of the new section', () => {
+  const state = menuReducer({ open: 'catalogs' }, { type: 'navigate', group: 'administration' });
+  assert.deepEqual(state, { open: 'administration' });
+  assert.equal(groupOpen(state, 'catalogs', 'administration'), false);
 });
 
 test('the stored menu state round-trips and ignores invalid data', () => {
   assert.equal(menuStorageKey, 'terra-ia.backoffice.menu');
   const stored = JSON.stringify(menuReducer({}, { type: 'toggle', group: 'planning', active: 'operation' }));
-  assert.deepEqual(readMenuState(stored), { planning: true });
-  assert.deepEqual(menuReducer({ audit: true }, { type: 'load', state: readMenuState(stored) }), { planning: true });
-  for (const raw of ['', 'not json', '[1,2]', '"text"', '42', 'null']) assert.deepEqual(readMenuState(raw), {}, raw);
-  assert.deepEqual(readMenuState('{"catalogs":true,"audit":"yes","planning":false}'), { catalogs: true, planning: false });
+  assert.deepEqual(readMenuState(stored), { open: 'planning' });
+  assert.deepEqual(menuReducer({ open: 'audit' }, { type: 'load', state: readMenuState(stored) }), { open: 'planning' });
+  for (const raw of ['', 'not json', '[1,2]', '"text"', '42', 'null', '{"open":3}', '{"catalogs":true}']) assert.deepEqual(readMenuState(raw), {}, raw);
 });
 
 test('the inputs list shows litres as L while the payload keeps the stored unit', () => {

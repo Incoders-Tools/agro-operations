@@ -126,7 +126,7 @@ export default function Backoffice() {
         const listId = `bo-nav-${group.key}`;
         return <div key={group.key} className="bo-nav-section">
           <button type="button" id={`${listId}-toggle`} className="bo-nav-group" aria-expanded={open} aria-controls={listId}
-            aria-disabled={group.key === activeGroup || undefined} title={group.key === activeGroup ? 'Contiene la sección abierta' : undefined}
+            aria-disabled={(open && group.key === activeGroup) || undefined} title={open && group.key === activeGroup ? 'Contiene la sección abierta' : undefined}
             onClick={() => dispatchMenu({ type: 'toggle', group: group.key, active: activeGroup })}>{group.title}</button>
           <div id={listId} className="bo-nav-items" role="group" aria-labelledby={`${listId}-toggle`} hidden={!open}>
             {group.items.map(item => <button key={item.key} type="button" className={item.key === section ? 'bo-selected' : ''}

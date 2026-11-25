@@ -48,7 +48,7 @@ Owner round of 2026-11-25. Public repository: staff names are entered only in th
 - T2 (S1, S2, S4-S9, S11) worker: UI polish, parallel with T1. | done (browser check in T5)
 - T3 (S10) worker: help content `docs/help/*.md`, parallel with T1 and T2. | done
 - T4 (S3, S10, S12) worker: staff UI, OT responsible picker, help panel + renderer, custom validation. | done
-- T5: launcher 013, real DB apply, staff entry (S13), browser check, push.
+- T5: launcher 013, real DB apply, staff entry (S13), browser check, push. | done
 
 ## Log
 - L1 (owner, 2026-11-25, verbatim): "1. Desalineado [captura] 2. En unidad si es Litros usemos L mayusculas porque
@@ -85,3 +85,12 @@ Owner round of 2026-11-25. Public repository: staff names are entered only in th
 - L3 (decision): help as a non-blocking right-side panel (contextual help pattern used by SaaS backoffices: it can stay
   open while the user works), not a modal; Markdown files per screen with front matter (title, screen key, optional
   video URL, last reviewed date) so humans and AI agents read the same source.
+- L4 (T5 evidence): private DB backed up to `.local/backups/before-013.dump`; 013 applied; two engineers entered through
+  the authenticated API (names only in the private DB). Browser on real data at 1280x800 and 390 px: brand Terra IA,
+  no recipe note, filter controls on one line at 46 px, OT detail with status pill and plots/inputs tables side by side
+  ending at 660 px, help panel opens, Esc closes and returns focus, validation shows "Elige un cliente." with focus
+  and summary, staff form "Indica el nombre completo.", responsible combobox lists 2 engineers, choosing an input
+  focuses its dose, 0 label overlaps, no overflow, no page errors. The check found that remembered open groups pushed
+  "Administración" out of the 800 px sidebar with an invisible scrollbar; the menu is now an accordion (one group open,
+  RED-first tests) and fits with 0 px overflow. It also found dot decimals in the OT detail, now formatted with the
+  decimal comma like the print. Print @page margin is 0.

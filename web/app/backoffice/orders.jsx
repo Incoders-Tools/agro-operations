@@ -9,8 +9,7 @@ import { fieldPlotCount, optionLabel, rowLabel } from './schema.mjs';
 import { displayUnit } from './units.mjs';
 import {
   clientFirms, displayDate, doseRange, emptyOrder, exceedsPlot, fieldNames, laborLabel, laborOptionGroups, lineTotal, newLine, orderFromRecord,
-  orderLabel, orderPayload, orderQuery, plotCropPrefill, plotGroups, responsibleLabel, responsibleNote, statuses, workedTotal,
-} from './work-orders.mjs';
+  orderLabel, orderPayload, orderQuery, plotCropPrefill, plotGroups, responsibleLabel, responsibleNote, statuses, workedTotal, formatAmount } from './work-orders.mjs';
 
 // Catalogs the list, form and detail resolve ids against; firms come back with their next work order number. The
 // responsible engineer is chosen among the active engineers of the staff (S3).
@@ -160,13 +159,13 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel, onOpenStaff }) 
                   const chosen = form.plots.find(row => row.plotId === plot.id);
                   const id = `bo-wo-plot-${plot.id}`;
                   return <div key={plot.id} className={chosen ? 'bo-plot bo-plot-on' : 'bo-plot'}>
-                    <Field id={id} label={rowLabel('plots', plot)} hint={`Superficie ${plot.areaHectares} ha`} check>{hintId =>
+                    <Field id={id} label={rowLabel('plots', plot)} hint={`Superficie ${formatAmount(plot.areaHectares)} ha`} check>{hintId =>
                       <input id={id} type="checkbox" checked={Boolean(chosen)} aria-describedby={hintId} onChange={event => togglePlot(plot, event.target.checked)} />}</Field>
                     {chosen && <>
                       <Field id={`${id}-worked`} label="ha a trabajar" noun="las ha a trabajar">
                         <input id={`${id}-worked`} type="number" min="0.0001" max="99999999.9999" step="0.0001" required value={chosen.worked}
                           onChange={event => setWorked(plot.id, event.target.value)} /></Field>
-                      {exceedsPlot(chosen.worked, plot.areaHectares) && <p className="bo-warning" role="status">⚠ Supera la superficie del lote ({plot.areaHectares} ha).</p>}
+                      {exceedsPlot(chosen.worked, plot.areaHectares) && <p className="bo-warning" role="status">⚠ Supera la superficie del lote ({formatAmount(plot.areaHectares)} ha).</p>}
                     </>}
                   </div>;
                 })}</div>}
@@ -306,11 +305,11 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
             const plot = byId(plots, row.plotId);
             return <tr key={row.plotId}><td data-label="Campo">{nameOf(refs.fields, row.fieldId) ?? 'Sin referencia'}</td>
               <td data-label="Lote / código">{plot ? rowLabel('plots', plot) : 'Sin referencia'}</td>
-              <td data-label="Has" className="bo-num">{row.areaHectares}</td>
-              <td data-label="Has tarea" className="bo-num">{row.workedAreaHectares}
+              <td data-label="Has" className="bo-num">{formatAmount(row.areaHectares)}</td>
+              <td data-label="Has tarea" className="bo-num">{formatAmount(row.workedAreaHectares)}
                 {row.workedAreaExceedsPlot && <span className="bo-warning-inline">⚠ Supera la superficie del lote</span>}</td></tr>;
           })}</tbody></table>
-        <p className="bo-total">Total a trabajar: <strong>{workedTotal(order.plots.map(row => ({ worked: row.workedAreaHectares })))} ha</strong></p>
+        <p className="bo-total">Total a trabajar: <strong>{formatAmount(workedTotal(order.plots.map(row => ({ worked: row.workedAreaHectares }))))} ha</strong></p>
       </section>
       <section className="bo-list" aria-labelledby="bo-wo-detail-inputs"><h2 id="bo-wo-detail-inputs">Insumos</h2>
         {!order.lines.length ? <p className="bo-empty">Esta orden no tiene insumos.</p> :
@@ -321,10 +320,10 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
               return <tr key={line.id}><td data-label="Producto">{input?.commercialName ?? 'Sin referencia'}</td>
                 <td data-label="Formulación">{input?.formulation || dash}</td>
                 <td data-label="Orden de mezcla" className="bo-num">{input?.mixOrder ?? dash}</td>
-                <td data-label="Dosis/ha" className="bo-num">{line.dosePerHectare}
+                <td data-label="Dosis/ha" className="bo-num">{formatAmount(line.dosePerHectare)}
                   {line.doseOutOfRange && <span className="bo-warning-inline">⚠ Fuera de rango</span>}</td>
                 <td data-label="Unidad">{displayUnit(`${line.unit}/ha`)}</td>
-                <td data-label="Total" className="bo-num">{line.total} {displayUnit(line.unit)}</td>
+                <td data-label="Total" className="bo-num">{formatAmount(line.total)} {displayUnit(line.unit)}</td>
                 <td data-label="Cono hueco">{input?.hollowCone ? 'Sí' : <span className="bo-muted">No</span>}</td></tr>;
             })}</tbody></table>}
       </section>
