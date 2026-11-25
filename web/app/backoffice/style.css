@@ -224,3 +224,12 @@
 @media(min-width:561px){.bo-wo-facts{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(min-width:1200px){.bo-wo-facts{grid-template-columns:repeat(3,minmax(0,1fr))}.bo-wo-tables{grid-template-columns:minmax(0,2fr) minmax(0,3fr)}}
 @media(max-width:560px){.bo-wo-summary{padding:20px}.bo-table .bo-num,.bo-table td.bo-num>.bo-warning-inline{text-align:left;white-space:normal}}
+/* S12: validation messages (form-validation.jsx, Field). The message is its own grid row under the control; the summary
+   leads the form. */
+.bo-field-error{font-size:13px;line-height:1.45;color:var(--brand-danger);font-weight:600}
+.bo-check .bo-field-error{grid-column:2}
+.bo-app [aria-invalid=true],.bo-login [aria-invalid=true]{border-color:var(--brand-danger)!important;box-shadow:inset 3px 0 0 var(--brand-danger)}
+.bo-editor .bo-form-summary,.bo-login .bo-form-summary,.bo-list .bo-form-summary{margin:0;font-size:13px}
+.bo-inline-form>.bo-form-summary{grid-column:1/-1}
+/* S3: the OT form's notice when there are no active engineers. */
+.bo-warning .bo-link{padding:0 4px;font-size:13px}

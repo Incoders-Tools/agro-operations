@@ -56,13 +56,21 @@ backoffice navigation map to help keys as follows:
 | `stages` | `etapas` |
 | `crops` | `cultivos` |
 | `campaigns` | `campanas` |
-| Staff section (Personal) | `personal` |
+| `staff` (Administración › Personal) | `personal` |
 | `plot-campaign-areas` | `superficie-por-campana` |
 | `recipes`, `recipe-lines` | `recetas` |
 | `import-records` | `procedencia` |
 | Login screen and local stack | `acceso-local` |
 
 `index.md` lists every screen with its title and summary.
+
+The "?" button (accessible name "Ayuda de esta pantalla") sits next to each screen title, next to the soil analysis
+title of a plot, in the print view toolbar and on the login screen. The panel loads the file from
+`/backoffice/help/<key>` (`web/app/backoffice/help/[key]/route.js`, served only in the local preview, keys matching
+`^[a-z0-9-]+$`), renders it with `markdown.mjs` and `markdown-render.mjs` (no HTML passthrough) and follows the screen
+the user moves to. Links to another help file open in the panel; `../engineer-questions.md` shows as text; web links
+open in a new tab. The section-to-key mapping above lives in `web/app/backoffice/help.mjs` with the title of each file;
+a test checks both against these files.
 
 ## Adding a video later
 

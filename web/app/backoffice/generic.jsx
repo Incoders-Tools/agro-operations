@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, send } from './api.mjs';
-import { ComboField, Field } from './field.jsx';
+import { ComboField, Field, optionNodes } from './field.jsx';
+import { ValidatedForm } from './form-validation.jsx';
 import { Busy, RecordList, SectionHeader, usePending } from './records.jsx';
-import { rowLabel } from './schema.mjs';
+import { optionLabel, recipeStages, rowLabel } from './schema.mjs';
 import { displayUnit } from './units.mjs';
 
 // Planning and provenance sections that keep the earlier generic editor.
@@ -21,7 +22,7 @@ export const genericGroups = {
       { group: 'campaigns', key: 'campaignId', label: 'Campaña' },
       { group: 'labor-types', key: 'laborTypeId', label: 'Labor' },
     ],
-    primaryLabel: row => `${row.stage} · ${row.targetUse}`,
+    primaryLabel: row => `${optionLabel(recipeStages, row.stage)} · ${row.targetUse}`,
   },
   'recipe-lines': {
     title: 'Líneas de receta', singular: 'línea de receta', feminine: true, dose: true,
@@ -35,7 +36,6 @@ export const genericGroups = {
   },
 };
 const emptyForm = { parents: {}, area: '', stage: 'presiembra', targetUse: '', responsibleEngineer: '', productName: '', doseValue: '', doseUnit: '' };
-const stages = ['presiembra', 'preemergencia', 'postemergencia'];
 const labelOf = (group, row) => genericGroups[group]?.primaryLabel(row) ?? rowLabel(group, row);
 
 export default function GenericSection({ group, identity }) {
@@ -72,8 +72,7 @@ export default function GenericSection({ group, identity }) {
     });
     setError('');
   }
-  async function save(event) {
-    event.preventDefault();
+  async function save() {
     setBusy(true); setError('');
     const value = {};
     if (meta.area) value.areaHectares = Number(form.area);
@@ -95,7 +94,7 @@ export default function GenericSection({ group, identity }) {
     return match ? labelOf(parent.group, match) : 'Sin referencia';
   };
   const parentsReady = meta.parents.every(parent => rows[parent.group]?.length);
-  const text = (id, label, key, props = {}) => <Field id={id} label={label}>
+  const text = (id, label, key, props = {}, words = {}) => <Field id={id} label={label} {...words}>
     <input id={id} value={form[key]} onChange={event => setForm({ ...form, [key]: event.target.value })} required {...props} /></Field>;
   return <>
     <SectionHeader identity={identity} title={meta.title} count={loaded ? list.length : undefined} />
@@ -105,7 +104,7 @@ export default function GenericSection({ group, identity }) {
         detail={meta.secondaryLabel ?? (row => `${meta.parents.map(parent => parentName(parent, row[parent.key])).join(' · ')} · Revisión ${row.revision}`)}
         onEdit={meta.readOnly ? undefined : edit} empty={`Aún no hay ${meta.title.toLowerCase()}. Crea el primer registro desde el formulario.`} />
       {!meta.readOnly && <section className="bo-editor"><h2>{editing ? `Editar ${meta.singular}` : `${meta.feminine ? 'Nueva' : 'Nuevo'} ${meta.singular}`}</h2>
-        <form onSubmit={save}>
+        <ValidatedForm onSubmit={save}>
           {!editing && meta.parents.map(parent => <ComboField key={parent.key} id={`bo-parent-${parent.key}`} label={parent.label}
             value={form.parents[parent.key] ?? ''} placeholder="Busca y elige un registro"
             options={(rows[parent.group] ?? []).map(option => ({ value: option.id, label: labelOf(parent.group, option) }))}
@@ -113,19 +112,19 @@ export default function GenericSection({ group, identity }) {
           {meta.area && text('bo-area', 'Superficie (ha)', 'area', { type: 'number', min: '0.0001', max: '99999999.9999', step: '0.0001' })}
           {meta.stage && <>
             <Field id="bo-stage" label="Etapa del ciclo"><select id="bo-stage" value={form.stage} onChange={event => setForm({ ...form, stage: event.target.value })}>
-              {stages.map(stage => <option key={stage} value={stage}>{stage}</option>)}</select></Field>
+              {optionNodes(recipeStages)}</select></Field>
             {text('bo-target', 'Uso objetivo', 'targetUse', { placeholder: 'Ej. Barbecho', maxLength: 200 })}
             {text('bo-engineer', 'Ingeniero responsable', 'responsibleEngineer', { maxLength: 200 })}
           </>}
           {meta.dose && <>
-            {text('bo-product', 'Producto (ficticio por ahora)', 'productName', { maxLength: 200 })}
+            {text('bo-product', 'Producto (ficticio por ahora)', 'productName', { maxLength: 200 }, { noun: 'el producto' })}
             {text('bo-dose', 'Dosis', 'doseValue', { type: 'number', min: '0.0001', max: '99999999.9999', step: '0.0001' })}
             {text('bo-dose-unit', 'Unidad', 'doseUnit', { placeholder: 'Ej. l/ha', maxLength: 50 })}
           </>}
           <div className="bo-actions"><button type="submit" disabled={busy || (!editing && !parentsReady)}>{busy ? 'Guardando…' : editing ? 'Guardar cambios' : `Crear ${meta.singular}`}</button>
             {editing && <button type="button" onClick={() => { setEditing(null); setForm(emptyForm); }}>Cancelar</button>}</div>
           {!editing && !parentsReady && <p>Primero crea los registros relacionados: {meta.parents.map(parent => parent.label.toLowerCase()).join(', ')}.</p>}
-        </form></section>}
+        </ValidatedForm></section>}
     </Busy>
   </>;
 }

@@ -3,10 +3,15 @@
 import { useCallback, useState } from 'react';
 import { send } from './api.mjs';
 import { Field, SchemaControl } from './field.jsx';
+import { ValidatedForm } from './form-validation.jsx';
+import { HelpButton, usePageHelp } from './help-panel.jsx';
 import { entities, fieldApplies, formFor, payloadFor, rowLabel, searchRecords } from './schema.mjs';
 
-export function SectionHeader({ identity, title, description, count }) {
-  return <header><div><p className="bo-kicker">Registro privado · {identity.email}</p><h1>{title}</h1>
+// `helpKey` names the help file of a nested screen (a plot inside Clientes); by default, the section's own (S10).
+export function SectionHeader({ identity, title, description, count, helpKey }) {
+  usePageHelp(helpKey);
+  return <header><div><p className="bo-kicker">Registro privado · {identity.email}</p>
+    <div className="bo-title-row"><h1>{title}</h1><HelpButton helpKey={helpKey} /></div>
     <p>{description ?? 'Consulta y administra los datos guardados en PostgreSQL local.'}</p></div>
     {count !== undefined && <span className="bo-count">{count} {count === 1 ? 'registro' : 'registros'}</span>}</header>;
 }
@@ -49,8 +54,7 @@ export function RecordForm({ entity, record, parent, optionSets, csrfToken, onSa
   const [busy, setBusy] = useState(false);
   const fields = meta.fields.filter(field => fieldApplies(field, Boolean(record)));
 
-  async function save(event) {
-    event.preventDefault();
+  async function save() {
     setBusy(true); setError('');
     try {
       const saved = await send(record ? `${entity}/${record.id}` : entity, record ? 'PUT' : 'POST',
@@ -63,14 +67,14 @@ export function RecordForm({ entity, record, parent, optionSets, csrfToken, onSa
   const label = meta.singular;
   return <section className="bo-editor"><h2>{editorTitle(entity, record)}</h2>
     {context && <p className="bo-context">{context}</p>}
-    <form onSubmit={save}>
+    <ValidatedForm onSubmit={save}>
       {fields.map(field => <SchemaControl key={field.key} field={field} id={`bo-${entity}-${field.key}`} value={form[field.key]}
         optionSets={optionSets} onChange={value => setForm(current => ({ ...current, [field.key]: value }))} />)}
       {error && <p className="bo-error" role="alert">{error}</p>}
       {missing && <p>{missing}</p>}
       <div className="bo-actions"><button type="submit" disabled={busy || Boolean(missing)}>{busy ? 'Guardando…' : record ? 'Guardar cambios' : `Crear ${label}`}</button>
         {(record || onCancel) && <button type="button" onClick={onCancel}>Cancelar</button>}</div>
-    </form></section>;
+    </ValidatedForm></section>;
 }
 
 // A panel listing records. `onSelect` makes the row open its children and `selectLabel` adds that as a visible action;

@@ -73,7 +73,7 @@ El primer cultivo de una campaña es el que la OT propone cuando eliges esa camp
 
 | Situación | Mensaje |
 | --- | --- |
-| Nombre vacío | El nombre es obligatorio. |
+| Nombre vacío | Indica el nombre. |
 | Superficie en cero, negativa o con más de 4 decimales | La superficie debe ser mayor que cero y tener hasta 4 decimales. |
 | Código de más de 40 caracteres | El código admite hasta 40 caracteres. |
 | Código ya usado por otro lote | Ya existe un lote con ese código. |

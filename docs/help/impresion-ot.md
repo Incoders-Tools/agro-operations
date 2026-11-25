@@ -29,7 +29,7 @@ Secciones de la hoja, de arriba hacia abajo:
 | Cultivo / Rotación | Cultivo, variedad o híbrido y campaña. |
 | Insumos a utilizar | Producto, dosis por ha y total. Si no hay: "Esta orden no lleva insumos." |
 | Observaciones | Texto de la OT o "Sin observaciones." |
-| Pie | "NO MODIFICAR A MANO ESTA ORDEN.", el ingeniero responsable (nombre, título, matrícula y teléfono) y la línea "Firma responsable actuante". |
+| Pie | "NO MODIFICAR A MANO ESTA ORDEN.", "Ante cualquier duda llamar:" con el nombre del ingeniero responsable y su teléfono cuando lo tiene, y la línea "Firma responsable actuante" con su nombre, título y matrícula debajo. |
 
 **Producto**: se imprime el nombre comercial con su formulación y "orden de mezcla N". Si el nombre ya termina con el
 orden y la formulación entre paréntesis, como en la planilla (por ejemplo "Producto A (3 SC)"), no se repiten.
@@ -41,6 +41,9 @@ como `L` y `L/ha`.
 
 **OT cancelada**: la hoja lleva la marca **ANULADA** y el motivo de la cancelación.
 
+**Responsable**: se imprimen los datos actuales de la persona en Personal. Una OT anterior con el responsable escrito a
+mano muestra solo ese texto; sin responsable, "Sin indicar".
+
 ## Cómo se hace
 
 1. En Órdenes de trabajo, pulsa **Imprimir / PDF** en el listado o en el detalle. La hoja se abre en otra pestaña.
@@ -48,6 +51,8 @@ como `L` y `L/ha`.
 3. Elige como destino **Guardar como PDF**. El nombre del archivo ya viene propuesto con el patrón de la planilla.
 4. Guarda el archivo y envíalo al contratista.
 5. Pulsa **Volver** para regresar al backoffice.
+
+El botón **?** de la barra abre esta ayuda; ni el botón ni la ayuda salen en el PDF.
 
 ## Reglas y validaciones
 

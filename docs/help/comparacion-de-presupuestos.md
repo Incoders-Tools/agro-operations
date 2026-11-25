@@ -81,7 +81,7 @@ antes. Las monedas nunca se convierten: si hay presupuestos en ARS y USD, la pan
 
 | Situación | Mensaje |
 | --- | --- |
-| Título vacío | El título es obligatorio. |
+| Título vacío | Indica el título. |
 | Sin fecha de solicitud o de recepción | Indica la fecha de solicitud. / Indica la fecha de recepción del presupuesto. |
 | Moneda inválida | Elige la moneda: ARS o USD. |
 | Cantidad en cero o negativa | La cantidad de cada línea debe ser mayor que cero. |

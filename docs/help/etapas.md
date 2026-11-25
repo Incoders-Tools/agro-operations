@@ -41,11 +41,11 @@ Postfloración.
 
 | Situación | Mensaje |
 | --- | --- |
-| Nombre vacío | El nombre es obligatorio. |
+| Nombre vacío | Indica el nombre. |
 | Nombre ya usado | Ya existe un registro con ese nombre. |
 | Otra persona guardó antes | Otra persona modificó este registro. Actualiza antes de guardar. |
 
-- Las recetas usan su propia lista fija de tres etapas (presiembra, preemergencia, postemergencia), no este catálogo.
+- Las recetas usan su propia lista fija de tres etapas (Presiembra, Preemergencia, Postemergencia), no este catálogo.
 
 ## Preguntas abiertas
 

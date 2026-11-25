@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, send } from './api.mjs';
 import { ComboField, Field, optionNodes, useFocusAfterRender } from './field.jsx';
+import { ValidatedForm } from './form-validation.jsx';
+import { HelpButton } from './help-panel.jsx';
 import { Busy, usePending } from './records.jsx';
 import {
   emptySoilAnalysis, formatNumber, newResult, parameterHistory, samplingMethods, soilFromRecord, soilParameters, soilPayload, soilProblem,
@@ -25,8 +27,8 @@ function Select({ id, label, value, onChange, options, placeholder, optional, hi
     </select>}</Field>;
 }
 
-function TextInput({ id, label, value, onChange, optional = true, hint, type = 'text', ...rest }) {
-  return <Field id={id} label={label} optional={optional} hint={hint}>{hintId =>
+function TextInput({ id, label, value, onChange, optional = true, hint, type = 'text', noun, ...rest }) {
+  return <Field id={id} label={label} optional={optional} hint={hint} noun={noun}>{hintId =>
     <input id={id} type={type} value={value} required={!optional} aria-describedby={hintId} maxLength={type === 'text' ? 200 : undefined}
       onChange={event => onChange(event.target.value)} {...rest} />}</Field>;
 }
@@ -48,8 +50,7 @@ function SoilForm({ plot, record, campaigns, labs, csrfToken, onSaved, onCancel 
     focusLater(`bo-soil-result-${row.key}-parameter`);
   }
 
-  async function save(event) {
-    event.preventDefault();
+  async function save() {
     const problem = soilProblem(form);
     if (problem) { setError(problem); return; }
     setBusy(true); setError('');
@@ -63,11 +64,11 @@ function SoilForm({ plot, record, campaigns, labs, csrfToken, onSaved, onCancel 
 
   return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar análisis de suelo' : 'Nuevo análisis de suelo'}</h2>
     {!record && <p className="bo-context">Se registra en el lote {rowLabel('plots', plot)}.</p>}
-    <form onSubmit={save}>
+    <ValidatedForm onSubmit={save}>
       <div className="bo-pair">
         <ComboField id="bo-soil-campaign" label="Campaña" value={form.campaignId} onChange={campaignId => set({ campaignId })}
           options={options(campaigns)} placeholder="Busca y elige una campaña" />
-        <TextInput id="bo-soil-sampled" label="Fecha de muestreo" type="date" optional={false} value={form.sampledOn}
+        <TextInput id="bo-soil-sampled" label="Fecha de muestreo" type="date" optional={false} value={form.sampledOn} noun="la fecha de muestreo"
           onChange={sampledOn => set({ sampledOn })} />
         <TextInput id="bo-soil-analyzed" label="Fecha de análisis" type="date" value={form.analyzedOn} onChange={analyzedOn => set({ analyzedOn })} />
         <ComboField id="bo-soil-lab" label="Laboratorio" optional value={form.laboratoryId} onChange={laboratoryId => set({ laboratoryId })}
@@ -79,7 +80,7 @@ function SoilForm({ plot, record, campaigns, labs, csrfToken, onSaved, onCancel 
       <Field id="bo-soil-detail" label="Detalle del muestreo" optional hint="Cómo se tomaron las muestras: cantidad, ubicación, criterio.">{hintId =>
         <textarea id="bo-soil-detail" rows={3} maxLength={2000} value={form.samplingDetail} aria-describedby={hintId}
           onChange={event => set({ samplingDetail: event.target.value })} />}</Field>
-      <TextInput id="bo-soil-map" label="Enlace al shape o KML" value={form.mapLink} inputMode="url" maxLength={2000}
+      <TextInput id="bo-soil-map" label="Enlace al shape o KML" value={form.mapLink} inputMode="url" maxLength={300}
         hint="Dirección del archivo que muestra la zona de muestreo, sin espacios." onChange={mapLink => set({ mapLink })} />
 
       <fieldset className="bo-group"><legend>Resultados</legend>
@@ -90,7 +91,7 @@ function SoilForm({ plot, record, campaigns, labs, csrfToken, onSaved, onCancel 
           const filled = Boolean(row.parameter || row.value);
           return <li key={row.key} className={stations ? 'bo-soil-line bo-soil-stations' : 'bo-soil-line'}>
             <TextInput id={`${id}-parameter`} label={`Parámetro ${index + 1}`} optional={false} list="bo-soil-parameters" value={row.parameter}
-              required={filled || index === 0} onChange={parameter => setResult(row.key, { parameter })} />
+              noun="el parámetro" maxLength={100} required={filled || index === 0} onChange={parameter => setResult(row.key, { parameter })} />
             <TextInput id={`${id}-value`} label="Valor" type="number" optional={false} step="any" value={row.value}
               required={filled || index === 0} onChange={value => setResult(row.key, { value })} />
             <TextInput id={`${id}-unit`} label="Unidad" list="bo-soil-units" value={row.unit} maxLength={30}
@@ -113,7 +114,7 @@ function SoilForm({ plot, record, campaigns, labs, csrfToken, onSaved, onCancel 
       {!campaigns.length && <p>Primero crea campañas en su catálogo.</p>}
       <div className="bo-actions"><button type="submit" disabled={busy || !campaigns.length}>{busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Crear análisis'}</button>
         <button type="button" onClick={onCancel}>Cancelar</button></div>
-    </form></section>;
+    </ValidatedForm></section>;
 }
 
 // Soil analyses of one plot across every campaign (S1): list newest first, form, and the per-parameter history.
@@ -160,7 +161,8 @@ export default function SoilAnalysesPanel({ plot, campaigns, csrfToken }) {
     {editor && <SoilForm key={editor.record?.id ?? 'new'} plot={plot} record={editor.record} campaigns={campaigns} labs={labs}
       csrfToken={csrfToken} onSaved={saved} onCancel={() => setEditor(null)} />}
     <section className="bo-list" aria-label="Listado de análisis de suelo">
-      <div className="bo-section-head"><h2>Análisis de suelo</h2><div>
+      <div className="bo-section-head"><div className="bo-title-row"><h2>Análisis de suelo</h2>
+        <HelpButton helpKey="analisis-de-suelo" id="bo-help-open-soil" /></div><div>
         <button type="button" disabled={!ready || loading || opening} onClick={() => { setEditor({ record: null }); setNotice(''); setError(''); }}>Nuevo análisis</button>
         <button type="button" disabled={loading} onClick={() => { setNotice(''); load(); }}>Actualizar</button></div></div>
       <p className="bo-list-note">Todos los análisis del lote, de todas las campañas, del más reciente al más antiguo.</p>

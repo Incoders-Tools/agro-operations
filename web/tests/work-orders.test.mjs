@@ -32,7 +32,7 @@ test('an empty order starts today with no plots and one blank input line', () =>
 test('create payload carries the firm, never a field or the client, trims text, nulls empty optionals and skips blank lines', () => {
   assert.deepEqual(orderPayload(form), {
     firmId: 'f1', issuedOn: '2026-11-23', laborTypeId: 'l1', stageId: null, contractorId: 'c1',
-    campaignId: null, cropId: 'cr1', variety: 'Variedad ficticia 2', observations: null, responsibleEngineer: 'Ing. Demo',
+    campaignId: null, cropId: 'cr1', variety: 'Variedad ficticia 2', observations: null, responsibleStaffId: null, responsibleEngineer: 'Ing. Demo',
     plots: [{ plotId: 'p1', workedAreaHectares: 10.5 }, { plotId: 'p2', workedAreaHectares: 4 }],
     lines: [{ inputId: 'i1', dosePerHectare: 1.25 }],
   });

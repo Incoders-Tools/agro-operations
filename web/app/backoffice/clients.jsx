@@ -6,7 +6,9 @@ import { Busy, RecordDetail, RecordForm, RecordList, SectionHeader, usePending }
 import SoilAnalysesPanel from './soil-analyses.jsx';
 import { ClientProviderLinks, providerLabel } from './providers.jsx';
 import { ClientComparisons } from './quotes.jsx';
-import { clientCounts, entities, fieldMoveGroups, fieldPlotCount, moveNotice, optionLabel, plotCropDetail, rowLabel, tenures } from './schema.mjs';
+import {
+  clientCounts, entities, fieldMoveGroups, fieldPlotCount, missingFirmNotice, moveNotice, optionLabel, plotCropDetail, rowLabel, tenures,
+} from './schema.mjs';
 
 const children = { clients: 'fields', fields: 'plots', plots: 'plot-crops' };
 
@@ -71,10 +73,17 @@ export default function ClientsSection({ identity, navigate }) {
     if (entity === 'plots') return load('plots', `fieldId=${path.fieldId}`);
     return load('plot-crops', `plotId=${path.plotId}`);
   }
-  // A field moved to another client or a plot moved to another field opens its new parent (S3).
+  // A field moved to another client or a plot moved to another field opens its new parent (S3). A new client whose name
+  // is already a firm's gets no firm of its own, so the notice asks for one.
   function saved(entity, record, result) {
     const moved = record && result && moveNotice(entity, record, result, { clients: rows.clients, fields: totals.fields });
-    if (!moved) { setEditor(null); setFormKey(key => key + 1); setNotice(''); reloadFor(entity); return; }
+    if (!moved) {
+      setEditor(null); setFormKey(key => key + 1); setNotice(''); reloadFor(entity);
+      if (entity === 'clients' && !record && result) {
+        api(`commercial-firms?clientId=${result.id}`).then(firms => setNotice(missingFirmNotice(firms) ?? '')).catch(cause => setError(cause.message));
+      }
+      return;
+    }
     loadTotals();
     if (entity === 'fields') go({ clientId: result.clientId, fieldId: null, plotId: null });
     else go({ clientId: totals.fields.find(row => row.id === result.fieldId)?.clientId ?? path.clientId, fieldId: result.fieldId, plotId: null });
@@ -102,7 +111,7 @@ export default function ClientsSection({ identity, navigate }) {
     nameOf(rows.campaigns, b.campaignId).localeCompare(nameOf(rows.campaigns, a.campaignId)) || a.position - b.position);
 
   return <>
-    <SectionHeader identity={identity} title="Clientes" count={level || !loaded.base ? undefined : rows.clients.length}
+    <SectionHeader identity={identity} title="Clientes" helpKey={level === 'plots' ? 'lotes' : undefined} count={level || !loaded.base ? undefined : rows.clients.length}
       description="Aquí administras cada cliente con sus firmas comerciales y sus campos; cada campo, con sus lotes; cada lote, con sus cultivos por campaña y sus análisis de suelo." />
     <nav className="bo-breadcrumb" aria-label="Ubicación"><ol>
       <li><button type="button" onClick={() => go({ clientId: null, fieldId: null, plotId: null })} aria-current={!level ? 'page' : undefined}>Clientes</button></li>

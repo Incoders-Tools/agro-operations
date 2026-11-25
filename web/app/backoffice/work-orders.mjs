@@ -18,17 +18,23 @@ export const todayIso = (date = new Date()) => `${date.getFullYear()}-${pad(date
 export function emptyOrder(today = todayIso()) {
   return {
     clientId: '', firmId: '', issuedOn: today, laborTypeId: '', stageId: '', contractorId: '', plots: [],
-    campaignId: '', cropId: '', variety: '', observations: '', responsibleEngineer: '', lines: [newLine()],
+    campaignId: '', cropId: '', variety: '', observations: '', responsibleEngineer: '', responsibleStaffId: '', lines: [newLine()],
   };
 }
 
 const text = value => value == null ? '' : String(value);
 
-export function orderFromRecord(record) {
+/**
+ * Form state of a stored order. `engineers` are the active engineers: a responsible staff member who is no longer one
+ * starts unselected, since the API accepts only an active engineer (see responsibleNote).
+ */
+export function orderFromRecord(record, { engineers } = {}) {
   const header = ['firmId', 'issuedOn', 'laborTypeId', 'stageId', 'contractorId', 'campaignId', 'cropId', 'variety',
-    'observations', 'responsibleEngineer'];
+    'observations', 'responsibleEngineer', 'responsibleStaffId'];
+  const staffId = text(record.responsibleStaffId);
   return {
     ...Object.fromEntries(header.map(key => [key, text(record[key])])),
+    responsibleStaffId: engineers && staffId && !engineers.some(row => row.id === staffId) ? '' : staffId,
     plots: record.plots.map(plot => ({ plotId: plot.plotId, worked: text(plot.workedAreaHectares) })),
     lines: record.lines.length ? record.lines.map(line => ({ ...newLine(), inputId: line.inputId, dose: text(line.dosePerHectare) })) : [newLine()],
   };
@@ -40,13 +46,15 @@ const optional = value => {
 };
 
 // Create sends the firm (the server takes the number from it); update sends the revision and never the firm.
-// The client only narrows the form and there is no field: each plot belongs to its own field.
+// The client only narrows the form and there is no field: each plot belongs to its own field. A chosen staff member
+// replaces the free-text responsible (the API stores its name); without one, an older order keeps its text.
 export function orderPayload(form, { revision } = {}) {
   const payload = revision === undefined ? { firmId: form.firmId } : {};
   Object.assign(payload, {
     issuedOn: optional(form.issuedOn), laborTypeId: form.laborTypeId, stageId: optional(form.stageId), contractorId: form.contractorId,
     campaignId: optional(form.campaignId), cropId: optional(form.cropId), variety: optional(form.variety),
-    observations: optional(form.observations), responsibleEngineer: optional(form.responsibleEngineer),
+    observations: optional(form.observations), responsibleStaffId: optional(form.responsibleStaffId),
+    responsibleEngineer: optional(form.responsibleStaffId) ? null : optional(form.responsibleEngineer),
     plots: form.plots.map(plot => ({ plotId: plot.plotId, workedAreaHectares: Number(text(plot.worked).trim()) })),
     lines: form.lines.filter(line => line.inputId).map(line => ({ inputId: line.inputId, dosePerHectare: Number(text(line.dose).trim()) })),
   });
@@ -111,6 +119,33 @@ export const laborLabel = labor => labor ? (labor.abbreviation ? `${labor.name} 
 export const laborOptionGroups = labors => laborGroups(labors).map(group => ({
   label: group.label, options: group.labors.map(labor => ({ value: labor.id, label: laborLabel(labor) })),
 }));
+
+/**
+ * What the form tells about a stored order's responsible: `legacy` is the free text of an order written before staff
+ * existed; `inactive` the stored name of a staff member who is no longer an active engineer. Both null otherwise.
+ */
+export function responsibleNote(record, engineers) {
+  const none = { legacy: null, inactive: null };
+  if (!record) return none;
+  const name = optional(record.responsibleEngineer);
+  if (!record.responsibleStaffId) return { ...none, legacy: name };
+  return engineers.some(row => row.id === record.responsibleStaffId) ? none : { ...none, inactive: name ?? 'Sin nombre' };
+}
+
+/** "Name · title · Matrícula n" of a staff member; without one, the stored text (or null). */
+export function responsibleLabel(staff, fallback) {
+  if (!staff) return optional(fallback);
+  return [staff.fullName, staff.title, staff.licenseNumber && `Matrícula ${staff.licenseNumber}`].filter(Boolean).join(' · ');
+}
+
+/** The printed responsible: name, title and licence under the signature line, and name and phone after "llamar:". */
+export function printResponsible(document) {
+  const staff = document.responsible;
+  const name = optional(staff?.fullName) ?? optional(document.responsibleEngineer);
+  const details = staff ? [optional(staff.title), staff.licenseNumber && `Matrícula ${staff.licenseNumber}`].filter(Boolean) : [];
+  const phone = optional(staff?.phone);
+  return { name, details, call: name && phone ? `${name} · ${phone}` : name };
+}
 
 export const orderLabel = (firm, number) => firm ? `${firm.name} Nº ${number}` : `Nº ${number}`;
 

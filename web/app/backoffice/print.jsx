@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import { api, sessionEndedMessage } from './api.mjs';
 import { brandName, brandTagline } from './brand.mjs';
+import { HelpButton, HelpPanel, HelpProvider } from './help-panel.jsx';
 import { displayUnit } from './units.mjs';
-import { cropLabel, displayDate, documentTitle, formatAmount, productLabel } from './work-orders.mjs';
+import { cropLabel, displayDate, documentTitle, formatAmount, printResponsible, productLabel } from './work-orders.mjs';
 
 const plotLabel = plot => plot.plotCode ? <><strong>{plot.plotCode}</strong> <span className="ot-sub">{plot.plotName}</span></> : plot.plotName;
 
@@ -29,17 +30,19 @@ export default function WorkOrderPrint({ id }) {
   const toolbar = <nav className="ot-toolbar" aria-label="Acciones de la orden">
     {order && <button type="button" onClick={() => window.print()}>Descargar PDF</button>}
     <a href="/backoffice">Volver</a>
+    <HelpButton />
     {order && <small>En el diálogo de impresión elige “Guardar como PDF”; el nombre del archivo ya viene propuesto.</small>}
   </nav>;
 
-  if (!order) return <main className="ot-page">{toolbar}<div className="ot-message">
+  if (!order) return <HelpProvider sectionKey="impresion-ot"><main className="ot-page">{toolbar}<div className="ot-message">
     {problem === 'session' ? <p role="alert">Tu sesión terminó o aún no ingresaste. <a href="/backoffice">Ingresa al backoffice</a> y vuelve a abrir esta orden.</p>
-      : problem ? <p role="alert">{problem}</p> : <p role="status">Cargando orden…</p>}</div></main>;
+      : problem ? <p role="alert">{problem}</p> : <p role="status">Cargando orden…</p>}</div><HelpPanel /></main></HelpProvider>;
 
   const cancelled = order.status === 'cancelada';
   const labor = order.labor.abbreviation ? `${order.labor.name} (${order.labor.abbreviation})` : order.labor.name;
   const hollow = order.lines.some(line => line.hollowCone);
-  return <main className="ot-page">{toolbar}
+  const responsible = printResponsible(order);
+  return <HelpProvider sectionKey="impresion-ot"><main className="ot-page">{toolbar}
     <article className={cancelled ? 'ot-sheet ot-cancelled' : 'ot-sheet'} aria-label={`Orden de trabajo Nº ${order.number}`}>
       <header className="ot-head"><p className="ot-mark"><span aria-hidden="true">✳</span> {brandName} · {brandTagline}</p><h1>ORDEN DE TRABAJO</h1></header>
       {cancelled && <p className="ot-void" role="note"><strong>ANULADA</strong>{order.cancelReason && <span>Motivo: {order.cancelReason}</span>}</p>}
@@ -85,9 +88,12 @@ export default function WorkOrderPrint({ id }) {
 
       <footer className="ot-foot">
         <div><p className="ot-warning">NO MODIFICAR A MANO ESTA ORDEN.</p>
-          <p>Ante cualquier duda llamar: <strong>{order.responsibleEngineer ?? 'Sin indicar'}</strong></p></div>
-        <div className="ot-sign"><span>Firma responsable actuante</span></div>
+          <p>Ante cualquier duda llamar: <strong>{responsible.call ?? 'Sin indicar'}</strong></p></div>
+        <div className="ot-sign"><span>Firma responsable actuante</span>
+          {responsible.name && <p className="ot-signer"><strong>{responsible.name}</strong>
+            {responsible.details.map(detail => <small key={detail}>{detail}</small>)}</p>}</div>
       </footer>
     </article>
-  </main>;
+    <HelpPanel />
+  </main></HelpProvider>;
 }

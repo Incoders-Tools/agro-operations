@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
 import { ComboField, Field, optionNodes } from './field.jsx';
+import { ValidatedForm } from './form-validation.jsx';
 import { Busy, RecordDetail, SectionHeader, usePending } from './records.jsx';
 import {
   emptySeedAnalysis, formatNumber, fractions, searchSeeds, seedFromRecord, seedPayload, seedProblem, seedQuery, seedingRate, treatments,
@@ -24,8 +25,8 @@ function Select({ id, label, value, onChange, options: list, placeholder, option
     </select>}</Field>;
 }
 
-function NumberInput({ id, label, value, onChange, hint, optional = true, min = '0', max, step = 'any' }) {
-  return <Field id={id} label={label} optional={optional} hint={hint}>{hintId =>
+function NumberInput({ id, label, value, onChange, hint, optional = true, min = '0', max, step = 'any', noun }) {
+  return <Field id={id} label={label} optional={optional} hint={hint} noun={noun}>{hintId =>
     <input id={id} type="number" inputMode="decimal" min={min} max={max} step={step} value={value} required={!optional}
       aria-describedby={hintId} onChange={event => onChange(event.target.value)} />}</Field>;
 }
@@ -38,8 +39,7 @@ function SeedForm({ record, refs, labs, csrfToken, onSaved, onCancel }) {
   const set = changes => setForm(current => ({ ...current, ...changes }));
   const problem = seedProblem(form);
 
-  async function save(event) {
-    event.preventDefault();
+  async function save() {
     if (problem) { setError(problem); return; }
     setBusy(true); setError('');
     try {
@@ -52,7 +52,7 @@ function SeedForm({ record, refs, labs, csrfToken, onSaved, onCancel }) {
 
   const ready = refs.clients.length && refs.crops.length;
   return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar análisis de semillas' : 'Nuevo análisis de semillas'}</h2>
-    <form onSubmit={save}>
+    <ValidatedForm onSubmit={save}>
       <div className="bo-pair">
         <ComboField id="bo-seed-client" label="Cliente" value={form.clientId} onChange={clientId => set({ clientId })} options={options(refs.clients)}
           placeholder="Busca por nombre o CUIT" hint="Productor de procedencia de la semilla." />
@@ -62,19 +62,20 @@ function SeedForm({ record, refs, labs, csrfToken, onSaved, onCancel }) {
           <input id="bo-seed-variety" type="text" maxLength={200} value={form.variety} onChange={event => set({ variety: event.target.value })} /></Field>
         <ComboField id="bo-seed-campaign" label="Campaña" optional value={form.campaignId} onChange={campaignId => set({ campaignId })}
           options={options(refs.campaigns)} none="Sin indicar" />
-        <Field id="bo-seed-date" label="Fecha de análisis">
+        <Field id="bo-seed-date" label="Fecha de análisis" noun="la fecha del análisis">
           <input id="bo-seed-date" type="date" required value={form.analyzedOn} onChange={event => set({ analyzedOn: event.target.value })} /></Field>
         <ComboField id="bo-seed-lab" label="Laboratorio" optional value={form.laboratoryId} onChange={laboratoryId => set({ laboratoryId })}
           options={options(labs)} none="Sin indicar" hint={labs.length ? undefined : 'Aún no hay laboratorios de semillas en Proveedores.'} />
-        <NumberInput id="bo-seed-weight" label="Peso de 1000 semillas (g)" value={form.thousandSeedWeightG}
-          onChange={thousandSeedWeightG => set({ thousandSeedWeightG })} />
-        <NumberInput id="bo-seed-vigor" label="Vigor (%)" max="100" value={form.vigorPct} onChange={vigorPct => set({ vigorPct })} />
+        {/* The API keeps the weight as numeric(10,4) and percentages with two decimals. */}
+        <NumberInput id="bo-seed-weight" label="Peso de 1000 semillas (g)" min="0.0001" max="999999.9999" step="0.0001" value={form.thousandSeedWeightG}
+          noun="el peso de 1000 semillas" onChange={thousandSeedWeightG => set({ thousandSeedWeightG })} />
+        <NumberInput id="bo-seed-vigor" label="Vigor (%)" max="100" step="0.01" value={form.vigorPct} onChange={vigorPct => set({ vigorPct })} />
       </div>
       <p className="bo-hint">Todos los valores medidos son opcionales: carga solo los que tengas.</p>
       <div className="bo-pair">{treatments.map(treatment => <fieldset key={treatment.key} className="bo-group"><legend>{treatment.label}</legend>
         {fractions.map(fraction => {
           const key = `${fraction.key}${treatment.key}Pct`;
-          return <NumberInput key={key} id={`bo-seed-${key}`} label={fraction.label} max="100" value={form[key]}
+          return <NumberInput key={key} id={`bo-seed-${key}`} label={fraction.label} max="100" step="0.01" value={form[key]}
             onChange={value => set({ [key]: value })} />;
         })}
       </fieldset>)}</div>
@@ -85,7 +86,7 @@ function SeedForm({ record, refs, labs, csrfToken, onSaved, onCancel }) {
       {!ready && <p>Primero crea clientes y cultivos.</p>}
       <div className="bo-actions"><button type="submit" disabled={busy || !ready}>{busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Crear análisis'}</button>
         <button type="button" onClick={onCancel}>Cancelar</button></div>
-    </form></section>;
+    </ValidatedForm></section>;
 }
 
 // Seeding rate from a target stand (S2). The formula is an assumption until the engineers confirm it (Q18).

@@ -28,6 +28,12 @@ export const providerKinds = [
   { value: 'otro', label: 'Otro' },
 ];
 export const contactRoles = [{ value: 'ventas', label: 'Ventas' }, { value: 'tecnico', label: 'Técnico' }, { value: 'otro', label: 'Otro' }];
+// Company staff (S3, L2): the active engineers are the responsible engineers an OT can name.
+export const staffRoles = [{ value: 'ingeniero', label: 'Ingeniero' }, { value: 'administrativo', label: 'Administrativo' }, { value: 'otro', label: 'Otro' }];
+// A recipe's cycle stage is its own fixed list, sent in lowercase as the API stores it.
+export const recipeStages = [
+  { value: 'presiembra', label: 'Presiembra' }, { value: 'preemergencia', label: 'Preemergencia' }, { value: 'postemergencia', label: 'Postemergencia' },
+];
 
 export const optionLabel = (options, value) => options.find(option => option.value === value)?.label ?? value;
 
@@ -35,7 +41,7 @@ const name = { key: 'name', label: 'Nombre', type: 'text', maxLength: 200 };
 const taxId = { key: 'taxId', label: 'CUIT', type: 'text', optional: true, inputMode: 'numeric', hint: '11 dígitos, con o sin guiones.' };
 const email = { key: 'email', label: 'Email', type: 'email', optional: true };
 const phone = { key: 'phone', label: 'Teléfono', type: 'tel', optional: true };
-const website = { key: 'website', label: 'Sitio web', type: 'text', inputMode: 'url', optional: true, maxLength: 300, hint: 'Ej. www.ejemplo.com.ar' };
+const website = { key: 'website', label: 'Sitio web', type: 'text', inputMode: 'url', optional: true, maxLength: 200, hint: 'Ej. www.ejemplo.com.ar' };
 const notes = { key: 'notes', label: 'Notas', type: 'textarea', optional: true };
 const yieldKg = { type: 'number', optional: true, min: '0', max: '9999999999.99', step: '0.01' };
 const dose = { type: 'number', optional: true, min: '0.0001', step: '0.0001' };
@@ -155,7 +161,7 @@ export const entities = {
     fields: [
       name, { key: 'abbreviation', label: 'Abreviatura', type: 'text', optional: true, maxLength: 12, hint: 'Ej. PULV-TE' },
       { key: 'category', label: 'Categoría', type: 'select', optional: true, options: laborCategories, placeholder: 'Sin categoría' },
-      { key: 'description', label: 'Descripción', type: 'textarea', optional: true, hint: 'Aclaración de la labor, ej. equipo o cultivos.' },
+      { key: 'description', label: 'Descripción', type: 'textarea', optional: true, maxLength: 300, hint: 'Aclaración de la labor, ej. equipo o cultivos.' },
     ],
     detail: row => joined([row.category ? optionLabel(laborCategories, row.category) : 'Sin categoría', row.abbreviation, row.description]),
     sort: rows => laborGroups(rows).flatMap(group => group.labors),
@@ -164,6 +170,19 @@ export const entities = {
     title: 'Etapas', singular: 'etapa', feminine: true,
     fields: [name, { key: 'sortOrder', label: 'Orden', type: 'integer', step: '1', hint: 'Posición de la etapa en el ciclo del cultivo.' }],
     detail: row => `Orden ${row.sortOrder}`,
+  },
+  staff: {
+    title: 'Personal', singular: 'persona', feminine: true, search: ['fullName', 'title', 'licenseNumber', 'email'],
+    fields: [
+      { key: 'fullName', label: 'Nombre completo', type: 'text', maxLength: 200, hint: 'Como debe salir en la orden de trabajo.' },
+      { key: 'title', label: 'Título', type: 'text', optional: true, maxLength: 100, suggestions: ['Ingeniero agrónomo'] },
+      { key: 'role', label: 'Rol', type: 'select', options: staffRoles, initial: 'ingeniero', hint: 'Solo los ingenieros activos pueden ser responsables de una OT.' },
+      { key: 'licenseNumber', label: 'Matrícula', type: 'text', optional: true, maxLength: 50, hint: 'Sale en la orden de trabajo impresa.' },
+      email, { ...phone, hint: 'Sale en la orden impresa como contacto.' },
+      { key: 'active', label: 'Activo', type: 'checkbox', initial: true, hint: 'Desmárcalo cuando la persona deja la empresa: no se borra.' },
+      notes,
+    ],
+    label: row => row.fullName,
   },
   crops: { title: 'Cultivos', singular: 'cultivo', fields: [name] },
   campaigns: { title: 'Campañas', singular: 'campaña', feminine: true, fields: [name] },
@@ -200,7 +219,7 @@ export function payloadFor(entity, form, { revision, parent, record } = {}) {
 export function formFor(entity, record) {
   return Object.fromEntries(entities[entity].fields.map(field => {
     const raw = record?.[field.key];
-    if (field.type === 'checkbox') return [field.key, Boolean(raw)];
+    if (field.type === 'checkbox') return [field.key, raw == null ? Boolean(field.initial) : Boolean(raw)];
     return [field.key, raw == null ? field.initial ?? '' : String(raw)];
   }));
 }
@@ -261,6 +280,12 @@ export const plotCropDetail = row => joined([
   row.grainYieldKgHa != null && `Rendimiento de grano (kg/ha): ${row.grainYieldKgHa}`,
   row.forageBiomassKgHa != null && `Biomasa de forraje (kg/ha): ${row.forageBiomassKgHa}`,
 ]);
+
+/**
+ * Notice after creating a client that got no commercial firm: the API creates one with the client's name unless a firm
+ * already has that name. Null when the client has a firm.
+ */
+export const missingFirmNotice = firms => firms.length ? null : 'Ya existe una firma con ese nombre; agrega una firma comercial para este cliente.';
 
 /** Link target for a contractor website: http(s) as stored, a bare address as https, any other scheme not linked. */
 export function websiteHref(website) {

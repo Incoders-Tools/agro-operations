@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
 import { ComboField, Field, useFocusAfterRender } from './field.jsx';
+import { ValidatedForm } from './form-validation.jsx';
 import { InputPicker, Select } from './providers.jsx';
 import { Busy, RecordDetail, SectionHeader, usePending } from './records.jsx';
 import {
@@ -26,8 +27,7 @@ function ComparisonForm({ record, clients, clientId, csrfToken, onSaved, onCance
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const set = changes => setForm(current => ({ ...current, ...changes }));
-  async function save(event) {
-    event.preventDefault();
+  async function save() {
     setBusy(true); setError('');
     try {
       const saved = await send(record ? `quote-comparisons/${record.id}` : 'quote-comparisons', record ? 'PUT' : 'POST',
@@ -37,7 +37,7 @@ function ComparisonForm({ record, clients, clientId, csrfToken, onSaved, onCance
     finally { setBusy(false); }
   }
   return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar comparación' : 'Nueva comparación de presupuestos'}</h2>
-    <form onSubmit={save}>
+    <ValidatedForm onSubmit={save}>
       <div className="bo-pair">
         {record ? <Field id="bo-cmp-client" label="Cliente"><output id="bo-cmp-client">{nameOf(clients, record.clientId)}</output></Field>
           : <ComboField id="bo-cmp-client" label="Cliente" value={form.clientId} onChange={value => set({ clientId: value })} options={options(clients)}
@@ -52,7 +52,7 @@ function ComparisonForm({ record, clients, clientId, csrfToken, onSaved, onCance
       <div className="bo-actions"><button type="submit" disabled={busy || (!record && !clients.length)}>
         {busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Crear comparación'}</button>
         <button type="button" onClick={onCancel}>Cancelar</button></div>
-    </form></section>;
+    </ValidatedForm></section>;
 }
 
 // Add or replace one quote with its lines. Totals follow the API: 4 decimals, rounded half away from zero.
@@ -73,8 +73,7 @@ function QuoteForm({ comparison, record, providers, inputs, csrfToken, onSaved, 
   // Suppliers of inputs, plus the quote's current provider if its kind changed since.
   const choices = providers.filter(provider => provider.kind === 'insumos' || provider.id === record?.providerId);
 
-  async function save(event) {
-    event.preventDefault();
+  async function save() {
     setBusy(true); setError('');
     try {
       await send(record ? `quotes/${record.id}` : `quote-comparisons/${comparison.id}/quotes`, record ? 'PUT' : 'POST',
@@ -84,11 +83,11 @@ function QuoteForm({ comparison, record, providers, inputs, csrfToken, onSaved, 
     finally { setBusy(false); }
   }
   return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar presupuesto' : 'Nuevo presupuesto'}</h2>
-    <form onSubmit={save}>
+    <ValidatedForm onSubmit={save}>
       <div className="bo-pair">
         <ComboField id="bo-quote-provider" label="Proveedor" value={form.providerId} onChange={providerId => set({ providerId })} options={options(choices)}
           placeholder="Busca por nombre o CUIT" hint={choices.length ? 'Proveedores de tipo Insumos.' : 'Aún no hay proveedores de tipo Insumos.'} />
-        <Field id="bo-quote-received" label="Fecha de recepción">
+        <Field id="bo-quote-received" label="Fecha de recepción" noun="la fecha de recepción del presupuesto">
           <input id="bo-quote-received" type="date" required value={form.receivedOn} onChange={event => set({ receivedOn: event.target.value })} /></Field>
         <Select id="bo-quote-currency" label="Moneda" value={form.currency} onChange={currency => set({ currency })} options={currencies}
           hint="Un presupuesto tiene una sola moneda." />
@@ -109,7 +108,7 @@ function QuoteForm({ comparison, record, providers, inputs, csrfToken, onSaved, 
             <Select id={`${id}-mode`} label={`Producto ${index + 1}`} value={line.mode} onChange={mode => setLine(line.key, { mode })} options={lineModes} />
             {line.mode === 'input'
               ? <InputPicker id={`${id}-input`} label="Insumo" inputs={inputs} value={line.inputId} onChange={chooseInput} />
-              : <Field id={`${id}-text`} label="Producto">
+              : <Field id={`${id}-text`} label="Producto" messages={{ required: 'Escribe el producto cotizado.' }}>
                 <input id={`${id}-text`} type="text" required maxLength={200} value={line.productText} onChange={event => setLine(line.key, { productText: event.target.value })} /></Field>}
             <Field id={`${id}-quantity`} label="Cantidad">
               <input id={`${id}-quantity`} type="number" inputMode="decimal" min="0.0001" step="0.0001" required value={line.quantity}
@@ -132,7 +131,7 @@ function QuoteForm({ comparison, record, providers, inputs, csrfToken, onSaved, 
       {error && <p className="bo-error" role="alert">{error}</p>}
       <div className="bo-actions"><button type="submit" disabled={busy || !choices.length}>{busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Agregar presupuesto'}</button>
         <button type="button" onClick={onCancel}>Cancelar</button></div>
-    </form></section>;
+    </ValidatedForm></section>;
 }
 
 // One row per product, one column per quote; the cheapest offer per currency comes from the API (cheapestQuoteIdByCurrency).
@@ -172,8 +171,7 @@ function DecideForm({ detail, providers, csrfToken, onSaved }) {
   }));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  async function decide(event) {
-    event.preventDefault();
+  async function decide() {
     setBusy(true); setError('');
     try {
       await send(`quote-comparisons/${comparison.id}/decide`, 'POST', decidePayload(form, comparison.revision), csrfToken);
@@ -182,8 +180,8 @@ function DecideForm({ detail, providers, csrfToken, onSaved }) {
     finally { setBusy(false); }
   }
   return <section className="bo-editor bo-analysis-form" aria-label="Decidir"><h2>Decidir</h2>
-    <form onSubmit={decide}>
-      <ComboField id="bo-decide-quote" label="Presupuesto elegido" value={form.quoteId} onChange={quoteId => setForm(current => ({ ...current, quoteId }))}
+    <ValidatedForm onSubmit={decide}>
+      <ComboField id="bo-decide-quote" label="Presupuesto elegido" noun="el presupuesto" value={form.quoteId} onChange={quoteId => setForm(current => ({ ...current, quoteId }))}
         placeholder="Busca por proveedor" options={quotes.map(quote => ({
           value: quote.id, label: `${nameOf(providers, quote.providerId)} · ${displayDate(quote.receivedOn)} · ${formatMoney(quote.total, quote.currency)}`,
         }))} />
@@ -192,7 +190,7 @@ function DecideForm({ detail, providers, csrfToken, onSaved }) {
           onChange={event => setForm(current => ({ ...current, reason: event.target.value }))} />}</Field>
       {error && <p className="bo-error" role="alert">{error}</p>}
       <div className="bo-actions"><button type="submit" disabled={busy || !form.quoteId || !form.reason.trim()}>{busy ? 'Guardando…' : 'Decidir'}</button></div>
-    </form></section>;
+    </ValidatedForm></section>;
 }
 
 function ComparisonDetail({ id, refs, csrfToken, onBack, onChanged }) {

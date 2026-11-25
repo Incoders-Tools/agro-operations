@@ -2,15 +2,16 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { comboboxIdle, comboboxItems, comboboxStep, displayText, optionLimit } from './combobox.mjs';
-
-const unchosen = 'Elige una opción de la lista.';
+import { useClearError, useFieldError } from './form-validation.jsx';
 
 /**
  * One search field for choosing an entity (S2), the WAI-ARIA combobox with a listbox popup. `value` and `onChange` work
  * like a select: the chosen option's value, '' for none. Typing filters (see combobox.mjs); ArrowDown/ArrowUp move,
  * Enter or a click choose, Escape and blur restore the chosen label. `none` labels the empty choice of an optional field.
+ * A required choice is checked by the form validation (S12) from aria-required and data-value; `label`, `noun` and
+ * `messages` word its message, as in Field.
  */
-export function Combobox({ id, value, onChange, options, placeholder, none, required, disabled, describedBy }) {
+export function Combobox({ id, value, onChange, options, placeholder, none, required, disabled, describedBy, label, noun, messages }) {
   const [state, setState] = useState(comboboxIdle);
   // Focus selects the whole label so typing replaces it; the mouseup of the focusing click would undo that selection.
   const focusing = useRef(false);
@@ -19,17 +20,15 @@ export function Combobox({ id, value, onChange, options, placeholder, none, requ
   const listId = `${id}-listbox`;
   const optionId = index => `${id}-option-${index}`;
   const open = state.open && !disabled;
+  const error = useFieldError(id);
+  const clearError = useClearError();
 
   function run(event) {
     const result = comboboxStep(state, event, options, config);
     setState(result.state);
-    if (result.choose !== undefined && result.choose !== value) onChange(result.choose);
+    if (result.choose !== undefined && result.choose !== value) { clearError(id); onChange(result.choose); }
     return result;
   }
-  // The form cannot be sent while a required choice is missing, as with a required select.
-  useEffect(() => {
-    document.getElementById(id)?.setCustomValidity(required && !value ? unchosen : '');
-  }, [id, required, value]);
   useEffect(() => {
     if (open && state.active >= 0) document.getElementById(`${id}-option-${state.active}`)?.scrollIntoView?.({ block: 'nearest' });
   }, [id, open, state.active]);
@@ -51,7 +50,9 @@ export function Combobox({ id, value, onChange, options, placeholder, none, requ
   return <div className="bo-combobox">
     <input id={id} type="text" role="combobox" autoComplete="off" spellCheck={false} aria-autocomplete="list" aria-expanded={open}
       aria-controls={listId} aria-activedescendant={open && state.active >= 0 ? optionId(state.active) : undefined}
-      aria-required={required || undefined} aria-describedby={describedBy} disabled={disabled} placeholder={placeholder ?? none}
+      aria-required={required || undefined} aria-describedby={describedBy} aria-invalid={error ? true : undefined} disabled={disabled}
+      placeholder={placeholder ?? none} data-value={value ?? ''} data-label={typeof label === 'string' ? label : undefined} data-noun={noun}
+      data-messages={messages && JSON.stringify(messages)}
       value={displayText(state, options, value)} onChange={event => run({ type: 'input', term: event.target.value })}
       onKeyDown={event => { if (run({ type: 'key', key: event.key }).handled) event.preventDefault(); }}
       onClick={() => { if (!state.open) run({ type: 'open' }); }}

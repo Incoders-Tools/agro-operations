@@ -94,10 +94,11 @@ crea sin firma y la agregas con otro nombre.
 
 | Situación | Mensaje |
 | --- | --- |
-| Nombre vacío | El nombre es obligatorio. |
+| Nombre vacío | Indica el nombre. |
 | CUIT sin 11 dígitos | El CUIT debe tener 11 dígitos. |
 | Email inválido | El email debe tener un único @ con texto a ambos lados. |
 | Nombre de firma ya usado | Ya existe un registro con ese nombre. |
+| Cliente nuevo cuyo nombre ya es una firma | Se crea sin firma y se avisa: "Ya existe una firma con ese nombre; agrega una firma comercial para este cliente." |
 | Próximo Nº menor o igual que la última OT | El próximo número debe ser mayor que N. |
 | Proveedor ya vinculado | Ese proveedor ya está vinculado a este cliente. |
 | Otra persona guardó antes | Otra persona modificó este registro. Actualiza antes de guardar. |

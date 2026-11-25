@@ -46,7 +46,7 @@ Dónde se usa:
 
 | Situación | Mensaje |
 | --- | --- |
-| Nombre vacío | El nombre es obligatorio. |
+| Nombre vacío | Indica el nombre. |
 | Nombre ya usado | Ya existe un registro con ese nombre. |
 | Otra persona guardó antes | Otra persona modificó este registro. Actualiza antes de guardar. |
 

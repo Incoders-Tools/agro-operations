@@ -28,7 +28,7 @@ El menú tiene dos entradas: **Recetas** (la cabecera) y **Líneas de receta** (
 | Lote | Obligatorio. Solo al crear. |
 | Campaña | Obligatoria. Solo al crear. |
 | Labor | Obligatoria. Solo al crear. |
-| Etapa del ciclo | presiembra, preemergencia o postemergencia. Es una lista fija propia, no el catálogo de Etapas. |
+| Etapa del ciclo | Presiembra, Preemergencia o Postemergencia. Es una lista fija propia, no el catálogo de Etapas. |
 | Uso objetivo | Obligatorio, hasta 200 caracteres, por ejemplo "Barbecho". |
 | Ingeniero responsable | Obligatorio, texto libre hasta 200 caracteres. |
 
@@ -66,12 +66,12 @@ El menú tiene dos entradas: **Recetas** (la cabecera) y **Líneas de receta** (
 
 | Situación | Mensaje |
 | --- | --- |
-| Uso objetivo vacío | El uso objetivo es obligatorio. |
-| Ingeniero responsable vacío | El ingeniero responsable es obligatorio. |
+| Uso objetivo vacío | Indica el uso objetivo. |
+| Ingeniero responsable vacío | Indica el ingeniero responsable. |
 | Etapa fuera de la lista | Elige una etapa válida. |
-| Producto vacío | El producto es obligatorio. |
+| Producto vacío | Indica el producto. |
 | Dosis en cero, negativa o con más de 4 decimales | La dosis debe ser mayor que cero y tener hasta 4 decimales. |
-| Unidad vacía | La unidad de dosis es obligatoria. |
+| Unidad vacía | Indica la unidad. |
 | Faltan registros relacionados | Primero crea los registros relacionados: lote, campaña, labor. |
 
 ## Preguntas abiertas

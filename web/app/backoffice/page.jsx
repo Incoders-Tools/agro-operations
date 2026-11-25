@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { brandTitle } from './brand.mjs';
 import Backoffice from './workspace.jsx';
 import './brand.css';
+import './help.css';
 import './style.css';
 
 export const dynamic = 'force-dynamic';

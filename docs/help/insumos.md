@@ -68,9 +68,9 @@ precios se cargan desde Proveedores.
 
 | Situación | Mensaje |
 | --- | --- |
-| Nombre comercial vacío | El nombre comercial es obligatorio. |
+| Nombre comercial vacío | Indica el nombre comercial. |
 | Nombre ya usado | Ya existe un registro con ese nombre. |
-| Unidad vacía | La unidad es obligatoria. |
+| Unidad vacía | Indica la unidad. |
 | Orden de mezcla fuera de 1 a 20 | El orden de mezcla debe estar entre 1 y 20. |
 | Dosis mínima o máxima en cero, negativa o con más de 4 decimales | La dosis mínima (o máxima) debe ser mayor que cero y tener hasta 4 decimales. |
 | Mínima mayor que la máxima | La dosis mínima no puede superar la máxima. |

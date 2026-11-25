@@ -34,10 +34,10 @@ los lotes de la OT.
 | ha a trabajar | Por lote, obligatoria. Empieza con la superficie del lote; puede ser menor o mayor. |
 | Campaña | Opcional. |
 | Cultivo, Variedad o híbrido | Opcionales. Se completan solos en un caso (ver "Cómo se hace"). |
-| Insumos | Cero o más líneas: insumo y dosis por ha. La unidad viene del insumo; los litros se muestran como `L`. |
+| Insumos | Cero o más líneas: insumo y dosis por ha. La unidad viene del insumo; los litros se muestran como `L`. Una línea sin insumo ni dosis no se guarda; una con dosis necesita su insumo. |
 | Total de un insumo | Dosis por ha × total de ha a trabajar de la OT, con hasta 4 decimales. |
 | Observaciones | Opcional, hasta 2000 caracteres. |
-| Ingeniero responsable | Se elige entre el personal activo con rol ingeniero (ver Personal). Las OT anteriores conservan el nombre escrito a mano. |
+| Ingeniero responsable | Obligatorio en una OT nueva. Se elige entre el personal activo con rol Ingeniero (ver Personal); la lista muestra título y matrícula. Una OT anterior con el nombre escrito a mano lo muestra como "Registrado como texto: …" y lo conserva hasta que elijas a una persona. |
 
 **Estados** (se muestran como una etiqueta de color en el listado y en el detalle):
 
@@ -70,8 +70,9 @@ acepta se reemplazan por `-`.
 6. Si eliges una **Campaña** y marcaste un solo lote, el cultivo y la variedad se completan con el primer cultivo de
    ese lote en esa campaña. Puedes cambiarlos.
 7. En **Insumos**, elige el insumo de cada línea; el cursor pasa a **Dosis por ha**. Usa **Agregar insumo** para otra
-   línea y **Quitar** para borrarla. Una línea sin insumo no se guarda.
-8. Completa **Observaciones** y elige el **Ingeniero responsable**.
+   línea y **Quitar** para borrarla. Una línea sin insumo ni dosis no se guarda.
+8. Completa **Observaciones** y elige el **Ingeniero responsable**. Si no hay ingenieros activos, el formulario lo
+   avisa y ofrece **Ir a Personal** para cargarlos.
 9. Pulsa **Emitir orden**. Se abre el detalle con el número asignado.
 
 **Buscar una OT**
@@ -84,8 +85,11 @@ acepta se reemplazan por `-`.
 **Editar una OT emitida**
 
 1. Abre el detalle y pulsa **Editar**.
-2. Cambia lo necesario. La firma y el número no cambian.
+2. Cambia lo necesario. La firma y el número no cambian. Si la OT tenía el responsable escrito a mano, elige a la
+   persona de la lista; si el responsable ya no es un ingeniero activo, elige otro.
 3. Pulsa **Guardar cambios**.
+
+El detalle muestra al **Ingeniero responsable** con su nombre, título y matrícula.
 
 **Marcar una OT como realizada**
 
@@ -111,12 +115,19 @@ Avisos que no impiden guardar (la OT se guarda igual):
 - "⚠ La dosis está por debajo de la mínima del insumo (…)" o "… por encima de la máxima …" cuando la dosis sale del
   rango de referencia del insumo. La dosis nunca se cambia sola.
 
-Lo que el sistema rechaza y el mensaje que ves:
+Al pulsar **Emitir orden** o **Guardar cambios**, cada campo con un problema muestra su mensaje debajo, el formulario
+resume cuántos hay que revisar y el cursor va al primero. El mensaje se borra al corregir el campo.
 
 | Situación | Mensaje |
 | --- | --- |
+| Sin cliente, firma, labor o contratista | Elige un cliente. / Elige una firma comercial. / Elige una labor. / Elige un contratista. |
+| Sin ingeniero responsable en una OT nueva | Elige un ingeniero responsable. |
+| Una línea con dosis y sin insumo | Elige un insumo. |
+| ha a trabajar vacías, en cero o negativas | Indica las ha a trabajar. / Las ha a trabajar deben ser mayores que 0. |
+| Dosis en cero o negativa | La dosis debe ser mayor que 0. |
+| Dosis o ha a trabajar con más de 4 decimales | La dosis admite hasta 4 decimales. / Las ha a trabajar admiten hasta 4 decimales. |
 | Ningún lote marcado | Selecciona al menos un lote. |
-| Fecha vacía | La fecha es obligatoria. |
+| Fecha vacía | Indica la fecha de la orden. |
 | ha a trabajar en cero, negativas o con más de 4 decimales | Las ha a trabajar deben ser mayores que cero y tener hasta 4 decimales. |
 | Dosis en cero, negativa o con más de 4 decimales | La dosis debe ser mayor que cero y tener hasta 4 decimales. |
 | Total de un insumo fuera de rango | El total de cada insumo debe ser mayor que cero y tener hasta 4 decimales. |
@@ -127,7 +138,7 @@ Lo que el sistema rechaza y el mensaje que ves:
 | Dos emisiones simultáneas chocan por el número | Otra orden tomó ese número. Actualiza e intenta de nuevo. |
 | Otra persona guardó la OT antes que tú | Otra persona modificó este registro. Actualiza antes de guardar. |
 | Un registro elegido ya no existe | El registro relacionado ya no existe. Actualiza los listados. |
-| El responsable elegido ya no está activo o no es ingeniero | Se rechaza: el responsable debe ser un ingeniero activo. |
+| El responsable elegido ya no está activo o no es ingeniero | El ingeniero responsable debe ser una persona activa con rol Ingeniero. Revisa Personal. |
 
 Si faltan datos base, el formulario lo indica: "Primero crea clientes, labores y contratistas." o "Este cliente aún no
 tiene firmas comerciales. Créala en Clientes."
@@ -151,6 +162,8 @@ tanto:
 
 ## Notas técnicas
 
+- El selector de responsable carga `GET /staff?role=ingeniero&active=true`; el detalle lee `GET /staff/{id}` para
+  mostrar título y matrícula aunque la persona ya no esté activa. La OT envía `responsibleStaffId`.
 - Rutas (API local, prefijo `/api/v1`): `GET /work-orders?firmId=&status=&q=`, `GET /work-orders/{id}`,
   `GET /work-orders/{id}/document`, `POST /work-orders`, `PUT /work-orders/{id}` (con `revision`),
   `POST /work-orders/{id}/complete`, `POST /work-orders/{id}/cancel` (con `revision` y `reason`).

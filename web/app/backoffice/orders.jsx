@@ -3,16 +3,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
 import { ComboField, Field, optionNodes, useFocusAfterRender } from './field.jsx';
+import { ValidatedForm } from './form-validation.jsx';
 import { Busy, Loading, SectionHeader, usePending } from './records.jsx';
 import { fieldPlotCount, optionLabel, rowLabel } from './schema.mjs';
 import { displayUnit } from './units.mjs';
 import {
   clientFirms, displayDate, doseRange, emptyOrder, exceedsPlot, fieldNames, laborLabel, laborOptionGroups, lineTotal, newLine, orderFromRecord,
-  orderLabel, orderPayload, orderQuery, plotCropPrefill, plotGroups, statuses, workedTotal,
+  orderLabel, orderPayload, orderQuery, plotCropPrefill, plotGroups, responsibleLabel, responsibleNote, statuses, workedTotal,
 } from './work-orders.mjs';
 
-// Catalogs the list, form and detail resolve ids against; firms come back with their next work order number.
-const references = ['commercial-firms', 'clients', 'fields', 'labor-types', 'stages', 'contractors', 'campaigns', 'crops', 'inputs'];
+// Catalogs the list, form and detail resolve ids against; firms come back with their next work order number. The
+// responsible engineer is chosen among the active engineers of the staff (S3).
+const references = ['commercial-firms', 'clients', 'fields', 'labor-types', 'stages', 'contractors', 'campaigns', 'crops', 'inputs', 'engineers'];
+const referencePaths = { engineers: 'staff?role=ingeniero&active=true' };
 const byId = (rows, id) => rows.find(row => row.id === id);
 const nameOf = (rows, id) => byId(rows, id)?.name;
 const printHref = id => `/backoffice/work-orders/${encodeURIComponent(id)}/print`;
@@ -44,8 +47,8 @@ function doseWarning(range, input) {
 
 // Alta and edit of one OT, in the order of the workbook `Orden` sheet. The number always comes from the server.
 // The form starts from the client (S4); its plots may come from any of its fields (S3).
-function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
-  const [form, setForm] = useState(() => record ? orderFromRecord(record) : emptyOrder());
+function OrderForm({ record, refs, csrfToken, onSaved, onCancel, onOpenStaff }) {
+  const [form, setForm] = useState(() => record ? orderFromRecord(record, { engineers: refs.engineers }) : emptyOrder());
   const [plotTerm, setPlotTerm] = useState('');
   const [clientPlots, setClientPlots] = useState([]);
   const [plotsLoading, setPlotsLoading] = useState(false);
@@ -98,8 +101,7 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
     focusLater(`bo-wo-line-${line.key}-input`);
   }
 
-  async function save(event) {
-    event.preventDefault();
+  async function save() {
     setError('');
     if (!form.plots.length) { setError('Selecciona al menos un lote.'); return; }
     setBusy(true);
@@ -121,9 +123,14 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
   const ready = refs['commercial-firms'].length && refs['labor-types'].length && refs.contractors.length;
   const firmHint = firm ? `Se emitirá con el Nº ${firm.nextWorkOrderNumber}.`
     : client && !firms.length ? 'Este cliente aún no tiene firmas comerciales. Créala en Clientes.' : undefined;
+  // An order written before staff existed keeps its free text until a staff member is chosen; a new order needs one.
+  const note = responsibleNote(record, refs.engineers);
+  const engineerHint = note.legacy ? `Registrado como texto: “${note.legacy}”. Elige a la persona de la lista para reemplazarlo; si no eliges, se conserva el texto.`
+    : note.inactive ? `${note.inactive} ya no es un ingeniero activo: elige otro responsable.`
+    : 'Ingenieros activos de Personal.';
 
   return <section className="bo-editor bo-order-form"><h2>{record ? `Editar orden ${orderLabel(firm, record.number)}` : 'Nueva orden de trabajo'}</h2>
-    <form onSubmit={save}>
+    <ValidatedForm onSubmit={save}>
       {record ? <p className="bo-context">Firma {firm?.name ?? 'Sin referencia'} · cliente {client?.name ?? 'Sin referencia'}. La firma y el número no cambian.</p>
         : <div className="bo-pair">
           <ComboField id="bo-wo-client" label="Cliente" value={clientId} onChange={chooseClient} options={options(refs.clients)}
@@ -131,7 +138,7 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
           <ComboField id="bo-wo-firm" label="Firma comercial" value={form.firmId} disabled={!client} onChange={firmId => set({ firmId })}
             options={options(firms)} placeholder={client ? 'Busca y elige una firma' : 'Primero elige el cliente'} hint={firmHint} />
         </div>}
-      <Field id="bo-wo-date" label="Fecha">
+      <Field id="bo-wo-date" label="Fecha" noun="la fecha de la orden">
         <input id="bo-wo-date" type="date" value={form.issuedOn} required onChange={event => set({ issuedOn: event.target.value })} /></Field>
       <ComboField id="bo-wo-labor" label="Labor" value={form.laborTypeId} onChange={laborTypeId => set({ laborTypeId })}
         options={laborOptionGroups(refs['labor-types'])} placeholder="Busca por nombre o abreviatura" />
@@ -156,7 +163,7 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
                     <Field id={id} label={rowLabel('plots', plot)} hint={`Superficie ${plot.areaHectares} ha`} check>{hintId =>
                       <input id={id} type="checkbox" checked={Boolean(chosen)} aria-describedby={hintId} onChange={event => togglePlot(plot, event.target.checked)} />}</Field>
                     {chosen && <>
-                      <Field id={`${id}-worked`} label="ha a trabajar">
+                      <Field id={`${id}-worked`} label="ha a trabajar" noun="las ha a trabajar">
                         <input id={`${id}-worked`} type="number" min="0.0001" max="99999999.9999" step="0.0001" required value={chosen.worked}
                           onChange={event => setWorked(plot.id, event.target.value)} /></Field>
                       {exceedsPlot(chosen.worked, plot.areaHectares) && <p className="bo-warning" role="status">⚠ Supera la superficie del lote ({plot.areaHectares} ha).</p>}
@@ -184,10 +191,11 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
           const warning = doseWarning(input && doseRange(line.dose, input), input);
           const id = `bo-wo-line-${line.key}`;
           return <li key={line.key} className="bo-line">
-            <ComboField id={`${id}-input`} label={`Insumo ${index + 1}`} value={line.inputId}
+            {/* A line left blank is skipped; one with a dose needs its input. */}
+            <ComboField id={`${id}-input`} label={`Insumo ${index + 1}`} noun="el insumo" value={line.inputId} required={Boolean(line.dose.trim())}
               onChange={inputId => { setLine(line.key, { inputId }); if (inputId) focusLater(`${id}-dose`); }} options={inputOptions}
               placeholder="Busca por nombre o principio activo" />
-            <Field id={`${id}-dose`} label="Dosis por ha">
+            <Field id={`${id}-dose`} label="Dosis por ha" noun="la dosis">
               <input id={`${id}-dose`} type="number" min="0.0001" max="99999999.9999" step="0.0001" required={Boolean(line.inputId)} value={line.dose}
                 onChange={event => setLine(line.key, { dose: event.target.value })} /></Field>
             <Readout label="Unidad">{input ? displayUnit(input.unit) : '—'}</Readout>
@@ -202,13 +210,16 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
 
       <Field id="bo-wo-notes" label="Observaciones" optional>
         <textarea id="bo-wo-notes" rows={3} maxLength={2000} value={form.observations} onChange={event => set({ observations: event.target.value })} /></Field>
-      <Field id="bo-wo-engineer" label="Ingeniero responsable" optional>
-        <input id="bo-wo-engineer" type="text" maxLength={200} value={form.responsibleEngineer} onChange={event => set({ responsibleEngineer: event.target.value })} /></Field>
+      <ComboField id="bo-wo-engineer" label="Ingeniero responsable" optional={Boolean(note.legacy)} value={form.responsibleStaffId}
+        onChange={responsibleStaffId => set({ responsibleStaffId })} placeholder="Busca y elige un ingeniero" hint={engineerHint}
+        options={refs.engineers.map(row => ({ value: row.id, label: row.fullName, detail: [row.title, row.licenseNumber && `Matrícula ${row.licenseNumber}`].filter(Boolean).join(' · ') || undefined }))} />
+      {!refs.engineers.length && <p className="bo-warning" role="status">Aún no hay ingenieros activos para elegir. Agrégalos en Administración › Personal con el rol Ingeniero y marcados como activos.{' '}
+        {onOpenStaff && <button type="button" className="bo-link" onClick={onOpenStaff}>Ir a Personal</button>}</p>}
       {error && <p className="bo-error" role="alert">{error}</p>}
       {!ready && <p>Primero crea clientes, labores y contratistas.</p>}
       <div className="bo-actions"><button type="submit" disabled={busy || !ready}>{busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Emitir orden'}</button>
         <button type="button" onClick={onCancel}>Cancelar</button></div>
-    </form></section>;
+    </ValidatedForm></section>;
 }
 
 // One OT with its plots and lines; emitida orders can be edited, completed or cancelled with a reason. S9: the header
@@ -217,6 +228,7 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel }) {
 function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
   const [order, setOrder] = useState(null);
   const [plots, setPlots] = useState([]);
+  const [responsible, setResponsible] = useState(null);
   const [action, setAction] = useState(null);
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
@@ -228,13 +240,14 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
       const loaded = await api(`work-orders/${id}`);
       const fieldIds = [...new Set(loaded.plots.map(row => row.fieldId))];
       setPlots((await Promise.all(fieldIds.map(fieldId => api(`plots?fieldId=${fieldId}`)))).flat());
+      // The responsible's current title and licence, also when no longer active.
+      setResponsible(loaded.responsibleStaffId ? await api(`staff/${loaded.responsibleStaffId}`).catch(() => null) : null);
       setOrder(loaded);
     } catch (cause) { setError(cause.message); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
 
-  async function close(event) {
-    event.preventDefault();
+  async function close() {
     setBusy(true); setError('');
     try {
       const body = action === 'cancel' ? { revision: order.revision, reason } : { revision: order.revision };
@@ -254,7 +267,7 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
     ['Labor', laborLabel(byId(refs['labor-types'], order.laborTypeId))], ['Etapa', nameOf(refs.stages, order.stageId)],
     ['Contratista', nameOf(refs.contractors, order.contractorId)], ['Campaña', nameOf(refs.campaigns, order.campaignId)],
     ['Cultivo y variedad', [nameOf(refs.crops, order.cropId), order.variety].filter(Boolean).join(' · ')],
-    ['Ingeniero responsable', order.responsibleEngineer],
+    ['Ingeniero responsable', responsibleLabel(responsible, order.responsibleEngineer)],
   ];
   const none = <span className="bo-muted">Sin indicar</span>;
   const shown = value => value === null || value === undefined || value === '' ? none : value;
@@ -279,13 +292,13 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
     </section>
     {error && <p className="bo-error" role="alert">{error}</p>}
     {action && <section className="bo-editor"><h2>{action === 'cancel' ? 'Cancelar orden' : 'Marcar como realizada'}</h2>
-      <form onSubmit={close}>
+      <ValidatedForm onSubmit={close}>
         {action === 'cancel' ? <Field id="bo-wo-reason" label="Motivo de la cancelación" hint="La orden conserva su número y sigue en el listado.">{hintId =>
           <textarea id="bo-wo-reason" rows={3} maxLength={2000} required value={reason} aria-describedby={hintId} onChange={event => setReason(event.target.value)} />}</Field>
           : <p>La orden {label} pasará a Realizada y ya no se podrá editar.</p>}
         <div className="bo-actions"><button type="submit" disabled={busy}>{busy ? 'Guardando…' : action === 'cancel' ? 'Confirmar cancelación' : 'Confirmar realizada'}</button>
           <button type="button" onClick={() => setAction(null)}>Volver</button></div>
-      </form></section>}
+      </ValidatedForm></section>}
     <div className="bo-wo-tables">
       <section className="bo-list" aria-labelledby="bo-wo-detail-plots"><h2 id="bo-wo-detail-plots">Lotes</h2>
         <table className="bo-table bo-compact"><thead><tr><th>Campo</th><th>Lote / código</th><th className="bo-num">Has</th><th className="bo-num">Has tarea</th></tr></thead>
@@ -320,7 +333,7 @@ function OrderDetail({ id, refs, csrfToken, onEdit, onBack, onChanged }) {
 }
 
 // Work orders (S5): list with search, firm and status filters, alta, detail, edit, complete, cancel and print.
-export default function WorkOrdersSection({ identity }) {
+export default function WorkOrdersSection({ identity, navigate }) {
   const [refs, setRefs] = useState(() => Object.fromEntries(references.map(key => [key, []])));
   const [orders, setOrders] = useState([]);
   const [filters, setFilters] = useState({ firmId: '', status: '', q: '' });
@@ -336,7 +349,7 @@ export default function WorkOrdersSection({ identity }) {
   const [ordersLoading, trackOrders] = usePending();
 
   const loadRefs = useCallback(() => trackRefs((async () => {
-    try { setRefs(Object.fromEntries(await Promise.all(references.map(async key => [key, await api(key)])))); }
+    try { setRefs(Object.fromEntries(await Promise.all(references.map(async key => [key, await api(referencePaths[key] ?? key)])))); }
     catch (cause) { setError(cause.message); }
     finally { setLoaded(current => ({ ...current, refs: true })); }
   })()), [trackRefs]);
@@ -374,7 +387,8 @@ export default function WorkOrdersSection({ identity }) {
     {error && <p className="bo-error" role="alert">{error}</p>}
     {view.mode === 'form' && <Busy ready={loaded.refs} busy={refsLoading} label="Cargando catálogos de la orden…">
       <OrderForm key={view.record?.id ?? 'new'} record={view.record} refs={refs} csrfToken={identity.csrfToken}
-        onSaved={saved} onCancel={() => show(view.record ? { mode: 'detail', id: view.record.id } : { mode: 'list' })} /></Busy>}
+        onSaved={saved} onCancel={() => show(view.record ? { mode: 'detail', id: view.record.id } : { mode: 'list' })}
+        onOpenStaff={navigate && (() => navigate('staff'))} /></Busy>}
     {view.mode === 'detail' && <OrderDetail key={view.id} id={view.id} refs={refs} csrfToken={identity.csrfToken}
       onBack={() => show({ mode: 'list' })} onEdit={record => show({ mode: 'form', record })} onChanged={loadOrders} />}
     {view.mode === 'list' && <section className="bo-list" aria-label="Listado de órdenes de trabajo">

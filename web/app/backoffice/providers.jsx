@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, send } from './api.mjs';
 import { ComboField, Field, optionNodes } from './field.jsx';
+import { ValidatedForm } from './form-validation.jsx';
 import { Busy, RecordDetail, RecordForm, RecordList, SectionHeader, usePending } from './records.jsx';
 import {
   currencies, emptyPrice, filterProviders, formatMoney, latestPricesByProvider, priceFromRecord, pricePayload, providerKinds, sortPrices,
@@ -56,10 +57,7 @@ export function ClientProviderLinks({ side, ownerId, options, csrfToken, title, 
     setBusy(true); setError('');
     try { await action(); setChoice(''); await load(); } catch (cause) { setError(cause.message); } finally { setBusy(false); }
   }
-  const add = event => {
-    event.preventDefault();
-    change(() => send('client-providers', 'POST', { [own]: ownerId, [other]: choice }, csrfToken));
-  };
+  const add = () => change(() => send('client-providers', 'POST', { [own]: ownerId, [other]: choice }, csrfToken));
   const id = `bo-links-${side}`;
   return <section className="bo-list" aria-label={title}>
     <div className="bo-section-head"><h2>{title}</h2><div><button type="button" disabled={loading} onClick={() => { setError(''); load(); }}>Actualizar</button></div></div>
@@ -69,12 +67,12 @@ export function ClientProviderLinks({ side, ownerId, options, csrfToken, title, 
       .map(link => <li key={link.id}><div className="bo-row"><strong>{label(link[other])}</strong></div>
         <button type="button" disabled={busy} onClick={() => change(() => send(`client-providers/${link.id}`, 'DELETE', undefined, csrfToken))}
           aria-label={`Quitar ${label(link[other])}`}>Quitar</button></li>)}</ul>}
-    <form className="bo-inline-form" onSubmit={add}>
-      <ComboField id={id} label={side === 'client' ? 'Agregar proveedor' : 'Agregar cliente'} value={choice} onChange={setChoice}
+    <ValidatedForm className="bo-inline-form" onSubmit={add}>
+      <ComboField id={id} label={side === 'client' ? 'Agregar proveedor' : 'Agregar cliente'} noun={side === 'client' ? 'el proveedor' : 'el cliente'} value={choice} onChange={setChoice}
         disabled={!available.length} placeholder={available.length ? 'Busca y elige' : 'No quedan registros para vincular'}
         options={available.map(row => ({ value: row.id, label: describe(row), detail: row.taxId ? `CUIT ${row.taxId}` : undefined }))} />
       <div className="bo-actions"><button type="submit" disabled={busy || !choice}>{busy ? 'Guardando…' : 'Vincular'}</button></div>
-    </form>
+    </ValidatedForm>
     </Busy>
   </section>;
 }
@@ -90,8 +88,7 @@ function PriceForm({ provider, record, inputs, csrfToken, onSaved, onCancel }) {
     const followsInput = !form.unit.trim() || form.unit === unitOf(form.inputId);
     set(followsInput ? { inputId, unit: unitOf(inputId) } : { inputId });
   }
-  async function save(event) {
-    event.preventDefault();
+  async function save() {
     setBusy(true); setError('');
     try {
       await send(record ? `provider-prices/${record.id}` : 'provider-prices', record ? 'PUT' : 'POST',
@@ -101,7 +98,7 @@ function PriceForm({ provider, record, inputs, csrfToken, onSaved, onCancel }) {
     finally { setBusy(false); }
   }
   return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar precio de referencia' : 'Nuevo precio de referencia'}</h2>
-    <form onSubmit={save}>
+    <ValidatedForm onSubmit={save}>
       <div className="bo-pair">
         <InputPicker id="bo-price-input" label="Insumo" inputs={inputs} value={form.inputId} onChange={chooseInput} />
         <Field id="bo-price-value" label="Precio">
@@ -110,7 +107,7 @@ function PriceForm({ provider, record, inputs, csrfToken, onSaved, onCancel }) {
         <Select id="bo-price-currency" label="Moneda" value={form.currency} onChange={currency => set({ currency })} options={currencies} />
         <Field id="bo-price-unit" label="Unidad" optional hint="Por defecto, la unidad del insumo.">{hintId =>
           <input id="bo-price-unit" type="text" maxLength={40} value={form.unit} aria-describedby={hintId} onChange={event => set({ unit: event.target.value })} />}</Field>
-        <Field id="bo-price-valid" label="Vigente desde">
+        <Field id="bo-price-valid" label="Vigente desde" messages={{ required: 'Indica desde cuándo rige el precio.' }}>
           <input id="bo-price-valid" type="date" required value={form.validOn} onChange={event => set({ validOn: event.target.value })} /></Field>
       </div>
       <Field id="bo-price-notes" label="Notas" optional>
@@ -119,7 +116,7 @@ function PriceForm({ provider, record, inputs, csrfToken, onSaved, onCancel }) {
       {!inputs.length && <p>Primero crea insumos en su catálogo.</p>}
       <div className="bo-actions"><button type="submit" disabled={busy || !inputs.length}>{busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Crear precio'}</button>
         <button type="button" onClick={onCancel}>Cancelar</button></div>
-    </form></section>;
+    </ValidatedForm></section>;
 }
 
 // Reference prices of an input supplier (S3), newest first.

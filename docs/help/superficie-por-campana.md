@@ -43,7 +43,7 @@ actual; las OT hoy proponen la superficie del lote, no la de la campaña.
 | Situación | Mensaje |
 | --- | --- |
 | Superficie en cero, negativa o con más de 4 decimales | La superficie debe ser mayor que cero y tener hasta 4 decimales. |
-| Ya existe un registro para ese lote y campaña | Se rechaza; edita el registro existente. |
+| Ya existe un registro para ese lote y campaña | Ese lote ya tiene superficie registrada para esa campaña. Edita el registro existente. |
 | Faltan lotes o campañas | Primero crea los registros relacionados: lote, campaña. |
 | Otra persona guardó antes | Otra persona modificó este registro. Actualiza antes de guardar. |
 

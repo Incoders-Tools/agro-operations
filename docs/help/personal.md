@@ -22,13 +22,13 @@ cuenta podrá vincularse con su persona del personal.
 
 | Campo | Significado y reglas |
 | --- | --- |
-| Nombre | Obligatorio y único, sin distinguir mayúsculas; hasta 200 caracteres. Nombre y apellido como deben salir en la OT. |
-| Título | Opcional, hasta 100 caracteres. Título profesional, por ejemplo "Ingeniero agrónomo". |
+| Nombre completo | Obligatorio y único, sin distinguir mayúsculas; hasta 200 caracteres. Nombre y apellido como deben salir en la OT. |
+| Título | Opcional, hasta 100 caracteres. Título profesional; al escribir se sugiere "Ingeniero agrónomo". |
 | Rol | Obligatorio: Ingeniero, Administrativo u Otro. |
 | Matrícula | Opcional, hasta 50 caracteres. Número de matrícula profesional; sale en la OT impresa. |
 | Email | Opcional. Un único `@` con texto a ambos lados. |
 | Teléfono | Opcional. Sale en la OT impresa como contacto. |
-| Activo | Solo el personal activo aparece para elegir. Desactiva en lugar de borrar a quien deja la empresa. |
+| Activo | Marcado por defecto. Solo el personal activo aparece para elegir. Desactiva en lugar de borrar a quien deja la empresa. |
 | Notas | Opcional. |
 
 **Quién aparece como responsable de una OT**: solo el personal **activo** con rol **Ingeniero**. Desactivar a una
@@ -42,11 +42,20 @@ una de ellas, elige al responsable de la lista.
 
 ## Cómo se hace
 
+**Abrir la pantalla**
+
+1. En el menú lateral, abre el grupo **Administración** y elige **Personal**.
+
+**Buscar a una persona**
+
+1. Escribe en **Buscar** parte del nombre, el título, la matrícula o el email.
+2. Acota con **Rol** y **Activo** (Activos o Inactivos) si hace falta.
+
 **Dar de alta a una persona**
 
-1. Completa el formulario "Nueva persona": nombre, título, rol, matrícula y datos de contacto.
+1. Completa el formulario "Nueva persona": nombre completo, título, rol, matrícula y datos de contacto.
 2. Deja marcado **Activo**.
-3. Guarda. Si el rol es Ingeniero, ya aparece en el selector **Ingeniero responsable** de las OT.
+3. Pulsa **Crear persona**. Si el rol es Ingeniero, ya aparece en el selector **Ingeniero responsable** de las OT.
 
 **Dar de baja a una persona**
 
@@ -60,14 +69,16 @@ una de ellas, elige al responsable de la lista.
 
 ## Reglas y validaciones
 
+Los mensajes de un campo aparecen debajo de él al guardar, y un resumen arriba del formulario.
+
 | Situación | Mensaje |
 | --- | --- |
-| Nombre vacío | Se rechaza: el nombre es obligatorio. |
+| Nombre completo vacío | Indica el nombre completo. |
 | Nombre ya usado por otra persona | Ya existe un registro con ese nombre. |
-| Texto más largo que el máximo | Se rechaza el nombre, título o matrícula demasiado largos. |
-| Una OT con un responsable inactivo o que no es ingeniero | Se rechaza: el responsable debe ser un ingeniero activo. |
+| Texto más largo que el máximo | El nombre completo no puede superar los 200 caracteres. (El título, 100; la matrícula, 50.) |
+| Una OT con un responsable inactivo o que no es ingeniero | El ingeniero responsable debe ser una persona activa con rol Ingeniero. Revisa Personal. |
 | Email inválido | El email debe tener un único @ con texto a ambos lados. |
-| Rol inválido | Se rechaza: el rol debe ser Ingeniero, Administrativo u Otro. |
+| Rol inválido | Elige el rol: Ingeniero, Administrativo u Otro. |
 | Otra persona guardó antes | Otra persona modificó este registro. Actualiza antes de guardar. |
 
 - Los nombres reales del personal se cargan solo en la base de datos privada local; nunca en el repositorio, en
@@ -88,5 +99,6 @@ una de ellas, elige al responsable de la lista.
 - OT: `work_orders.responsible_staff_id` referencia al personal; `responsible_engineer` guarda el texto libre de las OT
   anteriores o la copia del nombre del responsable. La API exige que el responsable sea un ingeniero activo
   ("Responsible must be an active engineer") y bloquea sus datos hasta confirmar la OT.
-- Dominio: `src/AgroOperations.Api/Domain/StaffCatalog.cs`.
+- Dominio: `src/AgroOperations.Api/Domain/StaffCatalog.cs`. Pantalla: `web/app/backoffice/staff.jsx` y `staff.mjs`; campos en la
+  entidad `staff` de `schema.mjs`.
 - Las cuentas de acceso (identidad por invitación) siguen separadas: ver `docs/identity-contract.md`.

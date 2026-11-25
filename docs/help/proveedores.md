@@ -24,7 +24,7 @@ compran y, para los de insumos, sus precios de referencia por insumo. Los contra
 | Nombre | Obligatorio y único, sin distinguir mayúsculas. |
 | Tipo | Insumos, Laboratorio de suelos, Laboratorio de semillas, Plataforma virtual u Otro. Por defecto Insumos. |
 | CUIT | Opcional. 11 dígitos, con o sin guiones. |
-| Sitio web | Opcional. Una dirección sin espacios. |
+| Sitio web | Opcional. Una dirección sin espacios, hasta 200 caracteres. |
 | Teléfono, Email, Notas | Opcionales. El email lleva un único `@`. |
 
 El tipo decide dónde aparece el proveedor: los laboratorios de suelos en Análisis de suelo, los de semillas en Análisis
@@ -90,7 +90,7 @@ proveedor.
 
 | Situación | Mensaje |
 | --- | --- |
-| Nombre vacío | El nombre es obligatorio. |
+| Nombre vacío | Indica el nombre. |
 | Nombre ya usado | Ya existe un registro con ese nombre. |
 | Tipo inválido | Elige un tipo de proveedor válido. |
 | Rol de contacto inválido | Elige el rol del contacto: Ventas, Técnico u Otro. |

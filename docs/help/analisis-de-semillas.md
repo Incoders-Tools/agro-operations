@@ -77,10 +77,12 @@ a 52,5 cm, 26,25 semillas por metro lineal.
 
 | Situación | Mensaje |
 | --- | --- |
-| Un porcentaje fuera de 0 a 100 | Los porcentajes deben estar entre 0 y 100. |
+| Un porcentaje fuera de 0 a 100 | Los porcentajes deben estar entre 0 y 100. Bajo el campo: "El vigor no puede superar 100." o el nombre del porcentaje. |
+| Un porcentaje con más de 2 decimales | Los porcentajes admiten hasta 2 decimales. Bajo el campo, por ejemplo: "El vigor admite hasta 2 decimales." |
+| Peso de 1000 semillas en cero, negativo o con más de 4 decimales | El peso de 1000 semillas debe ser mayor que 0. / El peso de 1000 semillas admite hasta 4 decimales. |
 | Las cuatro fracciones de un tratamiento suman más de 100 | Con curasemilla (o Sin curasemilla): germinadas, anormales, muertas y duras suman N %, más de 100 %. |
 | Laboratorio de otro tipo | Elige un laboratorio de semillas. |
-| Fecha de análisis vacía | La fecha de análisis es obligatoria. |
+| Fecha de análisis vacía | Indica la fecha del análisis. |
 | Faltan clientes o cultivos | Primero crea clientes y cultivos. |
 
 Mensajes de la calculadora cuando falta un dato: "Indica las plantas objetivo.", "La eficiencia de emergencia debe ser

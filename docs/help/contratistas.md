@@ -45,7 +45,7 @@ El catálogo trae precargado el contratista "Propio". Los contratistas importado
 
 | Situación | Mensaje |
 | --- | --- |
-| Nombre vacío | El nombre es obligatorio. |
+| Nombre vacío | Indica el nombre. |
 | Nombre ya usado | Ya existe un registro con ese nombre. |
 | CUIT sin 11 dígitos | El CUIT debe tener 11 dígitos. |
 | Email inválido | El email debe tener un único @ con texto a ambos lados. |

@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { brandTitle } from '../../../brand.mjs';
 import WorkOrderPrint from '../../../print.jsx';
 import '../../../brand.css';
+import '../../../help.css';
 import '../../../print.css';
 
 export const dynamic = 'force-dynamic';

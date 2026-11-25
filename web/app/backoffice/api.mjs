@@ -34,7 +34,15 @@ const required = {
   'Received on': 'Indica la fecha de recepción del presupuesto.',
   'Requested on': 'Indica la fecha de solicitud.',
   Title: 'El título es obligatorio.',
+  'Full name': 'El nombre completo es obligatorio.',
 };
+
+// "<Field> must be at most N characters": the field as the subject of the Spanish message.
+const limitedFields = {
+  'Full name': 'El nombre completo', Title: 'El título', 'License number': 'La matrícula', Description: 'La descripción',
+  Parameter: 'El parámetro', Unit: 'La unidad', Depth: 'La profundidad', Station: 'La estación',
+};
+const limited = /^(.+) must be at most (\d+) characters$/;
 
 const validations = {
   'CUIT must have 11 digits': 'El CUIT debe tener 11 dígitos.',
@@ -72,6 +80,12 @@ const validations = {
   'Quantity must be positive': 'La cantidad de cada línea debe ser mayor que cero.',
   'Unit price must be zero or positive': 'El precio unitario debe ser cero o positivo.',
   'Each line needs an input or a product': 'Cada línea necesita un insumo o un producto.',
+  // Staff and the OT responsible (S3); messages the help review found untranslated.
+  'Role must be one of: ingeniero, administrativo, otro': 'Elige el rol: Ingeniero, Administrativo u Otro.',
+  'Responsible must be an active engineer': 'El ingeniero responsable debe ser una persona activa con rol Ingeniero. Revisa Personal.',
+  'Area already recorded for this plot and campaign': 'Ese lote ya tiene superficie registrada para esa campaña. Edita el registro existente.',
+  'Percentages must have at most two decimals': 'Los porcentajes admiten hasta 2 decimales.',
+  'Thousand seed weight must be positive and fit numeric(10,4)': 'El peso de 1000 semillas debe ser mayor que 0 y tener hasta 4 decimales.',
 };
 
 // The same API text can mean different things per request: "Reason is required" cancels an order or decides a comparison.
@@ -97,6 +111,8 @@ function validationMessage(text, path) {
   if (validations[text]) return validations[text];
   const issued = nextNumber.exec(text)?.[1];
   if (issued) return `El próximo número debe ser mayor que ${issued}.`;
+  const [, limitedField, length] = limited.exec(text) ?? [];
+  if (limitedFields[limitedField]) return `${limitedFields[limitedField]} no puede superar los ${length} caracteres.`;
   const field = text.endsWith(' is required') ? text.slice(0, -' is required'.length) : null;
   if (field && required[field]) return required[field];
   return choices.find(([prefix]) => text.startsWith(prefix))?.[1] ?? generic;

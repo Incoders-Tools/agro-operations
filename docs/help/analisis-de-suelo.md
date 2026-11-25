@@ -74,8 +74,10 @@ mayúsculas ni acentos) y los ordena del más antiguo al más reciente.
 | Enlace con espacios | El enlace al shape o KML no puede tener espacios. |
 | Método de muestreo inválido | Elige un método de muestreo válido. |
 | Laboratorio de otro tipo | Elige un laboratorio de suelos. |
-| Fecha de muestreo vacía | La fecha de muestreo es obligatoria. |
-| Parámetro vacío en un resultado | Cada resultado necesita su parámetro. |
+| Fecha de muestreo vacía | Indica la fecha de muestreo. |
+| Parámetro vacío en un resultado | Indica el parámetro. |
+| Parámetro, unidad, profundidad o estación demasiado largos | El parámetro no puede superar los 100 caracteres. (La unidad y la profundidad, 30; la estación, 60.) |
+| Enlace de más de 300 caracteres | El enlace al shape o KML no puede superar los 300 caracteres. |
 | Faltan campañas | Primero crea campañas en su catálogo. |
 
 - Las líneas de resultado totalmente vacías se ignoran al guardar.

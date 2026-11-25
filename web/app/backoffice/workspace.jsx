@@ -5,13 +5,18 @@ import { api, sessionEndedMessage } from './api.mjs';
 import { brandName, brandTagline } from './brand.mjs';
 import CatalogSection from './catalogs.jsx';
 import ClientsSection from './clients.jsx';
+import { Field } from './field.jsx';
+import { ValidatedForm } from './form-validation.jsx';
 import GenericSection, { genericGroups } from './generic.jsx';
+import { helpKeyFor } from './help.mjs';
+import { HelpButton, HelpPanel, HelpProvider } from './help-panel.jsx';
 import { groupOpen, menuReducer, menuStorageKey, readMenuState } from './navigation.mjs';
 import WorkOrdersSection from './orders.jsx';
 import ProvidersSection from './providers.jsx';
 import QuoteComparisonsSection from './quotes.jsx';
 import SeedAnalysesSection from './seed-analyses.jsx';
 import { entities } from './schema.mjs';
+import StaffSection from './staff.jsx';
 
 // Sidebar navigation, in collapsible groups (S6). To add a section, add its key here and a case in renderSection.
 const navigation = [
@@ -31,12 +36,14 @@ const navigation = [
   },
   { key: 'planning', title: 'Planificación', items: ['plot-campaign-areas', 'recipes', 'recipe-lines'].map(key => ({ key, title: genericGroups[key].title })) },
   { key: 'audit', title: 'Auditoría', items: [{ key: 'import-records', title: genericGroups['import-records'].title }] },
+  { key: 'administration', title: 'Administración', items: [{ key: 'staff', title: 'Personal' }] },
 ];
 const groupOf = section => navigation.find(group => group.items.some(item => item.key === section))?.key;
 
 // `params` carries the target of a cross-section link, such as the client whose quote comparisons to show.
 function renderSection(key, identity, params, navigate) {
-  if (key === 'work-orders') return <WorkOrdersSection identity={identity} />;
+  if (key === 'work-orders') return <WorkOrdersSection identity={identity} navigate={navigate} />;
+  if (key === 'staff') return <StaffSection identity={identity} />;
   if (key === 'clients') return <ClientsSection identity={identity} navigate={navigate} />;
   if (key === 'providers') return <ProvidersSection identity={identity} />;
   if (key === 'quote-comparisons') return <QuoteComparisonsSection key={JSON.stringify(params)} identity={identity} initial={params} />;
@@ -80,8 +87,7 @@ export default function Backoffice() {
     return () => { active = false; };
   }, []);
 
-  async function login(event) {
-    event.preventDefault();
+  async function login() {
     setBusy(true); setError('');
     try {
       const session = await api('session', {
@@ -100,17 +106,20 @@ export default function Backoffice() {
   }
 
   if (loading) return <main className="bo-login"><p role="status">Comprobando acceso local…</p></main>;
-  if (!identity) return <main className="bo-login">
+  // The login screen has its own help (acceso-local) next to its title.
+  if (!identity) return <HelpProvider sectionKey="acceso-local"><main className="bo-login">
     <div className="bo-login-panel"><span className="bo-symbol" aria-hidden="true">✳</span><p className="bo-kicker">{brandName} · {brandTagline}</p>
-      <h1>Tu espacio de trabajo</h1><p>Este registro es privado. Usa el administrador local temporal para consultar o cargar información.</p>
-      <form onSubmit={login}><label htmlFor="bo-password">Contraseña local</label>
-        <input id="bo-password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required />
-        <button type="submit" disabled={busy}>{busy ? 'Ingresando…' : 'Ingresar al backoffice'}</button></form>
+      <div className="bo-title-row"><h1>Tu espacio de trabajo</h1><HelpButton /></div>
+      <p>Este registro es privado. Usa el administrador local temporal para consultar o cargar información.</p>
+      <ValidatedForm onSubmit={login}>
+        <Field id="bo-password" label="Contraseña local" messages={{ required: 'Escribe la contraseña local.' }}>
+          <input id="bo-password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></Field>
+        <button type="submit" disabled={busy}>{busy ? 'Ingresando…' : 'Ingresar al backoffice'}</button></ValidatedForm>
       {error && <p className="bo-error" role="alert">{error}</p>}
       <small>La demostración de cuaderno de campo no usa estos datos.</small>
-    </div></main>;
+    </div><HelpPanel /></main></HelpProvider>;
 
-  return <div className="bo-app">
+  return <HelpProvider sectionKey={helpKeyFor(section)}><div className="bo-app">
     <aside className="bo-sidebar"><div className="bo-mark"><span aria-hidden="true">✳</span><strong>{brandName}</strong><small>{brandTagline}</small></div>
       <nav aria-label="Registros operativos">{navigation.map(group => {
         const open = groupOpen(menu, group.key, activeGroup);
@@ -130,5 +139,6 @@ export default function Backoffice() {
       {error && <p className="bo-error" role="alert">{error}</p>}
       {renderSection(section, identity, params, navigate)}
     </main>
-  </div>;
+    <HelpPanel />
+  </div></HelpProvider>;
 }

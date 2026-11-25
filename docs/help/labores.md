@@ -53,9 +53,10 @@ selector de la OT muestran las labores agrupadas por categoría y ordenadas por 
 
 | Situación | Mensaje |
 | --- | --- |
-| Nombre vacío | El nombre es obligatorio. |
+| Nombre vacío | Indica el nombre. |
 | Nombre ya usado | Ya existe un registro con ese nombre. |
 | Abreviatura de más de 12 caracteres | La abreviatura admite hasta 12 caracteres. |
+| Descripción de más de 300 caracteres | La descripción no puede superar los 300 caracteres. |
 | Categoría inválida | La categoría no es válida. |
 
 - Cambiar el nombre o la abreviatura cambia cómo se muestran las OT existentes y el nombre de archivo propuesto de sus
