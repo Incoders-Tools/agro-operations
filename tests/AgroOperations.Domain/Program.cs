@@ -302,10 +302,10 @@ try
     Check(updatedPlotArea.AreaHectares == 3.1m && updatedPlotArea.Revision == 2, "plot campaign area update");
 
     var recipes = new RecipeService(new PostgresRecipeRepository(builder.ConnectionString));
-    Reject<DomainNotFoundException>(() => recipes.Create(Guid.NewGuid(), campaign.Id, laborType.Id, "presiembra", "Barbecho", "Matías Kincaid"), "recipe with missing plot");
-    Reject<DomainValidationException>(() => recipes.Create(plot.Id, campaign.Id, laborType.Id, "invalida", "Barbecho", "Matías Kincaid"), "recipe with invalid stage");
-    Reject<DomainValidationException>(() => recipes.Create(plot.Id, campaign.Id, laborType.Id, "presiembra", " ", "Matías Kincaid"), "recipe with blank target use");
-    var recipe = recipes.Create(plot.Id, campaign.Id, laborType.Id, "presiembra", "Barbecho", "Matías Kincaid");
+    Reject<DomainNotFoundException>(() => recipes.Create(Guid.NewGuid(), campaign.Id, laborType.Id, "presiembra", "Barbecho", "Ingeniero ficticio"), "recipe with missing plot");
+    Reject<DomainValidationException>(() => recipes.Create(plot.Id, campaign.Id, laborType.Id, "invalida", "Barbecho", "Ingeniero ficticio"), "recipe with invalid stage");
+    Reject<DomainValidationException>(() => recipes.Create(plot.Id, campaign.Id, laborType.Id, "presiembra", " ", "Ingeniero ficticio"), "recipe with blank target use");
+    var recipe = recipes.Create(plot.Id, campaign.Id, laborType.Id, "presiembra", "Barbecho", "Ingeniero ficticio");
     Check(recipe.Stage == "presiembra" && recipe.Revision == 1 && recipes.List().Any(item => item == recipe), "recipe creation/listing");
     var recipeBefore = Snapshot();
     Reject<DomainValidationException>(() => recipes.CreateLine(recipe.Id, " ", 2m, "l/ha"), "recipe line with blank product");
@@ -314,9 +314,9 @@ try
     Check(Snapshot() == recipeBefore, "rejected recipe line creates changed stored rows");
     var recipeLine = recipes.CreateLine(recipe.Id, "Glifosato equivalente ácido", 2m, "l/ha");
     Check(recipeLine.Revision == 1 && recipes.ListLines().Any(item => item == recipeLine), "recipe line creation/listing");
-    var updatedRecipe = recipes.Update(recipe.Id, recipe.Revision, "postemergencia", "Control de malezas", "Matías Kincaid");
-    Reject<DomainConflictException>(() => recipes.Update(recipe.Id, recipe.Revision, "presiembra", "Stale", "Matías Kincaid"), "stale recipe");
-    Reject<DomainNotFoundException>(() => recipes.Update(Guid.NewGuid(), 1, "presiembra", "Missing", "Matías Kincaid"), "missing recipe");
+    var updatedRecipe = recipes.Update(recipe.Id, recipe.Revision, "postemergencia", "Control de malezas", "Ingeniero ficticio");
+    Reject<DomainConflictException>(() => recipes.Update(recipe.Id, recipe.Revision, "presiembra", "Stale", "Ingeniero ficticio"), "stale recipe");
+    Reject<DomainNotFoundException>(() => recipes.Update(Guid.NewGuid(), 1, "presiembra", "Missing", "Ingeniero ficticio"), "missing recipe");
     Check(updatedRecipe.Stage == "postemergencia" && updatedRecipe.Revision == 2, "recipe update");
     var updatedLine = recipes.UpdateLine(recipeLine.Id, recipeLine.Revision, "Glifosato equivalente ácido", 2.5m, "l/ha");
     Reject<DomainConflictException>(() => recipes.UpdateLine(recipeLine.Id, recipeLine.Revision, "Stale", 1m, "l/ha"), "stale recipe line");
