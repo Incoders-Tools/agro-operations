@@ -8,6 +8,12 @@ internal static class CatalogText
 
     public static string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    public static string? Limited(string? value, int length, string field)
+    {
+        var text = Optional(value);
+        return text is null || text.Length <= length ? text : throw new DomainValidationException($"{field} must be at most {length} characters");
+    }
+
     // The CUIT is stored as its 11 digits; hyphens and spaces are the only accepted separators.
     public static string? TaxId(string? value)
     {

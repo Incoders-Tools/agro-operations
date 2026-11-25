@@ -31,7 +31,7 @@ try
     }
     string[] previousMigrations = ["001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql"];
     Migrate(builder.ConnectionString, [.. previousMigrations, "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql",
-        "010_reference_alignment.sql", "011_providers_and_quotes.sql", "012_analyses.sql"]);
+        "010_reference_alignment.sql", "011_providers_and_quotes.sql", "012_analyses.sql", "013_staff.sql"]);
     var service = new OperationsService(new PostgresOperationsRepository(builder.ConnectionString));
     static void Check(bool condition, string label)
     {
@@ -620,13 +620,15 @@ try
 
     // 008: work orders, numbered consecutively per commercial firm inside the creating transaction.
     var workOrders = new WorkOrderService(new PostgresWorkOrderRepository(builder.ConnectionString));
-    string WorkOrderStateOf(string connectionString)
+    // Without staff, the snapshot ignores the 013 column, so it compares work orders before and after 013 by what earlier migrations stored.
+    string WorkOrderStateOf(string connectionString, bool withStaff = true)
     {
+        var strip = withStaff ? "" : " - 'responsible_staff_id'";
         using var connection = new NpgsqlConnection(connectionString);
         connection.Open();
-        using var command = new NpgsqlCommand("""
+        using var command = new NpgsqlCommand($"""
             SELECT concat_ws('|',
-              (SELECT coalesce(string_agg(to_jsonb(w)::text, ',' ORDER BY w.id), '') FROM work_orders w),
+              (SELECT coalesce(string_agg((to_jsonb(w){strip})::text, ',' ORDER BY w.id), '') FROM work_orders w),
               (SELECT coalesce(string_agg(to_jsonb(p)::text, ',' ORDER BY p.work_order_id, p.plot_id), '') FROM work_order_plots p),
               (SELECT coalesce(string_agg(to_jsonb(l)::text, ',' ORDER BY l.id), '') FROM work_order_lines l),
               (SELECT coalesce(string_agg(f.id || ':' || f.next_work_order_number, ',' ORDER BY f.id), '') FROM commercial_firms f))
@@ -1304,6 +1306,111 @@ try
     RejectSql($"UPDATE seed_analyses SET thousand_seed_weight_g = 0 WHERE id = '{seedAnalysis.Id}'", "thousand seed weight check");
     RejectSql($"UPDATE seed_analyses SET variety = ' ' WHERE id = '{seedAnalysis.Id}'", "variety blank check");
 
+    // 013: company staff; a work order's responsible is an active engineer whose full name the order keeps as a snapshot.
+    string StaffStateOf(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("SELECT coalesce(string_agg(to_jsonb(s)::text, ',' ORDER BY s.id), '') FROM staff s", connection);
+        return (string)command.ExecuteScalar()!;
+    }
+    string StaffState() => StaffStateOf(builder.ConnectionString) + "|" + WorkOrderState();
+    var staff = new StaffCatalog(new PostgresStaffRepository(builder.ConnectionString));
+    const string staffRoleError = "Role must be one of: ingeniero, administrativo, otro";
+    var engineerDraft = new StaffDraft(" Ingeniera Ejemplo ", " Ingeniera agrónoma ", " Ingeniero ", " MP 0000 ", " ingeniera@example.test ", " 0000 000000 ",
+        true, "  ");
+    Check(staff.List().Count == 0, "staff is not seeded");
+    var staffState = StaffState();
+    foreach (var name in new[] { null, "", " \t " })
+        Check(Rejected<DomainValidationException>(() => staff.Create(engineerDraft with { FullName = name }), $"blank full name '{name}'").Message ==
+              "Full name is required", "blank full name message");
+    Check(Rejected<DomainValidationException>(() => staff.Create(engineerDraft with { FullName = new string('n', 201) }), "full name over 200").Message ==
+          "Full name must be at most 200 characters", "full name length message");
+    foreach (var role in new[] { null, " ", "ingeniera", "jefe" })
+        Check(Rejected<DomainValidationException>(() => staff.Create(engineerDraft with { Role = role }), $"invalid role '{role}'").Message == staffRoleError, "role message");
+    Check(Rejected<DomainValidationException>(() => staff.Create(engineerDraft with { Title = new string('t', 101) }), "title over 100").Message ==
+          "Title must be at most 100 characters", "title length message");
+    Check(Rejected<DomainValidationException>(() => staff.Create(engineerDraft with { LicenseNumber = new string('m', 51) }), "license over 50").Message ==
+          "License number must be at most 50 characters", "license length message");
+    Check(Rejected<DomainValidationException>(() => staff.Create(engineerDraft with { Email = "sin-arroba" }), "invalid staff email").Message ==
+          "Email must contain a single @ with text on both sides", "staff email message");
+    Check(StaffState() == staffState && staff.List().Count == 0, "rejected staff creates changed stored rows");
+    var engineer = staff.Create(engineerDraft);
+    Check(engineer is { FullName: "Ingeniera Ejemplo", Title: "Ingeniera agrónoma", Role: "ingeniero", LicenseNumber: "MP 0000", Email: "ingeniera@example.test",
+          Phone: "0000 000000", Active: true, Notes: null, Revision: 1 } && staff.Get(engineer.Id) == engineer, "staff member stored trimmed");
+    var clerk = staff.Create(new StaffDraft("Administrativo Ejemplo", null, "administrativo", null, null, null));
+    var retired = staff.Create(new StaffDraft("Ingeniero Inactivo", null, "ingeniero", null, null, null, false, "Nota ficticia"));
+    var longest = staff.Create(new StaffDraft(new string('n', 200), new string('t', 100), "OTRO", new string('m', 50), null, " "));
+    Check(clerk is { Title: null, LicenseNumber: null, Email: null, Phone: null, Active: true, Notes: null, Revision: 1 } &&
+          retired is { Active: false, Notes: "Nota ficticia" } && longest is { Role: "otro", Phone: null, Active: true } && longest.FullName.Length == 200,
+          "active by default, optional values absent, limits inclusive");
+    staffState = StaffState();
+    Check(Rejected<DomainDuplicateException>(() => staff.Create(engineerDraft with { FullName = " INGENIERA ejemplo ", Role = "otro" }), "duplicate staff name").Message ==
+          "Duplicate name", "duplicate staff name message");
+    Check(StaffState() == staffState, "rejected duplicate staff changed stored rows");
+    Check(staff.Get(Guid.NewGuid()) is null, "unknown staff member");
+    Guid[] StaffIds(string? role = null, bool? active = null) => staff.List(role, active).Select(item => item.Id).ToArray();
+    Check(StaffIds().SequenceEqual([clerk.Id, engineer.Id, retired.Id, longest.Id]) && StaffIds("ingeniero").SequenceEqual([engineer.Id, retired.Id]) &&
+          StaffIds(" Administrativo ").SequenceEqual([clerk.Id]) && StaffIds(active: false).SequenceEqual([retired.Id]) &&
+          StaffIds("ingeniero", true).SequenceEqual([engineer.Id]) && StaffIds("  ").Length == 4 && StaffIds("otro", false).Length == 0, "staff filtered by role and active");
+    Check(Rejected<DomainValidationException>(() => staff.List("jefe"), "invalid role filter").Message == staffRoleError, "invalid role filter message");
+    Check(Rejected<DomainValidationException>(() => staff.Update(clerk.Id, clerk.Revision, new StaffDraft(" ", null, "administrativo", null, null, null)), "blank update")
+          .Message == "Full name is required", "blank update message");
+    Check(Rejected<DomainValidationException>(() => staff.Update(clerk.Id, clerk.Revision, new StaffDraft("Administrativo Ejemplo", null, "jefe", null, null, null)), "role update")
+          .Message == staffRoleError, "role update message");
+    Check(Rejected<DomainDuplicateException>(() => staff.Update(clerk.Id, clerk.Revision, new StaffDraft("ingeniera ejemplo", null, "administrativo", null, null, null)),
+          "duplicate update").Message == "Duplicate name", "duplicate update message");
+    Check(Rejected<DomainConflictException>(() => staff.Update(clerk.Id, clerk.Revision + 1, new StaffDraft("Otro nombre", null, "administrativo", null, null, null)),
+          "stale staff update").Message == "Stale revision", "stale staff message");
+    Reject<DomainNotFoundException>(() => staff.Update(Guid.NewGuid(), 1, new StaffDraft("Otro nombre", null, "otro", null, null, null)), "missing staff update");
+    Check(StaffState() == staffState, "rejected staff updates changed stored rows");
+    var clerkChanged = staff.Update(clerk.Id, clerk.Revision, new StaffDraft(" Administrativa Ejemplo ", "Administración", "administrativo", null, "adm@example.test", "1111"));
+    Check(clerkChanged is { FullName: "Administrativa Ejemplo", Title: "Administración", Email: "adm@example.test", Phone: "1111", Active: true, Revision: 2 } &&
+          staff.Get(clerk.Id) == clerkChanged, "staff update replaces every value");
+    RejectSql("UPDATE staff SET role = 'jefe'", "staff role check");
+    RejectSql("UPDATE staff SET full_name = ' '", "staff full name check");
+    RejectSql("UPDATE staff SET email = 'sin-arroba'", "staff email check");
+    RejectSql($"UPDATE staff SET license_number = '{new string('m', 51)}'", "staff license length check");
+
+    // A missing staff member is not found; an inactive one or another role is rejected; nothing changes, the next number included.
+    staffState = StaffState();
+    var nextBeforeStaff = NextNumber(firm.Id);
+    Reject<DomainNotFoundException>(() => workOrders.Create(firm.Id, orderDraft with { ResponsibleStaffId = Guid.NewGuid() }), "missing responsible");
+    foreach (var (member, label) in new[] { (retired, "inactive engineer"), (clerkChanged, "administrative"), (longest, "other role") })
+        Check(Rejected<DomainValidationException>(() => workOrders.Create(firm.Id, orderDraft with { ResponsibleStaffId = member.Id }), label).Message ==
+              "Responsible must be an active engineer", $"{label} message");
+    Check(StaffState() == staffState && NextNumber(firm.Id) == nextBeforeStaff, "rejected responsible changed stored rows or the next number");
+    var staffOrder = workOrders.Create(firm.Id, orderDraft with { ResponsibleStaffId = engineer.Id, ResponsibleEngineer = " Texto libre " });
+    Check(staffOrder is { ResponsibleEngineer: "Ingeniera Ejemplo" } && staffOrder.ResponsibleStaffId == engineer.Id &&
+          workOrders.Get(staffOrder.Id) is { ResponsibleEngineer: "Ingeniera Ejemplo" } staffStored && staffStored.ResponsibleStaffId == engineer.Id &&
+          workOrders.List().Single(item => item.Id == staffOrder.Id).ResponsibleStaffId == engineer.Id &&
+          workOrders.List().Single(item => item.Id == crossOrder.Id).ResponsibleStaffId is null, "work order stores the staff id and the name snapshot");
+    // Renaming the engineer keeps the snapshot; the document shows the engineer's current data.
+    var renamedEngineer = staff.Update(engineer.Id, engineer.Revision, engineerDraft with { FullName = "Ingeniera Renombrada", Phone = "2222 222222" });
+    var staffDocument = workOrders.Document(staffOrder.Id)!;
+    Check(workOrders.Get(staffOrder.Id) is { ResponsibleEngineer: "Ingeniera Ejemplo" } && staffDocument.ResponsibleEngineer == "Ingeniera Ejemplo" &&
+          staffDocument.Responsible == new WorkOrderDocumentResponsible("Ingeniera Renombrada", "Ingeniera agrónoma", "MP 0000", "2222 222222", "ingeniera@example.test"),
+          "snapshot kept and document shows current staff data");
+    Check(workOrders.Document(crossOrder.Id) is { ResponsibleEngineer: "Ingeniero ficticio", Responsible: null } &&
+          workOrders.Get(crossOrder.Id) is { ResponsibleEngineer: "Ingeniero ficticio", ResponsibleStaffId: null }, "work order without staff keeps the free text");
+    // Edit is a full replace: without a staff id the free text is stored again; an inactive engineer is rejected on edit too.
+    staffState = StaffState();
+    foreach (var (member, label) in new[] { (retired, "edit to inactive engineer"), (clerkChanged, "edit to administrative") })
+        Check(Rejected<DomainValidationException>(() => workOrders.Update(staffOrder.Id, staffOrder.Revision, orderDraft with { ResponsibleStaffId = member.Id }), label)
+              .Message == "Responsible must be an active engineer", $"{label} message");
+    Reject<DomainNotFoundException>(() => workOrders.Update(staffOrder.Id, staffOrder.Revision, orderDraft with { ResponsibleStaffId = Guid.NewGuid() }), "edit to missing responsible");
+    Check(StaffState() == staffState, "rejected responsible edits changed stored rows");
+    var freeTextOrder = workOrders.Update(staffOrder.Id, staffOrder.Revision, orderDraft with { ResponsibleEngineer = " Responsable anterior " });
+    Check(freeTextOrder is { ResponsibleEngineer: "Responsable anterior", ResponsibleStaffId: null, Revision: 2 } &&
+          workOrders.Document(staffOrder.Id) is { ResponsibleEngineer: "Responsable anterior", Responsible: null }, "edit without staff stores the free text");
+    var restaffed = workOrders.Update(staffOrder.Id, freeTextOrder.Revision, orderDraft with { ResponsibleStaffId = engineer.Id, ResponsibleEngineer = null });
+    Check(restaffed is { ResponsibleEngineer: "Ingeniera Renombrada", Revision: 3 } && restaffed.ResponsibleStaffId == engineer.Id, "edit with staff takes the current name");
+    // A later deactivation keeps the stored order and its document; a work order with staff always has the name snapshot.
+    staff.Update(engineer.Id, renamedEngineer.Revision, engineerDraft with { FullName = "Ingeniera Renombrada", Active = false });
+    Check(workOrders.Get(staffOrder.Id) is { ResponsibleEngineer: "Ingeniera Renombrada", Revision: 3 } &&
+          workOrders.Document(staffOrder.Id)!.Responsible?.FullName == "Ingeniera Renombrada", "deactivation keeps issued orders");
+    RejectSql($"UPDATE work_orders SET responsible_engineer = NULL WHERE id = '{staffOrder.Id}'", "staff order without name snapshot");
+
     // 006 on a database that already holds rows in every earlier table, including a same-name labor.
     Migrate(seedBuilder.ConnectionString, previousMigrations);
     var keptLaborId = Guid.NewGuid();
@@ -1432,9 +1539,23 @@ try
         using var command = new NpgsqlCommand("SELECT id FROM contractors", connection);
         seedContractorId = (Guid)command.ExecuteScalar()!;
     }
-    var seedOrder = new WorkOrderService(new PostgresWorkOrderRepository(seedBuilder.ConnectionString)).Create(seedFirmId,
-        new WorkOrderDraft(issuedOn, keptLaborId, null, seedContractorId, null, null, null, null, null, [new WorkOrderPlotDraft(plot.Id, 1m)], []));
-    Check(seedOrder.Number == 1, "work order over migrated schema");
+    // Written without the repository, which writes the 013 responsible staff column; as it does, the number comes from the firm.
+    int seedOrderNumber;
+    using (var connection = new NpgsqlConnection(seedBuilder.ConnectionString))
+    {
+        connection.Open();
+        using var command = new NpgsqlCommand($"""
+            WITH allocated AS (UPDATE commercial_firms SET next_work_order_number=next_work_order_number+1 WHERE id='{seedFirmId}'
+              RETURNING next_work_order_number-1 AS number),
+            inserted AS (INSERT INTO work_orders(id,firm_id,number,issued_on,labor_type_id,contractor_id)
+              SELECT '{Guid.NewGuid()}','{seedFirmId}',number,'{issuedOn:yyyy-MM-dd}','{keptLaborId}','{seedContractorId}' FROM allocated RETURNING id,number),
+            plotted AS (INSERT INTO work_order_plots(work_order_id,plot_id,area_hectares,worked_area_hectares)
+              SELECT inserted.id,p.id,p.area_hectares,1 FROM inserted, plots p WHERE p.id='{plot.Id}')
+            SELECT number FROM inserted
+            """, connection);
+        seedOrderNumber = (int)command.ExecuteScalar()!;
+    }
+    Check(seedOrderNumber == 1, "work order over migrated schema");
     rerunBefore = SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString) + "|" + WorkOrderStateOf(seedBuilder.ConnectionString);
     Migrate(seedBuilder.ConnectionString, "008_work_orders.sql", "009_ot_across_fields.sql");
     Check(SnapshotOf(seedBuilder.ConnectionString) + "|" + AttributeTablesOf(seedBuilder.ConnectionString) + "|" + WorkOrderStateOf(seedBuilder.ConnectionString) == rerunBefore,
@@ -1596,7 +1717,44 @@ try
     Check(EarlierStateOf(seedBuilder.ConnectionString) + "|" + ProviderStateOf(seedBuilder.ConnectionString) + "|" + AnalysisStateOf(seedBuilder.ConnectionString) + "|" +
           ConstraintsOf(seedBuilder.ConnectionString) == rerunBefore, "rerunning 012 changed stored rows or constraints");
 
-    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas, recipes and work orders with concurrent revisions and numbering, across fields, search, print documents, default client firms, the 010 reference alignment, the 011 providers, contacts, client links, prices and quote comparisons, and the 012 soil and seed analyses");
+    // 013 on a database with rows in every earlier table keeps them and their constraints; a rerun over its own rows changes nothing.
+    string ConstraintsBefore013(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("""
+            SELECT string_agg(conrelid::regclass::text || ':' || conname || ':' || pg_get_constraintdef(oid), ',' ORDER BY conrelid::regclass::text, conname)
+            FROM pg_constraint WHERE connamespace = current_schema()::regnamespace
+              AND conrelid::regclass::text <> 'staff' AND conname NOT LIKE 'work_orders_responsible_staff%'
+            """, connection);
+        return (string)command.ExecuteScalar()!;
+    }
+    string StateBefore013(string connectionString) => SnapshotOf(connectionString) + "|" + AttributeTablesOf(connectionString) + "|" +
+        WorkOrderStateOf(connectionString, withStaff: false) + "|" + ProviderStateOf(connectionString) + "|" + AnalysisStateOf(connectionString) + "|" +
+        ConstraintsBefore013(connectionString);
+    var before013 = StateBefore013(seedBuilder.ConnectionString);
+    Check(WorkOrderStateOf(seedBuilder.ConnectionString, withStaff: false).Split('|')[0].Length > 0, "013 runs over stored work orders");
+    Migrate(seedBuilder.ConnectionString, "013_staff.sql");
+    Check(StateBefore013(seedBuilder.ConnectionString) == before013, "013 changed rows or constraints of earlier tables");
+    var seedStaff = new StaffCatalog(new PostgresStaffRepository(seedBuilder.ConnectionString));
+    var seedEngineer = seedStaff.Create(new StaffDraft("Ingeniero 013", "Ingeniero agrónomo", "ingeniero", "MP 013", null, null));
+    seedStaff.Create(new StaffDraft("Administrativo 013", null, "administrativo", null, null, null, false));
+    using (var connection = new NpgsqlConnection(seedBuilder.ConnectionString))
+    {
+        connection.Open();
+        using var staffLink = new NpgsqlCommand($"""
+            UPDATE work_orders SET responsible_staff_id = '{seedEngineer.Id}', responsible_engineer = 'Ingeniero 013'
+            WHERE id = (SELECT id FROM work_orders ORDER BY id LIMIT 1)
+            """, connection);
+        Check(staffLink.ExecuteNonQuery() == 1, "seed work order linked to staff");
+    }
+    rerunBefore = EarlierStateOf(seedBuilder.ConnectionString) + "|" + ProviderStateOf(seedBuilder.ConnectionString) + "|" + AnalysisStateOf(seedBuilder.ConnectionString) + "|" +
+        StaffStateOf(seedBuilder.ConnectionString) + "|" + ConstraintsOf(seedBuilder.ConnectionString);
+    Migrate(seedBuilder.ConnectionString, "013_staff.sql");
+    Check(EarlierStateOf(seedBuilder.ConnectionString) + "|" + ProviderStateOf(seedBuilder.ConnectionString) + "|" + AnalysisStateOf(seedBuilder.ConnectionString) + "|" +
+          StaffStateOf(seedBuilder.ConnectionString) + "|" + ConstraintsOf(seedBuilder.ConnectionString) == rerunBefore, "rerunning 013 changed stored rows or constraints");
+
+    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas, recipes and work orders with concurrent revisions and numbering, across fields, search, print documents, default client firms, the 010 reference alignment, the 011 providers, contacts, client links, prices and quote comparisons, the 012 soil and seed analyses, and the 013 staff and work order responsibles");
     return 0;
 }
 finally

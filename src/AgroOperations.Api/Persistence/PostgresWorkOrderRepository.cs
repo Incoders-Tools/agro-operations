@@ -9,7 +9,7 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
 {
     private const string HeaderColumns = """
         id,firm_id,number,issued_on,labor_type_id,stage_id,contractor_id,campaign_id,crop_id,
-        variety,observations,responsible_engineer,status,cancel_reason,created_at,revision
+        variety,observations,responsible_engineer,status,cancel_reason,created_at,revision,responsible_staff_id
         """;
 
     private static string? Text(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
@@ -43,12 +43,13 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
             number = row.GetInt32(0);
             clientId = row.GetGuid(1);
         }
-        var (plotAreas, units) = References(db, tx, clientId, order);
+        var (plotAreas, units, responsible) = References(db, tx, clientId, order);
+        order = order with { ResponsibleEngineer = responsible };
         var id = Guid.NewGuid();
         using (var insert = new NpgsqlCommand("""
             INSERT INTO work_orders(id,firm_id,number,issued_on,labor_type_id,stage_id,contractor_id,campaign_id,crop_id,
-              variety,observations,responsible_engineer)
-            VALUES (@id,@firm,@number,@issuedOn,@labor,@stage,@contractor,@campaign,@crop,@variety,@observations,@engineer)
+              variety,observations,responsible_engineer,responsible_staff_id)
+            VALUES (@id,@firm,@number,@issuedOn,@labor,@stage,@contractor,@campaign,@crop,@variety,@observations,@engineer,@staff)
             """, db, tx))
         {
             insert.Parameters.AddWithValue("id", id);
@@ -83,10 +84,12 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
             if (row.GetInt64(1) != revision) throw new DomainConflictException();
             clientId = row.GetGuid(2);
         }
-        var (plotAreas, units) = References(db, tx, clientId, order);
+        var (plotAreas, units, responsible) = References(db, tx, clientId, order);
+        order = order with { ResponsibleEngineer = responsible };
         using (var update = new NpgsqlCommand("""
             UPDATE work_orders SET issued_on=@issuedOn,labor_type_id=@labor,stage_id=@stage,contractor_id=@contractor,
-              campaign_id=@campaign,crop_id=@crop,variety=@variety,observations=@observations,responsible_engineer=@engineer,revision=revision+1
+              campaign_id=@campaign,crop_id=@crop,variety=@variety,observations=@observations,responsible_engineer=@engineer,
+              responsible_staff_id=@staff,revision=revision+1
             WHERE id=@id;
             DELETE FROM work_order_lines WHERE work_order_id=@id;
             DELETE FROM work_order_plots WHERE work_order_id=@id;
@@ -146,7 +149,7 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
             SELECT w.id,w.firm_id,w.number,w.issued_on,w.labor_type_id,w.stage_id,w.contractor_id,
               ARRAY(SELECT f.id FROM fields f WHERE f.id IN (
                 SELECT p.field_id FROM work_order_plots wp JOIN plots p ON p.id=wp.plot_id WHERE wp.work_order_id=w.id) ORDER BY f.name,f.id),
-              w.status,(SELECT count(*) FROM work_order_plots p WHERE p.work_order_id=w.id)::integer,w.revision
+              w.status,(SELECT count(*) FROM work_order_plots p WHERE p.work_order_id=w.id)::integer,w.revision,w.responsible_staff_id
             FROM work_orders w {(filters.Count == 0 ? "" : "WHERE " + string.Join(" AND ", filters))}
             ORDER BY w.issued_on DESC,w.number DESC,w.id
             """, db);
@@ -158,7 +161,7 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
         var orders = new List<WorkOrderSummary>();
         while (row.Read())
             orders.Add(new(row.GetGuid(0), row.GetGuid(1), row.GetInt32(2), row.GetFieldValue<DateOnly>(3), row.GetGuid(4), Id(row, 5),
-                row.GetGuid(6), row.GetFieldValue<Guid[]>(7), row.GetString(8), row.GetInt32(9), row.GetInt64(10)));
+                row.GetGuid(6), row.GetFieldValue<Guid[]>(7), row.GetString(8), row.GetInt32(9), row.GetInt64(10), Id(row, 11)));
         return orders;
     }
 
@@ -191,10 +194,11 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
         }
         using var header = new NpgsqlCommand("""
             SELECT w.number,w.issued_on,w.status,w.cancel_reason,fi.name,fi.tax_id,c.name,l.name,l.abbreviation,s.name,co.name,co.own_equipment,
-              ca.name,cr.name,w.variety,w.observations,w.responsible_engineer
+              ca.name,cr.name,w.variety,w.observations,w.responsible_engineer,st.full_name,st.title,st.license_number,st.phone,st.email
             FROM work_orders w JOIN commercial_firms fi ON fi.id=w.firm_id JOIN clients c ON c.id=fi.client_id
               JOIN labor_types l ON l.id=w.labor_type_id JOIN contractors co ON co.id=w.contractor_id
               LEFT JOIN stages s ON s.id=w.stage_id LEFT JOIN campaigns ca ON ca.id=w.campaign_id LEFT JOIN crops cr ON cr.id=w.crop_id
+              LEFT JOIN staff st ON st.id=w.responsible_staff_id
             WHERE w.id=@id
             """, db);
         header.Parameters.AddWithValue("id", id);
@@ -202,7 +206,7 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
         if (!r.Read()) return null;
         return new(r.GetInt32(0), r.GetFieldValue<DateOnly>(1), r.GetString(2), Text(r, 3), new(r.GetString(4), Text(r, 5)), r.GetString(6),
             new(r.GetString(7), Text(r, 8)), Text(r, 9), new(r.GetString(10), r.GetBoolean(11)), Text(r, 12), Text(r, 13), Text(r, 14),
-            plots, lines, Text(r, 15), Text(r, 16));
+            plots, lines, Text(r, 15), Text(r, 16), r.IsDBNull(17) ? null : new(r.GetString(17), Text(r, 18), Text(r, 19), Text(r, 20), Text(r, 21)));
     }
 
     private static void BindHeader(NpgsqlCommand cmd, WorkOrderDraft order)
@@ -216,13 +220,15 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
         cmd.Parameters.Add(Varchar("variety", order.Variety));
         cmd.Parameters.Add(Varchar("observations", order.Observations));
         cmd.Parameters.Add(Varchar("engineer", order.ResponsibleEngineer));
+        cmd.Parameters.Add(Uuid("staff", order.ResponsibleStaffId));
     }
 
     /// <summary>
     /// Missing referenced rows are not found; a plot of a field of another client is invalid. Plots may come from several fields.
-    /// Returns the current plot areas and input units, which the order stores as its snapshot.
+    /// Returns the current plot areas and input units, which the order stores as its snapshot, and the responsible name: the
+    /// staff member's current full name when the order has one, else the draft's free text.
     /// </summary>
-    private static (Dictionary<Guid, decimal> PlotAreas, Dictionary<Guid, string> Units) References(
+    private static (Dictionary<Guid, decimal> PlotAreas, Dictionary<Guid, string> Units, string? Responsible) References(
         NpgsqlConnection db, NpgsqlTransaction tx, Guid clientId, WorkOrderDraft order)
     {
         using (var header = new NpgsqlCommand("""
@@ -262,7 +268,14 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
         }
         if (plotAreas.Count != plotIds.Length || units.Count != inputIds.Length) throw new DomainNotFoundException();
         if (plotClients.Any(client => client != clientId)) throw new DomainValidationException("Every plot must belong to the firm's client");
-        return (plotAreas, units);
+        if (order.ResponsibleStaffId is not { } staffId) return (plotAreas, units, order.ResponsibleEngineer);
+        // The share lock keeps the staff member from being renamed or deactivated until the order commits.
+        using var staff = new NpgsqlCommand("SELECT full_name,active,role FROM staff WHERE id=@staff FOR SHARE", db, tx);
+        staff.Parameters.AddWithValue("staff", staffId);
+        using var member = staff.ExecuteReader();
+        if (!member.Read()) throw new DomainNotFoundException();
+        if (!member.GetBoolean(1) || member.GetString(2) != StaffCatalog.Engineer) throw new DomainValidationException("Responsible must be an active engineer");
+        return (plotAreas, units, member.GetString(0));
     }
 
     private static void WriteChildren(NpgsqlConnection db, NpgsqlTransaction tx, Guid id, WorkOrderDraft order, IReadOnlyList<decimal> lineTotals,
@@ -328,6 +341,6 @@ public sealed class PostgresWorkOrderRepository(string connectionString) : IWork
         if (!r.Read()) return null;
         return new(r.GetGuid(0), r.GetGuid(1), r.GetInt32(2), r.GetFieldValue<DateOnly>(3), r.GetGuid(4), Id(r, 5), r.GetGuid(6),
             Id(r, 7), Id(r, 8), Text(r, 9), Text(r, 10), Text(r, 11), r.GetString(12), Text(r, 13), r.GetFieldValue<DateTimeOffset>(14),
-            r.GetInt64(15), plots, lines);
+            r.GetInt64(15), plots, lines, Id(r, 16));
     }
 }

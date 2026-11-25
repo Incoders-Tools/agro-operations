@@ -27,11 +27,7 @@ public sealed class SoilAnalysisService(ISoilAnalysisRepository repository)
 {
     public const string SoilLaboratory = "laboratorio_suelos";
 
-    private static string? Limited(string? value, int length, string field)
-    {
-        var text = CatalogText.Optional(value);
-        return text is null || text.Length <= length ? text : throw new DomainValidationException($"{field} must be at most {length} characters");
-    }
+    private static string? Limited(string? value, int length, string field) => CatalogText.Limited(value, length, field);
 
     private static SoilAnalysisDraft Validated(SoilAnalysisDraft draft)
     {

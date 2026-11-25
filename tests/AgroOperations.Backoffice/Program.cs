@@ -22,7 +22,7 @@ try
     using (var db = new NpgsqlConnection(scoped.ConnectionString))
     {
         db.Open();
-        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql", "010_reference_alignment.sql", "011_providers_and_quotes.sql", "012_analyses.sql" })
+        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql", "010_reference_alignment.sql", "011_providers_and_quotes.sql", "012_analyses.sql", "013_staff.sql" })
         {
             var file = Path.Combine(root, "src", "AgroOperations.Api", "Persistence", "Migrations", name);
             using var migration = new NpgsqlCommand(File.ReadAllText(file), db);
@@ -1087,6 +1087,106 @@ try
             !await IsError(await Send(HttpMethod.Put, $"/api/v1/seed-analyses/{Guid.NewGuid()}", seedBody with { revision = 1L }), HttpStatusCode.NotFound, "Record not found") ||
             await AnalysisState() != analysesBefore)
             throw new Exception("Rejected seed analysis updates changed stored records");
+
+        // 013: company staff, and a work order's responsible picked from the active engineers with its name kept as a snapshot.
+        string[] staffReads = ["staff", "staff?role=ingeniero&active=true", $"staff/{unknownId}"];
+        (HttpMethod Method, string Path)[] staffWrites = [(HttpMethod.Post, "staff"), (HttpMethod.Put, $"staff/{unknownId}")];
+        using (var anonymous = new HttpClient { BaseAddress = client.BaseAddress })
+        {
+            foreach (var route in staffReads)
+                if ((await anonymous.GetAsync($"/api/v1/{route}")).StatusCode != HttpStatusCode.Unauthorized)
+                    throw new Exception($"Anonymous GET {route} accessible");
+            foreach (var (method, path) in staffWrites)
+                using (var request = new HttpRequestMessage(method, $"/api/v1/{path}") { Content = JsonContent.Create(new { fullName = "Ejemplo", role = "otro", revision = 1 }) })
+                    if ((await anonymous.SendAsync(request)).StatusCode != HttpStatusCode.Unauthorized)
+                        throw new Exception($"Anonymous {method} {path} accessible");
+        }
+        const string staffRoleError = "Role must be one of: ingeniero, administrativo, otro";
+        var staffBody = new { fullName = (string?)" Ingeniera Ejemplo ", title = (string?)"Ingeniera agrónoma", role = (string?)"ingeniero", licenseNumber = (string?)"MP 0000",
+            email = (string?)"ingeniera@example.test", phone = (string?)"0000 000000", active = true, notes = (string?)null, revision = 1L };
+        var noStaff = await client.GetStringAsync("/api/v1/staff");
+        foreach (var (method, path) in staffWrites)
+            using (var request = new HttpRequestMessage(method, $"/api/v1/{path}") { Content = JsonContent.Create(staffBody) })
+                if ((await client.SendAsync(request)).StatusCode != HttpStatusCode.Forbidden)
+                    throw new Exception($"{method} {path} accepted without CSRF");
+        if (noStaff != "[]" ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/staff", staffBody with { fullName = " " }), HttpStatusCode.BadRequest, "Full name is required") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/staff", staffBody with { role = "jefe" }), HttpStatusCode.BadRequest, staffRoleError) ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/staff", staffBody with { role = null }), HttpStatusCode.BadRequest, staffRoleError) ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/staff", staffBody with { email = "sin-arroba" }), HttpStatusCode.BadRequest,
+                "Email must contain a single @ with text on both sides") ||
+            await client.GetStringAsync("/api/v1/staff") != noStaff)
+            throw new Exception("Rejected staff creates changed stored records");
+        var engineerResponse = await Send(HttpMethod.Post, "/api/v1/staff", staffBody);
+        var engineerRow = await Body(engineerResponse);
+        var engineerId = engineerRow.GetProperty("id").GetGuid();
+        if (engineerResponse.StatusCode != HttpStatusCode.Created || engineerRow.GetProperty("fullName").GetString() != "Ingeniera Ejemplo" ||
+            engineerRow.GetProperty("title").GetString() != "Ingeniera agrónoma" || engineerRow.GetProperty("role").GetString() != "ingeniero" ||
+            engineerRow.GetProperty("licenseNumber").GetString() != "MP 0000" || engineerRow.GetProperty("email").GetString() != "ingeniera@example.test" ||
+            engineerRow.GetProperty("phone").GetString() != "0000 000000" || !engineerRow.GetProperty("active").GetBoolean() || !Absent(engineerRow, "notes") ||
+            engineerRow.GetProperty("revision").GetInt64() != 1)
+            throw new Exception($"Staff create: {(int)engineerResponse.StatusCode} {engineerRow}");
+        // An omitted active flag is true.
+        var clerkRow = await Body(await Send(HttpMethod.Post, "/api/v1/staff", new { fullName = "Administrativo Ejemplo", role = "administrativo" }));
+        var clerkId = clerkRow.GetProperty("id").GetGuid();
+        var staffBefore = await client.GetStringAsync("/api/v1/staff");
+        if (!clerkRow.GetProperty("active").GetBoolean() || !Absent(clerkRow, "title", "licenseNumber", "email", "phone", "notes") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/staff", staffBody with { fullName = "INGENIERA ejemplo", role = "otro" }), HttpStatusCode.Conflict, "Duplicate name") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/staff/{clerkId}", staffBody with { revision = 2L }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/staff/{clerkId}", staffBody with { fullName = "ingeniera EJEMPLO" }), HttpStatusCode.Conflict, "Duplicate name") ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/staff/{clerkId}", staffBody with { fullName = "Administrativo Ejemplo", role = "jefe" }), HttpStatusCode.BadRequest,
+                staffRoleError) ||
+            !await IsError(await Send(HttpMethod.Put, $"/api/v1/staff/{Guid.NewGuid()}", staffBody with { fullName = "Otro nombre" }), HttpStatusCode.NotFound, "Record not found") ||
+            !await IsError(await client.GetAsync($"/api/v1/staff/{Guid.NewGuid()}"), HttpStatusCode.NotFound) ||
+            await client.GetStringAsync("/api/v1/staff") != staffBefore)
+            throw new Exception("Rejected staff writes changed stored records");
+        // PUT is a full replace: omitted optional values are stored as absent.
+        var clerkChanged = await Send(HttpMethod.Put, $"/api/v1/staff/{clerkId}", new { fullName = "Administrativa Ejemplo", role = "administrativo", active = false, revision = 1L });
+        if (clerkChanged.StatusCode != HttpStatusCode.OK || (await Body(clerkChanged)) is var clerkChangedRow && (clerkChangedRow.GetProperty("active").GetBoolean() ||
+            clerkChangedRow.GetProperty("fullName").GetString() != "Administrativa Ejemplo" || clerkChangedRow.GetProperty("revision").GetInt64() != 2) ||
+            (await client.GetFromJsonAsync<JsonElement>($"/api/v1/staff/{engineerId}")).GetProperty("fullName").GetString() != "Ingeniera Ejemplo" ||
+            !(await Ids("staff")).SequenceEqual([clerkId, engineerId]) || !(await Ids("staff?role=ingeniero")).SequenceEqual([engineerId]) ||
+            !(await Ids("staff?active=false")).SequenceEqual([clerkId]) || !(await Ids("staff?role=administrativo&active=true")).SequenceEqual(Array.Empty<Guid>()) ||
+            !await IsError(await client.GetAsync("/api/v1/staff?role=jefe"), HttpStatusCode.BadRequest, staffRoleError))
+            throw new Exception("Staff update, read or filters mismatch");
+        // Work orders: the responsible must be an existing active engineer; the order stores its id and a snapshot of its name.
+        var staffOrderBody = new { orderBody.firmId, orderBody.issuedOn, orderBody.laborTypeId, orderBody.stageId, orderBody.contractorId, orderBody.campaignId,
+            orderBody.cropId, orderBody.variety, orderBody.observations, responsibleEngineer = (string?)"Texto libre", orderBody.plots, orderBody.lines,
+            responsibleStaffId = (Guid?)engineerId, revision = 1L };
+        var ordersBeforeStaff = await OrderState();
+        if (!await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", staffOrderBody with { responsibleStaffId = clerkId }), HttpStatusCode.BadRequest,
+                "Responsible must be an active engineer") ||
+            !await IsError(await Send(HttpMethod.Post, "/api/v1/work-orders", staffOrderBody with { responsibleStaffId = Guid.NewGuid() }), HttpStatusCode.NotFound, "Record not found") ||
+            await OrderState() != ordersBeforeStaff)
+            throw new Exception("Rejected work order responsibles changed stored records");
+        var staffOrder = await Send(HttpMethod.Post, "/api/v1/work-orders", staffOrderBody);
+        var staffOrderRow = await Body(staffOrder);
+        var staffOrderId = staffOrderRow.GetProperty("id").GetGuid();
+        var staffSummaries = (await client.GetFromJsonAsync<JsonElement[]>("/api/v1/work-orders"))!;
+        if (staffOrder.StatusCode != HttpStatusCode.Created || staffOrderRow.GetProperty("responsibleStaffId").GetGuid() != engineerId ||
+            staffOrderRow.GetProperty("responsibleEngineer").GetString() != "Ingeniera Ejemplo" ||
+            (await client.GetFromJsonAsync<JsonElement>($"/api/v1/work-orders/{staffOrderId}")).GetProperty("responsibleStaffId").GetGuid() != engineerId ||
+            staffSummaries.Single(item => item.GetProperty("id").GetGuid() == staffOrderId).GetProperty("responsibleStaffId").GetGuid() != engineerId ||
+            !Absent(staffSummaries.Single(item => item.GetProperty("id").GetGuid() == crossId), "responsibleStaffId"))
+            throw new Exception($"Work order with staff: {(int)staffOrder.StatusCode} {staffOrderRow}");
+        // Renaming the engineer keeps the snapshot; the document's responsible shows the current staff data.
+        if ((await Send(HttpMethod.Put, $"/api/v1/staff/{engineerId}", staffBody with { fullName = "Ingeniera Renombrada", phone = "2222 222222" })).StatusCode != HttpStatusCode.OK)
+            throw new Exception("Engineer rename failed");
+        var staffDocument = await Body(await client.GetAsync($"/api/v1/work-orders/{staffOrderId}/document"));
+        var responsible = staffDocument.GetProperty("responsible");
+        if (staffDocument.GetProperty("responsibleEngineer").GetString() != "Ingeniera Ejemplo" || responsible.GetProperty("fullName").GetString() != "Ingeniera Renombrada" ||
+            responsible.GetProperty("title").GetString() != "Ingeniera agrónoma" || responsible.GetProperty("licenseNumber").GetString() != "MP 0000" ||
+            responsible.GetProperty("phone").GetString() != "2222 222222" || responsible.GetProperty("email").GetString() != "ingeniera@example.test" ||
+            (await client.GetFromJsonAsync<JsonElement>($"/api/v1/work-orders/{staffOrderId}")).GetProperty("responsibleEngineer").GetString() != "Ingeniera Ejemplo")
+            throw new Exception($"Work order document with staff: {staffDocument}");
+        var freeDocument = await Body(await client.GetAsync($"/api/v1/work-orders/{crossId}/document"));
+        if (!Absent(freeDocument, "responsible") || freeDocument.GetProperty("responsibleEngineer").GetString() != "Ingeniero ficticio")
+            throw new Exception($"Work order document without staff: {freeDocument}");
+        // PUT without a staff id stores the free text again.
+        var freeEdit = await Send(HttpMethod.Put, $"/api/v1/work-orders/{staffOrderId}", staffOrderBody with { responsibleStaffId = (Guid?)null });
+        if (freeEdit.StatusCode != HttpStatusCode.OK || (await Body(freeEdit)) is var freeEditRow && (!Absent(freeEditRow, "responsibleStaffId") ||
+            freeEditRow.GetProperty("responsibleEngineer").GetString() != "Texto libre" || freeEditRow.GetProperty("revision").GetInt64() != 2))
+            throw new Exception("Work order edit without staff failed");
 
         using (var anonymous = new HttpClient { BaseAddress = client.BaseAddress })
             if ((await anonymous.GetAsync("/api/v1/import-records")).StatusCode != HttpStatusCode.Unauthorized)

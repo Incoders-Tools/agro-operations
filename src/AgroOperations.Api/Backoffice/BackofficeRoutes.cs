@@ -32,6 +32,7 @@ public static class BackofficeRoutes
         var comparisons = new QuoteComparisonService(new PostgresQuoteComparisonRepository(connectionString));
         var soilAnalyses = new SoilAnalysisService(new PostgresSoilAnalysisRepository(connectionString));
         var seedAnalyses = new SeedAnalysisService(new PostgresSeedAnalysisRepository(connectionString));
+        var staff = new StaffCatalog(new PostgresStaffRepository(connectionString));
         var protectedRoutes = local.MapGroup("").RequireAuthorization().AddEndpointFilter(async (context, next) =>
         {
             if (HttpMethods.IsGet(context.HttpContext.Request.Method)) return await next(context);
@@ -62,7 +63,8 @@ public static class BackofficeRoutes
         // The print view of one order: display names resolved here and the default PDF file name.
         protectedRoutes.MapGet("/work-orders/{id:guid}/document", (Guid id) => Item(workOrders.Document(id)));
         // The server takes the number from the firm; a client-sent number or firm on update is ignored, and so is a fieldId
-        // from bodies written before an order could cover several fields.
+        // from bodies written before an order could cover several fields. With a responsibleStaffId the stored responsibleEngineer
+        // is that staff member's name; without one, the free text sent.
         protectedRoutes.MapPost("/work-orders", (WorkOrderInput input) => Create(() => workOrders.Create(input.FirmId, input.Draft())));
         protectedRoutes.MapPut("/work-orders/{id:guid}", (Guid id, RevisionWorkOrderInput input) => Change(() => workOrders.Update(id, input.Revision, input.Draft())));
         protectedRoutes.MapPost("/work-orders/{id:guid}/cancel", (Guid id, CancelWorkOrderInput input) => Change(() => workOrders.Cancel(id, input.Revision, input.Reason)));
@@ -106,6 +108,11 @@ public static class BackofficeRoutes
         protectedRoutes.MapGet("/seed-analyses/{id:guid}", (Guid id) => Item(seedAnalyses.Get(id)));
         protectedRoutes.MapPost("/seed-analyses", (SeedAnalysisInput input) => Create(() => seedAnalyses.Create(input.Draft())));
         protectedRoutes.MapPut("/seed-analyses/{id:guid}", (Guid id, RevisionSeedAnalysisInput input) => Change(() => seedAnalyses.Update(id, input.Revision, input.Draft())));
+        // Staff: company personnel, never deleted (deactivated instead). Filters are optional and combine; an unknown role is rejected.
+        protectedRoutes.MapGet("/staff", (string? role, bool? active) => Change(() => staff.List(role, active)));
+        protectedRoutes.MapGet("/staff/{id:guid}", (Guid id) => Item(staff.Get(id)));
+        protectedRoutes.MapPost("/staff", (StaffInput input) => Create(() => staff.Create(input.Draft())));
+        protectedRoutes.MapPut("/staff/{id:guid}", (Guid id, RevisionStaffInput input) => Change(() => staff.Update(id, input.Revision, input.Draft())));
         protectedRoutes.MapGet("/clients/{id:guid}", (Guid id) => Item(operations.GetClient(id)));
         protectedRoutes.MapGet("/fields/{id:guid}", (Guid id) => Item(operations.GetField(id)));
         protectedRoutes.MapGet("/plots/{id:guid}", (Guid id) => Item(operations.GetPlot(id)));
@@ -199,17 +206,28 @@ public static class BackofficeRoutes
     public sealed record RevisionFirmInput(string Name, string? TaxId, long Revision, int? NextWorkOrderNumber);
     public sealed record WorkOrderInput(Guid FirmId, DateOnly? IssuedOn, Guid LaborTypeId, Guid? StageId, Guid ContractorId,
         Guid? CampaignId, Guid? CropId, string? Variety, string? Observations, string? ResponsibleEngineer,
-        WorkOrderPlotDraft[]? Plots, WorkOrderLineDraft[]? Lines)
+        WorkOrderPlotDraft[]? Plots, WorkOrderLineDraft[]? Lines, Guid? ResponsibleStaffId)
     {
         public WorkOrderDraft Draft() => new(IssuedOn, LaborTypeId, StageId, ContractorId, CampaignId, CropId, Variety, Observations,
-            ResponsibleEngineer, Plots, Lines);
+            ResponsibleEngineer, Plots, Lines, ResponsibleStaffId);
     }
     public sealed record RevisionWorkOrderInput(DateOnly? IssuedOn, Guid LaborTypeId, Guid? StageId, Guid ContractorId,
         Guid? CampaignId, Guid? CropId, string? Variety, string? Observations, string? ResponsibleEngineer,
-        WorkOrderPlotDraft[]? Plots, WorkOrderLineDraft[]? Lines, long Revision)
+        WorkOrderPlotDraft[]? Plots, WorkOrderLineDraft[]? Lines, long Revision, Guid? ResponsibleStaffId)
     {
         public WorkOrderDraft Draft() => new(IssuedOn, LaborTypeId, StageId, ContractorId, CampaignId, CropId, Variety, Observations,
-            ResponsibleEngineer, Plots, Lines);
+            ResponsibleEngineer, Plots, Lines, ResponsibleStaffId);
+    }
+    // An omitted active flag is true, so a new staff member is active unless the body says otherwise.
+    public sealed record StaffInput(string? FullName, string? Title, string? Role, string? LicenseNumber, string? Email, string? Phone, bool? Active,
+        string? Notes)
+    {
+        public StaffDraft Draft() => new(FullName, Title, Role, LicenseNumber, Email, Phone, Active ?? true, Notes);
+    }
+    public sealed record RevisionStaffInput(string? FullName, string? Title, string? Role, string? LicenseNumber, string? Email, string? Phone, bool? Active,
+        string? Notes, long Revision)
+    {
+        public StaffDraft Draft() => new(FullName, Title, Role, LicenseNumber, Email, Phone, Active ?? true, Notes);
     }
     public sealed record CancelWorkOrderInput(long Revision, string? Reason);
     public sealed record RevisionOnlyInput(long Revision);

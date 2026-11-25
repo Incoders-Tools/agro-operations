@@ -3,19 +3,26 @@ namespace AgroOperations.Api.Domain;
 /// <summary>FieldId is the plot's field; an order has no field of its own.</summary>
 public sealed record WorkOrderPlot(Guid PlotId, Guid FieldId, decimal AreaHectares, decimal WorkedAreaHectares, bool WorkedAreaExceedsPlot);
 public sealed record WorkOrderLine(Guid Id, short Position, Guid InputId, decimal DosePerHectare, string Unit, decimal Total, bool DoseOutOfRange);
+/// <summary>
+/// With a responsible staff member, ResponsibleEngineer is the snapshot of its name at the last write; without one, the free
+/// text of orders written before staff existed. The staff id comes last so callers written before it keep compiling.
+/// </summary>
 public sealed record WorkOrder(Guid Id, Guid FirmId, int Number, DateOnly IssuedOn, Guid LaborTypeId, Guid? StageId, Guid ContractorId,
     Guid? CampaignId, Guid? CropId, string? Variety, string? Observations, string? ResponsibleEngineer, string Status, string? CancelReason,
-    DateTimeOffset CreatedAt, long Revision, IReadOnlyList<WorkOrderPlot> Plots, IReadOnlyList<WorkOrderLine> Lines);
+    DateTimeOffset CreatedAt, long Revision, IReadOnlyList<WorkOrderPlot> Plots, IReadOnlyList<WorkOrderLine> Lines, Guid? ResponsibleStaffId = null);
 /// <summary>FieldIds are the distinct fields of the order's plots, ordered by field name.</summary>
 public sealed record WorkOrderSummary(Guid Id, Guid FirmId, int Number, DateOnly IssuedOn, Guid LaborTypeId, Guid? StageId, Guid ContractorId,
-    IReadOnlyList<Guid> FieldIds, string Status, int PlotCount, long Revision);
+    IReadOnlyList<Guid> FieldIds, string Status, int PlotCount, long Revision, Guid? ResponsibleStaffId = null);
 
 public sealed record WorkOrderPlotDraft(Guid PlotId, decimal WorkedAreaHectares);
 public sealed record WorkOrderLineDraft(Guid InputId, decimal DosePerHectare);
-/// <summary>Writes replace the header, plots and lines; firm and number are never part of a draft.</summary>
+/// <summary>
+/// Writes replace the header, plots and lines; firm and number are never part of a draft. A responsible staff member must be
+/// an active engineer and replaces the free-text ResponsibleEngineer with its name.
+/// </summary>
 public sealed record WorkOrderDraft(DateOnly? IssuedOn, Guid LaborTypeId, Guid? StageId, Guid ContractorId, Guid? CampaignId,
     Guid? CropId, string? Variety, string? Observations, string? ResponsibleEngineer, IReadOnlyList<WorkOrderPlotDraft>? Plots,
-    IReadOnlyList<WorkOrderLineDraft>? Lines);
+    IReadOnlyList<WorkOrderLineDraft>? Lines, Guid? ResponsibleStaffId = null);
 
 public sealed record WorkOrderDocumentFirm(string Name, string? TaxId);
 public sealed record WorkOrderDocumentLabor(string Name, string? Abbreviation);
@@ -24,13 +31,16 @@ public sealed record WorkOrderDocumentPlot(string FieldName, string PlotName, st
     bool WorkedAreaExceedsPlot);
 public sealed record WorkOrderDocumentLine(short Position, string InputName, string? Formulation, short? MixOrder, decimal DosePerHectare, string Unit,
     decimal Total, bool DoseOutOfRange, bool HollowCone);
+public sealed record WorkOrderDocumentResponsible(string FullName, string? Title, string? LicenseNumber, string? Phone, string? Email);
 /// <summary>
 /// Everything a printed OT shows, with names instead of ids. Plots are ordered by field then plot name;
-/// the plot area and line unit are the snapshots stored with the order.
+/// the plot area and line unit are the snapshots stored with the order. Responsible is the current data of the order's staff
+/// member, absent without one; ResponsibleEngineer is the name stored with the order.
 /// </summary>
 public sealed record WorkOrderDocument(int Number, DateOnly IssuedOn, string Status, string? CancelReason, WorkOrderDocumentFirm Firm, string ClientName,
     WorkOrderDocumentLabor Labor, string? StageName, WorkOrderDocumentContractor Contractor, string? CampaignName, string? CropName, string? Variety,
-    IReadOnlyList<WorkOrderDocumentPlot> Plots, IReadOnlyList<WorkOrderDocumentLine> Lines, string? Observations, string? ResponsibleEngineer)
+    IReadOnlyList<WorkOrderDocumentPlot> Plots, IReadOnlyList<WorkOrderDocumentLine> Lines, string? Observations, string? ResponsibleEngineer,
+    WorkOrderDocumentResponsible? Responsible = null)
 {
     private static readonly string[] Months = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
     // Windows rejects these in file names; the browser uses the name when saving the print view as PDF.
@@ -61,7 +71,10 @@ public sealed record WorkOrderDocument(int Number, DateOnly IssuedOn, string Sta
 
 public interface IWorkOrderRepository
 {
-    /// <summary>lineTotals holds the total of each draft line, in order.</summary>
+    /// <summary>
+    /// lineTotals holds the total of each draft line, in order. A missing responsible staff member is not found; one that is not an
+    /// active engineer is invalid.
+    /// </summary>
     WorkOrder Create(Guid firmId, WorkOrderDraft order, IReadOnlyList<decimal> lineTotals);
     WorkOrder Update(Guid id, long revision, WorkOrderDraft order, IReadOnlyList<decimal> lineTotals);
     /// <summary>Moves an emitida order to status; a missing order is not found, a closed one not editable.</summary>
