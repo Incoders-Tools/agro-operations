@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, send } from './api.mjs';
 import { ComboField, Field, optionNodes } from './field.jsx';
+import { FormTopBar, useDirtyState } from './form-actions.jsx';
 import { ValidatedForm } from './form-validation.jsx';
 import { Busy, RecordDetail, RecordForm, RecordList, SectionHeader, usePending } from './records.jsx';
 import {
@@ -82,6 +83,7 @@ function PriceForm({ provider, record, inputs, csrfToken, onSaved, onCancel }) {
   const [form, setForm] = useState(() => record ? priceFromRecord(record) : emptyPrice());
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const { dirty } = useDirtyState(form);
   const set = changes => setForm(current => ({ ...current, ...changes }));
   const unitOf = id => inputs.find(input => input.id === id)?.unit ?? '';
   function chooseInput(inputId) {
@@ -97,8 +99,11 @@ function PriceForm({ provider, record, inputs, csrfToken, onSaved, onCancel }) {
     } catch (cause) { setError(cause.message); }
     finally { setBusy(false); }
   }
-  return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar precio de referencia' : 'Nuevo precio de referencia'}</h2>
+  const title = record ? 'Editar precio de referencia' : 'Nuevo precio de referencia';
+  return <section className="bo-editor bo-analysis-form"><h2>{title}</h2>
     <ValidatedForm onSubmit={save}>
+      <FormTopBar id="bo-price-form" title={title} dirty={dirty} onDiscard={onCancel} busy={busy} disabled={!inputs.length}
+        submitLabel={busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Crear precio'} />
       <div className="bo-pair">
         <InputPicker id="bo-price-input" label="Insumo" inputs={inputs} value={form.inputId} onChange={chooseInput} />
         <Field id="bo-price-value" label="Precio">

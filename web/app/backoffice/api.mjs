@@ -86,6 +86,8 @@ const validations = {
   'Area already recorded for this plot and campaign': 'Ese lote ya tiene superficie registrada para esa campaña. Edita el registro existente.',
   'Percentages must have at most two decimals': 'Los porcentajes admiten hasta 2 decimales.',
   'Thousand seed weight must be positive and fit numeric(10,4)': 'El peso de 1000 semillas debe ser mayor que 0 y tener hasta 4 decimales.',
+  // User preferences (S2 of the shell round).
+  'Theme must be light or dark': 'Elige el tema claro u oscuro.',
 };
 
 // The same API text can mean different things per request: "Reason is required" cancels an order or decides a comparison.

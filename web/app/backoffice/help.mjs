@@ -28,13 +28,24 @@ export const helpScreens = {
 };
 
 // Backoffice section key -> help key. Nested contexts (a plot inside Clientes, its soil analyses, the print view and the
-// login screen) pass their own key to the help button.
+// login screen) register their own key (usePageHelp); "Mi cuenta" shares the local access help.
 const sections = {
   'work-orders': 'ordenes-de-trabajo', clients: 'clientes', 'seed-analyses': 'analisis-de-semillas', contractors: 'contratistas',
   providers: 'proveedores', 'quote-comparisons': 'comparacion-de-presupuestos', inputs: 'insumos', 'labor-types': 'labores',
   stages: 'etapas', crops: 'cultivos', campaigns: 'campanas', staff: 'personal', 'plot-campaign-areas': 'superficie-por-campana',
-  recipes: 'recetas', 'recipe-lines': 'recetas', 'import-records': 'procedencia',
+  recipes: 'recetas', 'recipe-lines': 'recetas', 'import-records': 'procedencia', account: 'acceso-local',
 };
 
 /** The help key of a backoffice section; null for a section without help. */
 export const helpKeyFor = section => sections[section] ?? null;
+
+/**
+ * The help key the top "Ayuda" button opens (S1): among the registered contexts ({ key, level }, in registration order),
+ * the most specific one (highest level: 0 section, 1 nested screen, 2 panel inside it), the last of its level on a tie;
+ * without any, the section's own key.
+ */
+export function currentHelpKey(contexts, sectionKey) {
+  let best = null;
+  for (const context of contexts) if (context.key && (!best || context.level >= best.level)) best = context;
+  return best?.key ?? sectionKey ?? null;
+}

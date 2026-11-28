@@ -1,8 +1,11 @@
 'use client';
 
 import { useEffect, useReducer, useState } from 'react';
+import { AccountSection, ThemeToggle, UserMenu, useThemePreference } from './account.jsx';
 import { api, sessionEndedMessage } from './api.mjs';
 import { brandName, brandTagline } from './brand.mjs';
+import { BusinessDocSection } from './business-doc.jsx';
+import { businessDocs } from './business/document.mjs';
 import CatalogSection from './catalogs.jsx';
 import ClientsSection from './clients.jsx';
 import { Field } from './field.jsx';
@@ -37,11 +40,19 @@ const navigation = [
   { key: 'planning', title: 'Planificación', items: ['plot-campaign-areas', 'recipes', 'recipe-lines'].map(key => ({ key, title: genericGroups[key].title })) },
   { key: 'audit', title: 'Auditoría', items: [{ key: 'import-records', title: genericGroups['import-records'].title }] },
   { key: 'administration', title: 'Administración', items: [{ key: 'staff', title: 'Personal' }] },
+  // S4: the business reference documents, rendered from docs/business.
+  { key: 'documentation', title: 'Documentación', items: Object.entries(businessDocs).map(([key, title]) => ({ key, title })) },
 ];
 const groupOf = section => navigation.find(group => group.items.some(item => item.key === section))?.key;
+// Sections outside the sidebar groups, reached from the user menu (S2).
+const accountSection = { key: 'account', title: 'Mi cuenta' };
+const titleOf = section => section === accountSection.key ? accountSection.title
+  : navigation.flatMap(group => group.items).find(item => item.key === section)?.title ?? '';
 
 // `params` carries the target of a cross-section link, such as the client whose quote comparisons to show.
-function renderSection(key, identity, params, navigate) {
+function renderSection(key, identity, params, navigate, preference) {
+  if (key === accountSection.key) return <AccountSection identity={identity} preference={preference} />;
+  if (businessDocs[key]) return <BusinessDocSection key={key} identity={identity} docKey={key} />;
   if (key === 'work-orders') return <WorkOrdersSection identity={identity} navigate={navigate} />;
   if (key === 'staff') return <StaffSection identity={identity} />;
   if (key === 'clients') return <ClientsSection identity={identity} navigate={navigate} />;
@@ -64,6 +75,7 @@ export default function Backoffice() {
   const [menu, dispatchMenu] = useReducer(menuReducer, {});
   const [menuLoaded, setMenuLoaded] = useState(false);
   const activeGroup = groupOf(section);
+  const preference = useThemePreference(identity);
 
   // The open groups are read after mounting (the server render has no localStorage) and saved on every change.
   useEffect(() => {
@@ -106,16 +118,17 @@ export default function Backoffice() {
   }
 
   if (loading) return <main className="bo-login"><p role="status">Comprobando acceso local…</p></main>;
-  // The login screen has its own help (acceso-local) next to its title.
+  // The login screen keeps its own help (acceso-local) as a link under the form.
   if (!identity) return <HelpProvider sectionKey="acceso-local"><main className="bo-login">
     <div className="bo-login-panel"><span className="bo-symbol" aria-hidden="true">✳</span><p className="bo-kicker">{brandName} · {brandTagline}</p>
-      <div className="bo-title-row"><h1>Tu espacio de trabajo</h1><HelpButton /></div>
+      <h1>Tu espacio de trabajo</h1>
       <p>Este registro es privado. Usa el administrador local temporal para consultar o cargar información.</p>
       <ValidatedForm onSubmit={login}>
         <Field id="bo-password" label="Contraseña local" messages={{ required: 'Escribe la contraseña local.' }}>
           <input id="bo-password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></Field>
         <button type="submit" disabled={busy}>{busy ? 'Ingresando…' : 'Ingresar al backoffice'}</button></ValidatedForm>
       {error && <p className="bo-error" role="alert">{error}</p>}
+      <p className="bo-login-help"><HelpButton variant="link" label="Ayuda para ingresar" /></p>
       <small>La demostración de cuaderno de campo no usa estos datos.</small>
     </div><HelpPanel /></main></HelpProvider>;
 
@@ -133,12 +146,23 @@ export default function Backoffice() {
               onClick={() => navigate(item.key)} aria-current={item.key === section ? 'page' : undefined}>{item.title}</button>)}</div>
         </div>;
       })}</nav>
-      <button type="button" className="bo-logout" disabled={busy} onClick={logout}>Cerrar sesión</button>
     </aside>
-    <main className="bo-main">
-      {error && <p className="bo-error" role="alert">{error}</p>}
-      {renderSection(section, identity, params, navigate)}
-    </main>
+    <div className="bo-content">
+      {/* S1, S2: the top bar, with the help of the screen in view and the user's own menu at the right. */}
+      <header className="bo-topbar" aria-label="Ayuda y cuenta">
+        <p className="bo-topbar-context">{activeGroup && <span>{navigation.find(group => group.key === activeGroup).title}</span>}{titleOf(section)}</p>
+        <div className="bo-topbar-actions">
+          <HelpButton />
+          <ThemeToggle preference={preference} />
+          <UserMenu identity={identity} preference={preference} busy={busy} onAccount={() => navigate(accountSection.key)} onLogout={logout} />
+        </div>
+      </header>
+      <main className="bo-main">
+        {error && <p className="bo-error" role="alert">{error}</p>}
+        {preference.error && section !== accountSection.key && <p className="bo-error" role="alert">{preference.error}</p>}
+        {renderSection(section, identity, params, navigate, preference)}
+      </main>
+    </div>
     <HelpPanel />
   </div></HelpProvider>;
 }

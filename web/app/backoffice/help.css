@@ -1,14 +1,21 @@
-/* S10: contextual help (help-panel.jsx). The "?" button sits next to a screen title; the panel is a non-modal column on
-   the right (420px) that leaves the screen usable, and a full-screen sheet up to 950px. Colours from brand.css. */
+/* S10: contextual help (help-panel.jsx). S1: the "Ayuda" button (icon and text) sits at the top right of the screen, in the
+   top bar (workspace.jsx) and in the print toolbar; the panel is a non-modal column on the right (420px) that leaves the
+   screen usable, and a full-screen sheet up to 950px. Colours from brand.css. */
 .bo-title-row{display:flex;align-items:center;gap:12px;min-width:0}
 .bo-title-row>h1,.bo-title-row>h2{min-width:0;overflow-wrap:anywhere}
-.bo-help-button{flex:none;width:32px;height:32px;border-radius:50%;border:1px solid var(--brand-primary);background:var(--brand-paper);
-  color:var(--brand-primary);font:700 16px/1 var(--brand-font);cursor:pointer;display:inline-grid;place-items:center;padding:0}
-.bo-help-button:hover,.bo-help-button[aria-expanded=true]{background:var(--brand-primary);color:var(--brand-paper)}
-.bo-help-button:focus-visible,.bo-help-panel button:focus-visible,.bo-help-panel a:focus-visible{outline:3px solid var(--brand-accent);outline-offset:3px}
+.bo-help-button{flex:none;display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 14px;border-radius:20px;
+  border:1px solid var(--brand-primary);background:var(--brand-paper);color:var(--brand-primary);font:700 14px/1 var(--brand-font-text);cursor:pointer}
+.bo-help-button:hover,.bo-help-button[aria-expanded=true]{background:var(--brand-primary);color:var(--brand-on-primary)}
+.bo-help-button[aria-disabled=true]{border-color:var(--brand-line);color:var(--brand-muted);background:var(--brand-surface);cursor:not-allowed}
+.bo-help-icon{flex:none}
+.bo-help-text-link{border:0;background:transparent;padding:6px 0;color:var(--brand-link);font:inherit;font-size:14px;text-decoration:underline;cursor:pointer}
+.bo-help-button:focus-visible,.bo-help-text-link:focus-visible,.bo-help-panel button:focus-visible,.bo-help-panel a:focus-visible{outline:3px solid var(--brand-accent);outline-offset:3px}
+.bo-help-screens ul{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-wrap:wrap;gap:8px}
+.bo-help-chip{border:1px solid var(--brand-line);border-radius:14px;background:var(--brand-surface);color:var(--brand-ink);font:600 13px var(--brand-font-text);padding:5px 12px;cursor:pointer}
+.bo-help-chip[aria-current=true]{border-color:var(--brand-primary);background:var(--brand-tint);color:var(--brand-primary-dark)}
 .bo-help-panel{position:fixed;z-index:70;top:0;right:0;bottom:0;width:420px;max-width:100%;display:flex;flex-direction:column;
   background:var(--brand-paper);color:var(--brand-ink);border-left:1px solid var(--brand-line);
-  box-shadow:-12px 0 32px color-mix(in srgb,var(--brand-ink) 14%,transparent);font-family:var(--brand-font-text)}
+  box-shadow:-12px 0 32px color-mix(in srgb,var(--brand-shadow) 14%,transparent);font-family:var(--brand-font-text)}
 .bo-help-head{flex:none;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:20px 22px 16px;
   border-bottom:1px solid var(--brand-line-soft);background:var(--brand-surface)}
 .bo-help-head>div{min-width:0}

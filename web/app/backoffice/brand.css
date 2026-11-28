@@ -1,19 +1,110 @@
-/* Brand tokens (S6): the only place that names colours and fonts for the print view and the newer backoffice styles.
-   A future brand manual (Q16) replaces these values; the current ones are the site palette. */
-:root{
+/* Brand tokens (S6): the only place that names colours and fonts. style.css, help.css, business.css and print.css use
+   these variables only. A future brand manual (Q16) replaces these values; the current ones are the site palette.
+   S2: the light set is the default; data-theme="dark" on the backoffice root #bo-root (theme.mjs) switches to the dark set
+   on screen. The print
+   views (.ot-page) and printing always use the light set. */
+:root,.ot-page{
+  color-scheme:light;
   --brand-primary:#226a64;
   --brand-primary-dark:#183a3d;
+  --brand-on-primary:#ffffff;
   --brand-accent:#c79340;
   --brand-ink:#17363c;
   --brand-muted:#5e7574;
   --brand-line:#bdcec6;
   --brand-line-soft:#d7e0da;
+  --brand-line-strong:#afc4b9;
+  --brand-input-line:#a9c2b7;
+  --brand-group-line:#c9d8d0;
   --brand-surface:#f8faf7;
   --brand-canvas:#e7eeea;
   --brand-paper:#ffffff;
   --brand-tint:#e6efe9;
+  --brand-shadow:#17363c;
+  /* Secondary text, from the strongest to the faintest. */
+  --brand-label:#3d5c58;
+  --brand-text-soft:#536e68;
+  --brand-text-note:#56706b;
+  --brand-text-faint:#607a74;
+  --brand-subtle:#7d918c;
+  --brand-kicker:#337b76;
+  --brand-link:#276e69;
+  --brand-link-strong:#1d5f5a;
+  /* States: notice (done), error, warning, info (issued) and the selected plot. */
   --brand-danger:#813c24;
   --brand-danger-soft:#f3e3dd;
+  --brand-notice-bg:#e1efe7;
+  --brand-notice-ink:#1d5049;
+  --brand-notice-line:#2f7d6f;
+  --brand-error-bg:#fae9df;
+  --brand-error-line:#b65b39;
+  --brand-warning-bg:#fbf1de;
+  --brand-warning-ink:#8a4b12;
+  --brand-warning-line:#c98a2c;
+  --brand-info-bg:#e3eef5;
+  --brand-info-ink:#24506b;
+  --brand-selected-bg:#f1f7f3;
+  --brand-selected-line:#5f9c90;
+  /* Login panel and sidebar. */
+  --brand-login-accent:#d0aa65;
+  --brand-symbol:#b88337;
+  --brand-sidebar:#183a3d;
+  --brand-sidebar-ink:#e8f1eb;
+  --brand-sidebar-hover:#315a56;
+  --brand-sidebar-line:#4a6967;
+  --brand-sidebar-mark:#cead6c;
+  --brand-sidebar-badge:#d4b981;
+  --brand-sidebar-muted:#b4d1c8;
+  --brand-sidebar-note:#b4cbc3;
+  --brand-sidebar-group:#8fb3a8;
   --brand-font:Bahnschrift,'Segoe UI',sans-serif;
   --brand-font-text:'Segoe UI',Arial,sans-serif;
 }
+/* Dark set: text pairs reach WCAG AA (4.5:1) on their backgrounds; the amber focus ring stays visible on every surface. */
+@media screen{[data-theme=dark]{
+  color-scheme:dark;
+  --brand-primary:#5cb0a6;
+  --brand-primary-dark:#a6dcd3;
+  --brand-on-primary:#0b1719;
+  --brand-accent:#e0b062;
+  --brand-ink:#e3ece8;
+  --brand-muted:#a7bab5;
+  --brand-line:#3e585c;
+  --brand-line-soft:#2c4347;
+  --brand-line-strong:#4a666c;
+  --brand-input-line:#58767b;
+  --brand-group-line:#3a5357;
+  --brand-surface:#16262a;
+  --brand-canvas:#0f1b1d;
+  --brand-paper:#1c3034;
+  --brand-tint:#21403f;
+  --brand-shadow:#000000;
+  --brand-label:#c0d3cd;
+  --brand-text-soft:#adc0bb;
+  --brand-text-note:#a9bcb7;
+  --brand-text-faint:#a2b6b1;
+  --brand-subtle:#91a6a1;
+  --brand-kicker:#80c6bd;
+  --brand-link:#7dc8be;
+  --brand-link-strong:#92d4ca;
+  --brand-danger:#f2a78e;
+  --brand-danger-soft:#3d241e;
+  --brand-notice-bg:#173a33;
+  --brand-notice-ink:#c1e7da;
+  --brand-notice-line:#4fa391;
+  --brand-error-bg:#3d241e;
+  --brand-error-line:#d27a52;
+  --brand-warning-bg:#3a2e17;
+  --brand-warning-ink:#f3c98a;
+  --brand-warning-line:#c98a2c;
+  --brand-info-bg:#1c3243;
+  --brand-info-ink:#acd2ea;
+  --brand-selected-bg:#1d3836;
+  --brand-selected-line:#5f9c90;
+  --brand-login-accent:#d0aa65;
+  --brand-symbol:#dba85c;
+  --brand-sidebar:#0b1517;
+  --brand-sidebar-ink:#e3ece8;
+  --brand-sidebar-hover:#21403f;
+  --brand-sidebar-line:#2c4347;
+}}

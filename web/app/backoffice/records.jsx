@@ -3,15 +3,17 @@
 import { useCallback, useState } from 'react';
 import { send } from './api.mjs';
 import { Field, SchemaControl } from './field.jsx';
+import { FormTopBar, useDirtyState } from './form-actions.jsx';
 import { ValidatedForm } from './form-validation.jsx';
-import { HelpButton, usePageHelp } from './help-panel.jsx';
+import { usePageHelp } from './help-panel.jsx';
 import { entities, fieldApplies, formFor, payloadFor, rowLabel, searchRecords } from './schema.mjs';
 
-// `helpKey` names the help file of a nested screen (a plot inside Clientes); by default, the section's own (S10).
+// `helpKey` names the help file of a nested screen (a plot inside Clientes); by default, the section's own (S10). The
+// top bar's "Ayuda" button opens it (S1).
 export function SectionHeader({ identity, title, description, count, helpKey }) {
   usePageHelp(helpKey);
   return <header><div><p className="bo-kicker">Registro privado · {identity.email}</p>
-    <div className="bo-title-row"><h1>{title}</h1><HelpButton helpKey={helpKey} /></div>
+    <h1>{title}</h1>
     <p>{description ?? 'Consulta y administra los datos guardados en PostgreSQL local.'}</p></div>
     {count !== undefined && <span className="bo-count">{count} {count === 1 ? 'registro' : 'registros'}</span>}</header>;
 }
@@ -46,13 +48,20 @@ export const editorTitle = (entity, record) => {
   return record ? `Editar ${singular}` : `${feminine ? 'Nueva' : 'Nuevo'} ${singular}`;
 };
 
-// Create or edit one record of a schema entity. The parent re-mounts it (key) when the target record changes.
+// Create or edit one record of a schema entity. The parent re-mounts it (key) when the target record changes. The top
+// bar (S3) discards back to the parent (`onCancel`) or, for the default "new" form, clears what was typed.
 export function RecordForm({ entity, record, parent, optionSets, csrfToken, onSaved, onCancel, missing, context }) {
   const meta = entities[entity];
   const [form, setForm] = useState(() => formFor(entity, record));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [round, setRound] = useState(0);
+  const { dirty, initial } = useDirtyState(form);
   const fields = meta.fields.filter(field => fieldApplies(field, Boolean(record)));
+  function discard() {
+    if (onCancel) { onCancel(); return; }
+    setForm(initial); setError(''); setRound(value => value + 1);
+  }
 
   async function save() {
     setBusy(true); setError('');
@@ -65,14 +74,17 @@ export function RecordForm({ entity, record, parent, optionSets, csrfToken, onSa
   }
 
   const label = meta.singular;
+  const submitLabel = busy ? 'Guardando…' : record ? 'Guardar cambios' : `Crear ${label}`;
   return <section className="bo-editor"><h2>{editorTitle(entity, record)}</h2>
     {context && <p className="bo-context">{context}</p>}
-    <ValidatedForm onSubmit={save}>
+    <ValidatedForm key={round} onSubmit={save}>
+      <FormTopBar id={`bo-${entity}-form`} title={editorTitle(entity, record)} dirty={dirty} onDiscard={discard} canDiscard={Boolean(onCancel)}
+        submitLabel={submitLabel} busy={busy} disabled={Boolean(missing)} />
       {fields.map(field => <SchemaControl key={field.key} field={field} id={`bo-${entity}-${field.key}`} value={form[field.key]}
         optionSets={optionSets} onChange={value => setForm(current => ({ ...current, [field.key]: value }))} />)}
       {error && <p className="bo-error" role="alert">{error}</p>}
       {missing && <p>{missing}</p>}
-      <div className="bo-actions"><button type="submit" disabled={busy || Boolean(missing)}>{busy ? 'Guardando…' : record ? 'Guardar cambios' : `Crear ${label}`}</button>
+      <div className="bo-actions"><button type="submit" disabled={busy || Boolean(missing)}>{submitLabel}</button>
         {(record || onCancel) && <button type="button" onClick={onCancel}>Cancelar</button>}</div>
     </ValidatedForm></section>;
 }

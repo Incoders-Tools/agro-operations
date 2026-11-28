@@ -1,0 +1,83 @@
+/* S4: business documentation (business-doc.jsx). In the backoffice: a sticky table of contents beside a readable column
+   (about 75 characters a line, clear space around headings, paragraphs and lists). In the print view: A4 sheets like the
+   OT print (print.css), a title page and a new page for each H2. Colours and fonts from brand.css. */
+.bd-facts{margin:10px 0 0;font-size:13px;color:var(--brand-muted)}
+.bo-main header .bd-facts:last-child{margin-top:10px;font-size:13px}
+.bd-print-button{flex:none;display:inline-block;border-radius:3px;padding:12px 18px;background:var(--brand-primary);color:var(--brand-on-primary);
+  font-weight:700;text-decoration:none;white-space:nowrap}
+.bd-print-button:hover{background:var(--brand-link-strong)}
+.bd-print-button:focus-visible,.bd-toc a:focus-visible,.bd-toc summary:focus-visible{outline:3px solid var(--brand-accent);outline-offset:3px}
+.bd-layout{display:grid;grid-template-columns:minmax(200px,260px) minmax(0,1fr);gap:40px;align-items:start}
+.bd-toc{position:sticky;top:calc(var(--bo-topbar-h,0px) + 24px);max-height:calc(100vh - var(--bo-topbar-h,0px) - 48px);overflow:auto;padding:3px;
+  font-family:var(--brand-font-text);font-size:14px;line-height:1.45;overscroll-behavior:contain}
+.bd-toc summary{cursor:pointer;font:700 12px var(--brand-font);letter-spacing:.12em;text-transform:uppercase;color:var(--brand-muted);padding:4px 0 10px}
+.bd-toc-list{list-style:none;margin:0;padding:0 0 0 2px;display:grid;gap:2px;border-left:2px solid var(--brand-line-soft)}
+.bd-toc-list li a{display:block;padding:5px 10px;color:var(--brand-ink);text-decoration:none;border-left:2px solid transparent;margin-left:-4px}
+.bd-toc-list li a:hover{color:var(--brand-primary);border-left-color:var(--brand-primary);background:var(--brand-tint)}
+.bd-toc-list .bd-toc-sub a{padding-left:24px;font-size:13px;color:var(--brand-muted)}
+.bd-article{background:var(--brand-surface);border:1px solid var(--brand-line);padding:clamp(22px,4vw,52px);min-width:0}
+.bd-body{max-width:75ch;font-family:var(--brand-font-text);font-size:16px;line-height:1.7;color:var(--brand-ink);overflow-wrap:break-word}
+.bd-body>:first-child{margin-top:0}
+.bd-body h2,.bd-body h3,.bd-body h4{font-family:var(--brand-font);color:var(--brand-ink);line-height:1.25;scroll-margin-top:calc(var(--bo-topbar-h,0px) + 20px)}
+.bd-body h2{font-size:clamp(22px,2.4vw,28px);letter-spacing:-.02em;margin:2.2em 0 .7em;padding-top:.9em;border-top:1px solid var(--brand-line)}
+.bd-body>h2:first-child{border-top:0;padding-top:0}
+.bd-body h3{font-size:19px;margin:1.9em 0 .55em;color:var(--brand-primary-dark)}
+.bd-body h4{font-size:16px;margin:1.5em 0 .4em}
+.bd-body h2:focus,.bd-body h3:focus{outline:none}
+.bd-body h2:focus-visible,.bd-body h3:focus-visible{outline:3px solid var(--brand-accent);outline-offset:4px}
+.bd-body p{margin:0 0 1em}
+.bd-body ul,.bd-body ol{margin:0 0 1.2em;padding-left:1.5em}
+.bd-body li{margin:0 0 .35em;padding-left:.2em}
+.bd-body li::marker{color:var(--brand-primary)}
+/* A long list of short items (crops, labors) reads in two columns where there is room. */
+.bd-body ul:has(>li:nth-child(12)){columns:2 16em;column-gap:2.5em}
+.bd-body ul:has(>li:nth-child(12))>li{break-inside:avoid}
+.bd-body strong{color:var(--brand-ink)}
+.bd-body code{font-family:Consolas,'Courier New',monospace;font-size:.88em;background:var(--brand-tint);padding:1px 5px;border-radius:3px}
+.bd-body a{color:var(--brand-link)}
+.bd-body .bo-help-table{width:100%;table-layout:auto;margin:.4em 0 1.4em;font-size:15px;line-height:1.5}
+.bd-body .bo-help-table th,.bd-body .bo-help-table td{padding:9px 10px}
+.bd-body .bo-help-table td:first-child{width:auto;min-width:8em}
+.bd-body .bo-help-table th{font-size:13px}
+.bd-source{max-width:75ch;margin:2em 0 0;padding-top:1em;border-top:1px solid var(--brand-line-soft);font-size:13px;color:var(--brand-muted)}
+.bd-empty code{font-family:Consolas,'Courier New',monospace;font-size:13px;background:var(--brand-tint);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}
+@media(max-width:1100px){.bd-layout{grid-template-columns:minmax(0,1fr);gap:20px}
+  .bd-toc{position:static;max-height:none;overflow:visible;background:var(--brand-surface);border:1px solid var(--brand-line);padding:12px 16px}
+  .bd-toc summary{padding:4px 0}.bd-toc details[open] summary{padding-bottom:10px}}
+@media(max-width:560px){.bo-main header.bd-header{align-items:stretch}.bd-print-button{text-align:center}.bd-body{font-size:15px}
+  .bd-body .bo-help-table{font-size:14px}.bd-body .bo-help-table th,.bd-body .bo-help-table td{padding:7px 6px}}
+
+/* Print view (/backoffice/business/<key>/print): the sheet of print.css with a title page. */
+.bd-sheet{gap:0;font-size:13px;line-height:1.55}
+.bd-sheet-kind{margin:0;font-family:var(--brand-font);font-size:12px;letter-spacing:.16em;color:var(--brand-muted)}
+.bd-cover{padding:18mm 0 8mm;display:grid;gap:14px;align-content:start}
+.bd-cover h1{margin:0;font-family:var(--brand-font);font-size:34px;line-height:1.15;letter-spacing:-.02em;color:var(--brand-ink)}
+.bd-cover-summary{margin:0;font-size:15px;color:var(--brand-ink);max-width:60ch}
+.bd-cover-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:8px 0 0}
+.bd-cover-facts>div{border-top:2px solid var(--brand-primary);padding-top:6px;min-width:0}
+.bd-cover-facts dt{font-family:var(--brand-font);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--brand-primary)}
+.bd-cover-facts dd{margin:2px 0 0;overflow-wrap:anywhere}
+.bd-cover-toc{margin-top:10mm;border:1px solid var(--brand-line);padding:10px 14px}
+.bd-cover-toc h2{font-family:var(--brand-font);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--brand-primary);margin:0 0 6px}
+.bd-cover-toc .bd-toc-list{border-left:0;padding:0;gap:1px}
+.bd-cover-toc .bd-toc-list li span{display:block;padding:2px 0}
+.bd-cover-toc .bd-toc-sub span{padding-left:16px!important;color:var(--brand-muted);font-size:12px}
+.bd-sheet .bd-body{max-width:none;font-size:13px;line-height:1.6}
+.bd-sheet .bd-body>h2{font-size:22px;margin:10mm 0 4mm;padding-top:4mm;border-top:3px solid var(--brand-primary)}
+.bd-sheet .bd-body h3{font-size:16px;margin:6mm 0 2mm}
+.bd-sheet .bd-body .bo-help-table{font-size:12px}
+.bd-sheet .bd-body h2,.bd-sheet .bd-body h3,.bd-sheet .bd-body h4{break-after:avoid}
+.bd-sheet .bd-body p,.bd-sheet .bd-body li,.bd-sheet .bd-body tr,.bd-cover{break-inside:avoid}
+.bd-sheet .bd-body thead{display:table-header-group}
+@media(max-width:560px){.bd-cover h1{font-size:26px}.bd-cover-facts{grid-template-columns:1fr}}
+@media print{
+  .bd-sheet{font-size:10.5pt}
+  .bd-sheet .bd-body{font-size:10.5pt}
+  /* The title page stands alone; each H2 starts a new page. */
+  .bd-sheet .bd-body>h2{break-before:page;margin-top:0}
+  .bd-cover{min-height:220mm}
+  .bd-cover-facts{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .bd-sheet .bd-body,.bd-sheet .bd-body *,.bd-cover,.bd-cover *{color:var(--brand-ink)}
+  .bd-sheet .bd-body>h2{border-top-color:var(--brand-ink)}
+  .bd-sheet .bd-body .bo-help-table th,.bd-sheet .bd-body .bo-help-table td,.bd-cover-toc{border-color:var(--brand-ink)}
+}
