@@ -4,6 +4,11 @@ One Markdown file per backoffice screen. The backoffice shows the file of the cu
 opens with the "?" button and can stay open while the user works (odd/tasks/staff-help-polish.md, S10 and L3). Humans
 and AI agents read the same files, so this folder is also the functional reference for each screen.
 
+Help files describe screens. The business-level reference, which describes the operation those screens support
+(clients, plots, campaigns, crops, labors, work orders, analyses and providers), is
+[docs/business/operacion-del-negocio.md](../business/operacion-del-negocio.md); its format and update rule are in
+[docs/business/README.md](../business/README.md).
+
 ## Audience
 
 - **Sysadmin**: how the local stack starts, where credentials and backups live, which API routes and tables back each

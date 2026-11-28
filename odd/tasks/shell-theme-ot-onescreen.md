@@ -38,8 +38,8 @@ Owner round of 2026-11-28. Public repository: no client values.
   page scroll; long plot lists scroll inside their block. Narrow screens stack.
 
 ## Tasks
-- T1 (S2) worker: migration 014 user preferences + /api/v1/me/preferences + tests.
-- T2 (S4) worker: business document Markdown (content only), parallel.
+- T1 (S2) worker: migration 014 user preferences + /api/v1/me/preferences + tests. | done
+- T2 (S4) worker: business document Markdown (content only), parallel. | done
 - T3 (S1, S2, S3 generic) worker: top bar with Ayuda and user menu, Mi cuenta, dark theme via variables, shared
   top action bar for generic forms, business document section + print, parallel with T1-T2.
 - T4 (S3 OT/quotes/analyses, S5) worker: one-screen OT form with Chequeos panel; top action bar on the remaining
