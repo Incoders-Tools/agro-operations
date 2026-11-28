@@ -80,12 +80,47 @@ export { parse as parseDecimal, format as formatDecimal, scale as decimalScale }
 /** Sum of the ha a trabajar; blank or invalid entries count as zero (the form flags them). */
 export const workedTotal = plots => format(plots.reduce((sum, plot) => sum + (parse(plot.worked) ?? 0n), 0n));
 
+// a × b of two ten-thousandths values, rounded half away from zero to 4 decimals (both are never negative).
+const multiply = (a, b) => (a * b + scale / 2n) / scale;
+
 /** dose × total worked area, rounded half away from zero to 4 decimals as the server does; null when not computable. */
 export function lineTotal(dose, worked) {
   const d = parse(dose);
   const area = parse(worked);
   if (!d || !area) return null;
-  return format((d * area + scale / 2n) / scale);
+  return format(multiply(d, area));
+}
+
+/**
+ * S5 "Chequeos": the dose against the input's range, inclusive at both ends: 'below', 'within' or 'above'; 'none' when
+ * the input has neither a minimum nor a maximum; null without an input or a valid dose.
+ */
+export function doseState(dose, input) {
+  if (!input || parse(dose) === null) return null;
+  if (input.doseMin == null && input.doseMax == null) return 'none';
+  return doseRange(dose, input) ?? 'within';
+}
+
+/**
+ * S5 estimated cost of one line from the input's reference cost (currency per Q19): `perHectare` = dose × cost and
+ * `total` = line total × cost, both at 4 decimals; each null while not computable. Null when the input has no
+ * reference cost ("Sin costo de referencia"); a zero cost is a cost.
+ */
+export function lineCost(dose, worked, input) {
+  const cost = input?.referenceCost == null ? null : parse(input.referenceCost);
+  if (cost === null) return null;
+  const d = parse(dose);
+  const total = lineTotal(dose, worked);
+  return { perHectare: d ? format(multiply(d, cost)) : null, total: total === null ? null : format(multiply(parse(total), cost)) };
+}
+
+/** Sum of the lineCost results that have an amount (null when none has); `missing` counts the lines without a cost. */
+export function costTotals(costs) {
+  const sum = key => {
+    const amounts = costs.filter(cost => cost?.[key] != null);
+    return amounts.length ? format(amounts.reduce((total, cost) => total + parse(cost[key]), 0n)) : null;
+  };
+  return { perHectare: sum('perHectare'), total: sum('total'), missing: costs.filter(cost => cost === null).length };
 }
 
 /** 'below' or 'above' when the dose leaves the input's reference range; the dose itself is never changed. */

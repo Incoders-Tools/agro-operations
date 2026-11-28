@@ -3,13 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
 import { ComboField, Field, optionNodes, useFocusAfterRender } from './field.jsx';
+import { FormTopBar, useDirtyState } from './form-actions.jsx';
 import { ValidatedForm } from './form-validation.jsx';
 import { Busy, Loading, SectionHeader, usePending } from './records.jsx';
 import { fieldPlotCount, optionLabel, rowLabel } from './schema.mjs';
 import { displayUnit } from './units.mjs';
 import {
-  clientFirms, displayDate, doseRange, emptyOrder, exceedsPlot, fieldNames, laborLabel, laborOptionGroups, lineTotal, newLine, orderFromRecord,
-  orderLabel, orderPayload, orderQuery, plotCropPrefill, plotGroups, responsibleLabel, responsibleNote, statuses, workedTotal, formatAmount } from './work-orders.mjs';
+  clientFirms, costTotals, displayDate, doseRange, doseState, emptyOrder, exceedsPlot, fieldNames, laborLabel, laborOptionGroups, lineCost, lineTotal,
+  newLine, orderFromRecord, orderLabel, orderPayload, orderQuery, plotCropPrefill, plotGroups, responsibleLabel, responsibleNote, statuses, workedTotal,
+  formatAmount } from './work-orders.mjs';
 
 // Catalogs the list, form and detail resolve ids against; firms come back with their next work order number. The
 // responsible engineer is chosen among the active engineers of the staff (S3).
@@ -44,10 +46,56 @@ function doseWarning(range, input) {
     : `La dosis está por encima de la máxima del insumo (${input.doseMax} ${unit}).`;
 }
 
-// Alta and edit of one OT, in the order of the workbook `Orden` sheet. The number always comes from the server.
-// The form starts from the client (S4); its plots may come from any of its fields (S3).
+// One header cell of the sheet; the span applies only where the header is a 12-column grid (orders.css).
+const Cell = ({ span, children }) => <div className={`bo-wo-cell bo-wo-span-${span}`}>{children}</div>;
+
+const doseStates = {
+  within: { mark: '✓', text: 'dentro del rango' }, below: { mark: '↓', text: 'por debajo del mínimo' },
+  above: { mark: '↑', text: 'por encima del máximo' }, none: { mark: '', text: 'sin rango de referencia' },
+};
+const amount = value => value === null || value === undefined ? '—' : formatAmount(value);
+
+// S5: the workbook helper columns. Per chosen input, its reference dose range with the dose coloured within or out of
+// range, the hollow cone flag and the estimated cost from the input's reference cost; then the cost totals.
+function OrderChecks({ lines, inputs, worked, crop }) {
+  const rows = lines.flatMap((line, index) => {
+    const input = byId(inputs, line.inputId);
+    return input ? [{ line, index, input, state: doseState(line.dose, input), cost: lineCost(line.dose, worked, input) }] : [];
+  });
+  const totals = costTotals(rows.map(row => row.cost));
+  const name = row => `${row.index + 1}. ${rowLabel('inputs', row.input)}`;
+  return <section className="bo-wo-checks" aria-labelledby="bo-wo-checks-title">
+    <h3 id="bo-wo-checks-title">Chequeos</h3>
+    <p className="bo-wo-check-crop">Cultivo y variedad: <strong>{crop || 'Sin indicar'}</strong></p>
+    {!rows.length ? <p className="bo-muted">Elige insumos para ver su dosis de referencia y su costo estimado.</p> : <>
+      <table className="bo-wo-check-table bo-wo-check-doses"><caption>Dosis de referencia por ha</caption>
+        <thead><tr><th scope="col">Insumo</th><th scope="col" className="bo-num">Mínimo</th><th scope="col" className="bo-num">Máximo</th>
+          <th scope="col" className="bo-num">Dosis</th><th scope="col">Cono hueco</th></tr></thead>
+        <tbody>{rows.map(row => {
+          const state = doseStates[row.state];
+          return <tr key={row.line.key}><th scope="row" title={name(row)}>{name(row)}</th>
+            <td className="bo-num">{amount(row.input.doseMin)}</td><td className="bo-num">{amount(row.input.doseMax)}</td>
+            <td className={`bo-num bo-wo-dose${row.state ? ` bo-wo-dose-${row.state}` : ''}`}>
+              {row.state ? <>{formatAmount(row.line.dose)}{state.mark && <span aria-hidden="true"> {state.mark}</span>}<span className="bo-sr">, {state.text}</span></> : '—'}</td>
+            <td>{row.input.hollowCone ? 'Sí' : <span className="bo-muted">No</span>}</td></tr>;
+        })}</tbody></table>
+      <table className="bo-wo-check-table bo-wo-check-costs"><caption>Costo estimado (referencia)</caption>
+        <thead><tr><th scope="col">Insumo</th><th scope="col" className="bo-num">Por ha</th><th scope="col" className="bo-num">Total</th></tr></thead>
+        <tbody>{rows.map(row => <tr key={row.line.key}><th scope="row" title={name(row)}>{name(row)}</th>
+          {row.cost ? <><td className="bo-num">{amount(row.cost.perHectare)}</td><td className="bo-num">{amount(row.cost.total)}</td></>
+            : <td colSpan={2} className="bo-muted">Sin costo de referencia</td>}</tr>)}</tbody>
+        <tfoot><tr><th scope="row">Total</th><td className="bo-num">{amount(totals.perHectare)}</td><td className="bo-num">{amount(totals.total)}</td></tr></tfoot></table>
+      <p className="bo-hint">Valores según costo de referencia del insumo; moneda por confirmar (Q19).</p>
+    </>}
+  </section>;
+}
+
+// Alta and edit of one OT as one screen (S5), like the workbook `Orden` sheet: the header band, then the plots, the
+// inputs and the checks side by side, and the observations. The number always comes from the server. The form starts
+// from the client (S4); its plots may come from any of its fields (S3).
 function OrderForm({ record, refs, csrfToken, onSaved, onCancel, onOpenStaff }) {
   const [form, setForm] = useState(() => record ? orderFromRecord(record, { engineers: refs.engineers }) : emptyOrder());
+  const { dirty } = useDirtyState(form);
   const [plotTerm, setPlotTerm] = useState('');
   const [clientPlots, setClientPlots] = useState([]);
   const [plotsLoading, setPlotsLoading] = useState(false);
@@ -120,6 +168,7 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel, onOpenStaff }) 
   const shownPlots = groups.reduce((sum, group) => sum + group.plots.length, 0);
   const total = workedTotal(form.plots);
   const ready = refs['commercial-firms'].length && refs['labor-types'].length && refs.contractors.length;
+  const title = record ? `Editar orden ${orderLabel(firm, record.number)}` : 'Nueva orden de trabajo';
   const firmHint = firm ? `Se emitirá con el Nº ${firm.nextWorkOrderNumber}.`
     : client && !firms.length ? 'Este cliente aún no tiene firmas comerciales. Créala en Clientes.' : undefined;
   // An order written before staff existed keeps its free text until a staff member is chosen; a new order needs one.
@@ -127,97 +176,128 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel, onOpenStaff }) 
   const engineerHint = note.legacy ? `Registrado como texto: “${note.legacy}”. Elige a la persona de la lista para reemplazarlo; si no eliges, se conserva el texto.`
     : note.inactive ? `${note.inactive} ya no es un ingeniero activo: elige otro responsable.`
     : 'Ingenieros activos de Personal.';
+  const crop = [nameOf(refs.crops, form.cropId), form.variety.trim()].filter(Boolean).join(' · ');
 
-  return <section className="bo-editor bo-order-form"><h2>{record ? `Editar orden ${orderLabel(firm, record.number)}` : 'Nueva orden de trabajo'}</h2>
+  return <section className="bo-editor bo-order-form bo-wo-sheet" aria-labelledby="bo-wo-form-title">
+    <h2 id="bo-wo-form-title" className="bo-sr">{title}</h2>
     <ValidatedForm onSubmit={save}>
-      {record ? <p className="bo-context">Firma {firm?.name ?? 'Sin referencia'} · cliente {client?.name ?? 'Sin referencia'}. La firma y el número no cambian.</p>
-        : <div className="bo-pair">
-          <ComboField id="bo-wo-client" label="Cliente" value={clientId} onChange={chooseClient} options={options(refs.clients)}
-            placeholder="Busca por nombre o CUIT" hint={`${refs.clients.length} clientes. Escribe para filtrar y elige con las flechas y Enter.`} />
-          <ComboField id="bo-wo-firm" label="Firma comercial" value={form.firmId} disabled={!client} onChange={firmId => set({ firmId })}
-            options={options(firms)} placeholder={client ? 'Busca y elige una firma' : 'Primero elige el cliente'} hint={firmHint} />
-        </div>}
-      <Field id="bo-wo-date" label="Fecha" noun="la fecha de la orden">
-        <input id="bo-wo-date" type="date" value={form.issuedOn} required onChange={event => set({ issuedOn: event.target.value })} /></Field>
-      <ComboField id="bo-wo-labor" label="Labor" value={form.laborTypeId} onChange={laborTypeId => set({ laborTypeId })}
-        options={laborOptionGroups(refs['labor-types'])} placeholder="Busca por nombre o abreviatura" />
-      <ComboField id="bo-wo-stage" label="Etapa" optional value={form.stageId} onChange={stageId => set({ stageId })}
-        options={options(refs.stages)} none="Sin indicar" />
-      <ComboField id="bo-wo-contractor" label="Contratista" value={form.contractorId} onChange={contractorId => set({ contractorId })}
-        options={options(refs.contractors)} placeholder="Busca y elige un contratista" />
-      <fieldset className="bo-group"><legend>Campos y lotes</legend>
-        {!client ? <p className="bo-muted">Elige un cliente para ver sus campos y lotes.</p>
-          : !fields.length ? <p className="bo-muted">Este cliente aún no tiene campos. Cárgalos en Clientes.</p>
-          : plotsLoading ? <Loading label="Cargando campos y lotes…" /> : <>
-            <Field id="bo-wo-plot-filter" label="Filtrar campos y lotes" optional
-              hint={`${shownPlots} de ${clientPlots.length} lotes a la vista · ${form.plots.length} seleccionados. Busca por campo, lote o código.`}>{hintId =>
-                <input id="bo-wo-plot-filter" type="search" value={plotTerm} aria-describedby={hintId} onChange={event => setPlotTerm(event.target.value)} />}</Field>
-            {!groups.length ? <p className="bo-muted">Sin coincidencias para “{plotTerm}”.</p> : groups.map(({ field, plots }) =>
-              <section key={field.id} className="bo-field-group" aria-labelledby={`bo-wo-group-${field.id}`}>
-                <h3 id={`bo-wo-group-${field.id}`}>{field.name} <small>{fieldPlotCount(clientPlots, field.id)}</small></h3>
-                {!plots.length ? <p className="bo-muted">Este campo aún no tiene lotes.</p> : <div className="bo-plots">{plots.map(plot => {
-                  const chosen = form.plots.find(row => row.plotId === plot.id);
-                  const id = `bo-wo-plot-${plot.id}`;
-                  return <div key={plot.id} className={chosen ? 'bo-plot bo-plot-on' : 'bo-plot'}>
-                    <Field id={id} label={rowLabel('plots', plot)} hint={`Superficie ${formatAmount(plot.areaHectares)} ha`} check>{hintId =>
-                      <input id={id} type="checkbox" checked={Boolean(chosen)} aria-describedby={hintId} onChange={event => togglePlot(plot, event.target.checked)} />}</Field>
-                    {chosen && <>
-                      <Field id={`${id}-worked`} label="ha a trabajar" noun="las ha a trabajar">
-                        <input id={`${id}-worked`} type="number" min="0.0001" max="99999999.9999" step="0.0001" required value={chosen.worked}
-                          onChange={event => setWorked(plot.id, event.target.value)} /></Field>
-                      {exceedsPlot(chosen.worked, plot.areaHectares) && <p className="bo-warning" role="status">⚠ Supera la superficie del lote ({formatAmount(plot.areaHectares)} ha).</p>}
-                    </>}
-                  </div>;
-                })}</div>}
-              </section>)}
+      <FormTopBar id="bo-wo-form" title={title} dirty={dirty} onDiscard={onCancel} busy={busy} disabled={!ready}
+        submitLabel={busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Emitir orden'} />
+      <div className="bo-wo-head">
+        {record ? <Cell span={6}><div className="bo-wo-fixed">
+          <Readout label="Cliente">{client?.name ?? 'Sin referencia'}</Readout>
+          <Readout label="Firma comercial">{firm?.name ?? 'Sin referencia'}</Readout>
+          <p className="bo-hint">La firma y el número no cambian.</p></div></Cell>
+          : <>
+            <Cell span={3}><ComboField id="bo-wo-client" label="Cliente" value={clientId} onChange={chooseClient} options={options(refs.clients)}
+              placeholder="Busca por nombre o CUIT" hint={`${refs.clients.length} clientes. Escribe para filtrar y elige con las flechas y Enter.`} /></Cell>
+            <Cell span={3}><ComboField id="bo-wo-firm" label="Firma comercial" value={form.firmId} disabled={!client} onChange={firmId => set({ firmId })}
+              options={options(firms)} placeholder={client ? 'Busca y elige una firma' : 'Primero elige el cliente'} hint={firmHint} /></Cell>
           </>}
-        <p className="bo-total" role="status">Total a trabajar: <strong>{total} ha</strong> en {form.plots.length} {form.plots.length === 1 ? 'lote' : 'lotes'}</p>
-      </fieldset>
-
-      <ComboField id="bo-wo-campaign" label="Campaña" optional value={form.campaignId} options={options(refs.campaigns)} none="Sin indicar"
-        onChange={campaignId => { set({ campaignId }); prefill({ ...form, campaignId }); }}
-        hint="Con una campaña y un solo lote, el cultivo se completa con el primer cultivo del lote." />
-      <ComboField id="bo-wo-crop" label="Cultivo" optional value={form.cropId} onChange={cropId => set({ cropId })}
-        options={options(refs.crops)} none="Sin indicar" />
-      <Field id="bo-wo-variety" label="Variedad o híbrido" optional>
-        <input id="bo-wo-variety" type="text" maxLength={200} value={form.variety} onChange={event => set({ variety: event.target.value })} /></Field>
-
-      <fieldset className="bo-group"><legend>Insumos</legend>
-        {!form.lines.length && <p className="bo-muted">Sin insumos.</p>}
-        <ol className="bo-lines">{form.lines.map((line, index) => {
-          const input = byId(refs.inputs, line.inputId);
-          const lineTotalValue = input ? lineTotal(line.dose, total) : null;
-          const warning = doseWarning(input && doseRange(line.dose, input), input);
-          const id = `bo-wo-line-${line.key}`;
-          return <li key={line.key} className="bo-line">
-            {/* A line left blank is skipped; one with a dose needs its input. */}
-            <ComboField id={`${id}-input`} label={`Insumo ${index + 1}`} noun="el insumo" value={line.inputId} required={Boolean(line.dose.trim())}
-              onChange={inputId => { setLine(line.key, { inputId }); if (inputId) focusLater(`${id}-dose`); }} options={inputOptions}
-              placeholder="Busca por nombre o principio activo" />
-            <Field id={`${id}-dose`} label="Dosis por ha" noun="la dosis">
-              <input id={`${id}-dose`} type="number" min="0.0001" max="99999999.9999" step="0.0001" required={Boolean(line.inputId)} value={line.dose}
-                onChange={event => setLine(line.key, { dose: event.target.value })} /></Field>
-            <Readout label="Unidad">{input ? displayUnit(input.unit) : '—'}</Readout>
-            <Readout label="Total">{lineTotalValue ? `${lineTotalValue} ${displayUnit(input.unit)}` : '—'}</Readout>
-            <button type="button" className="bo-link" onClick={() => set({ lines: form.lines.filter(row => row.key !== line.key) })}
-              aria-label={`Quitar insumo ${index + 1}`}>Quitar</button>
-            {warning && <p className="bo-warning" role="status">⚠ {warning}</p>}
-          </li>;
-        })}</ol>
-        <button type="button" className="bo-link" onClick={addLine}>Agregar insumo</button>
-      </fieldset>
-
-      <Field id="bo-wo-notes" label="Observaciones" optional>
-        <textarea id="bo-wo-notes" rows={3} maxLength={2000} value={form.observations} onChange={event => set({ observations: event.target.value })} /></Field>
-      <ComboField id="bo-wo-engineer" label="Ingeniero responsable" optional={Boolean(note.legacy)} value={form.responsibleStaffId}
-        onChange={responsibleStaffId => set({ responsibleStaffId })} placeholder="Busca y elige un ingeniero" hint={engineerHint}
-        options={refs.engineers.map(row => ({ value: row.id, label: row.fullName, detail: [row.title, row.licenseNumber && `Matrícula ${row.licenseNumber}`].filter(Boolean).join(' · ') || undefined }))} />
+        <Cell span={2}><Field id="bo-wo-date" label="Fecha" noun="la fecha de la orden">
+          <input id="bo-wo-date" type="date" value={form.issuedOn} required onChange={event => set({ issuedOn: event.target.value })} /></Field></Cell>
+        <Cell span={4}><ComboField id="bo-wo-labor" label="Labor" value={form.laborTypeId} onChange={laborTypeId => set({ laborTypeId })}
+          options={laborOptionGroups(refs['labor-types'])} placeholder="Busca por nombre o abreviatura" /></Cell>
+        <Cell span={2}><ComboField id="bo-wo-stage" label="Etapa" optional value={form.stageId} onChange={stageId => set({ stageId })}
+          options={options(refs.stages)} none="Sin indicar" /></Cell>
+        <Cell span={2}><ComboField id="bo-wo-contractor" label="Contratista" value={form.contractorId} onChange={contractorId => set({ contractorId })}
+          options={options(refs.contractors)} placeholder="Busca y elige un contratista" /></Cell>
+        <Cell span={2}><ComboField id="bo-wo-campaign" label="Campaña" optional value={form.campaignId} options={options(refs.campaigns)} none="Sin indicar"
+          onChange={campaignId => { set({ campaignId }); prefill({ ...form, campaignId }); }}
+          hint="Con un solo lote, completa el cultivo del lote." /></Cell>
+        <Cell span={2}><ComboField id="bo-wo-crop" label="Cultivo" optional value={form.cropId} onChange={cropId => set({ cropId })}
+          options={options(refs.crops)} none="Sin indicar" /></Cell>
+        <Cell span={2}><Field id="bo-wo-variety" label="Variedad o híbrido" optional>
+          <input id="bo-wo-variety" type="text" maxLength={200} value={form.variety} onChange={event => set({ variety: event.target.value })} /></Field></Cell>
+        <Cell span={2}><ComboField id="bo-wo-engineer" label="Ingeniero responsable" optional={Boolean(note.legacy)} value={form.responsibleStaffId}
+          onChange={responsibleStaffId => set({ responsibleStaffId })} placeholder="Busca y elige un ingeniero" hint={engineerHint}
+          options={refs.engineers.map(row => ({ value: row.id, label: row.fullName, detail: [row.title, row.licenseNumber && `Matrícula ${row.licenseNumber}`].filter(Boolean).join(' · ') || undefined }))} /></Cell>
+      </div>
       {!refs.engineers.length && <p className="bo-warning" role="status">Aún no hay ingenieros activos para elegir. Agrégalos en Administración › Personal con el rol Ingeniero y marcados como activos.{' '}
         {onOpenStaff && <button type="button" className="bo-link" onClick={onOpenStaff}>Ir a Personal</button>}</p>}
-      {error && <p className="bo-error" role="alert">{error}</p>}
-      {!ready && <p>Primero crea clientes, labores y contratistas.</p>}
-      <div className="bo-actions"><button type="submit" disabled={busy || !ready}>{busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Emitir orden'}</button>
-        <button type="button" onClick={onCancel}>Cancelar</button></div>
+
+      <div className="bo-wo-body">
+        <fieldset className="bo-group bo-wo-plots"><legend>Lotes</legend>
+          {!client ? <p className="bo-muted">Elige un cliente para ver sus campos y lotes.</p>
+            : !fields.length ? <p className="bo-muted">Este cliente aún no tiene campos. Cárgalos en Clientes.</p>
+            : plotsLoading ? <Loading label="Cargando campos y lotes…" /> : <>
+              <Field id="bo-wo-plot-filter" label="Filtrar campos y lotes" optional
+                hint={`${shownPlots} de ${clientPlots.length} lotes a la vista · ${form.plots.length} seleccionados. Busca por campo, lote o código.`}>{hintId =>
+                  <input id="bo-wo-plot-filter" type="search" value={plotTerm} aria-describedby={hintId} onChange={event => setPlotTerm(event.target.value)} />}</Field>
+              <div className="bo-wo-plot-pick">
+                {!groups.length ? <p className="bo-muted">Sin coincidencias para “{plotTerm}”.</p> : groups.map(({ field, plots }) =>
+                  <section key={field.id} className="bo-field-group" aria-labelledby={`bo-wo-group-${field.id}`}>
+                    <h3 id={`bo-wo-group-${field.id}`}>{field.name} <small>{fieldPlotCount(clientPlots, field.id)}</small></h3>
+                    {!plots.length ? <p className="bo-muted">Este campo aún no tiene lotes.</p> : <div className="bo-plots">{plots.map(plot => {
+                      const chosen = form.plots.some(row => row.plotId === plot.id);
+                      const id = `bo-wo-plot-${plot.id}`;
+                      return <div key={plot.id} className={chosen ? 'bo-plot bo-plot-on' : 'bo-plot'}>
+                        <Field id={id} label={rowLabel('plots', plot)} hint={`Superficie ${formatAmount(plot.areaHectares)} ha`} check>{hintId =>
+                          <input id={id} type="checkbox" checked={chosen} aria-describedby={hintId} onChange={event => togglePlot(plot, event.target.checked)} />}</Field>
+                      </div>;
+                    })}</div>}
+                  </section>)}
+              </div>
+            </>}
+          {form.plots.length > 0 && <table className="bo-table bo-compact bo-wo-chosen"><caption className="bo-sr">Lotes seleccionados</caption>
+            <thead><tr><th scope="col">Campo</th><th scope="col">Lote</th><th scope="col" className="bo-num">Has</th><th scope="col" className="bo-num">Has tarea</th></tr></thead>
+            <tbody>{form.plots.map(row => {
+              const plot = byId(clientPlots, row.plotId);
+              const label = plot ? rowLabel('plots', plot) : 'Sin referencia';
+              const id = `bo-wo-plot-${row.plotId}-worked`;
+              return <tr key={row.plotId}>
+                <td data-label="Campo">{plot ? nameOf(refs.fields, plot.fieldId) ?? 'Sin referencia' : 'Sin referencia'}</td>
+                <td data-label="Lote">{label}</td>
+                <td data-label="Has" className="bo-num">{plot ? formatAmount(plot.areaHectares) : '—'}</td>
+                <td data-label="Has tarea" className="bo-num">
+                  <Field id={id} label={`Has tarea de ${label}`} noun="las ha a trabajar">
+                    <input id={id} type="number" min="0.0001" max="99999999.9999" step="0.0001" required value={row.worked}
+                      onChange={event => setWorked(row.plotId, event.target.value)} /></Field>
+                  {plot && exceedsPlot(row.worked, plot.areaHectares) && <span className="bo-warning-inline" role="status">⚠ Supera la superficie del lote ({formatAmount(plot.areaHectares)} ha).</span>}</td>
+              </tr>;
+            })}</tbody></table>}
+          <p className="bo-total" role="status">Total a trabajar: <strong>{total} ha</strong> en {form.plots.length} {form.plots.length === 1 ? 'lote' : 'lotes'}</p>
+        </fieldset>
+
+        <fieldset className="bo-group bo-wo-inputs"><legend>Insumos</legend>
+          {!form.lines.length ? <p className="bo-muted">Sin insumos.</p>
+            : <div className="bo-wo-line-head" aria-hidden="true"><span>Producto</span><span>Dosis/ha</span><span>Unidad</span><span>Total</span><span /></div>}
+          <ol className="bo-lines bo-wo-lines">{form.lines.map((line, index) => {
+            const input = byId(refs.inputs, line.inputId);
+            const lineTotalValue = input ? lineTotal(line.dose, total) : null;
+            const warning = doseWarning(input && doseRange(line.dose, input), input);
+            const id = `bo-wo-line-${line.key}`;
+            return <li key={line.key} className="bo-line bo-wo-line">
+              {/* A line left blank is skipped; one with a dose needs its input. */}
+              <ComboField id={`${id}-input`} label={`Insumo ${index + 1}`} noun="el insumo" value={line.inputId} required={Boolean(line.dose.trim())}
+                onChange={inputId => { setLine(line.key, { inputId }); if (inputId) focusLater(`${id}-dose`); }} options={inputOptions}
+                placeholder="Busca por nombre o principio activo" />
+              <Field id={`${id}-dose`} label="Dosis por ha" noun="la dosis">
+                <input id={`${id}-dose`} type="number" min="0.0001" max="99999999.9999" step="0.0001" required={Boolean(line.inputId)} value={line.dose}
+                  onChange={event => setLine(line.key, { dose: event.target.value })} /></Field>
+              <Readout label="Unidad">{input ? displayUnit(input.unit) : '—'}</Readout>
+              <Readout label="Total">{lineTotalValue ? `${lineTotalValue} ${displayUnit(input.unit)}` : '—'}</Readout>
+              <button type="button" className="bo-link" onClick={() => set({ lines: form.lines.filter(row => row.key !== line.key) })}
+                aria-label={`Quitar insumo ${index + 1}`}>Quitar</button>
+              {warning && <p className="bo-warning" role="status">⚠ {warning}</p>}
+            </li>;
+          })}</ol>
+          <button type="button" className="bo-link" onClick={addLine}>Agregar insumo</button>
+        </fieldset>
+
+        <OrderChecks lines={form.lines} inputs={refs.inputs} worked={total} crop={crop} />
+      </div>
+
+      <div className="bo-wo-foot">
+        <Field id="bo-wo-notes" label="Observaciones" optional>
+          <textarea id="bo-wo-notes" rows={2} maxLength={2000} value={form.observations} onChange={event => set({ observations: event.target.value })} /></Field>
+        <div className="bo-wo-foot-actions">
+          {error && <p className="bo-error" role="alert">{error}</p>}
+          {!ready && <p>Primero crea clientes, labores y contratistas.</p>}
+          <div className="bo-actions"><button type="submit" disabled={busy || !ready}>{busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Emitir orden'}</button>
+            <button type="button" onClick={onCancel}>Cancelar</button></div>
+        </div>
+      </div>
     </ValidatedForm></section>;
 }
 

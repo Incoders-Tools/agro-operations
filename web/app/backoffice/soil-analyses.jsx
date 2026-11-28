@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, send } from './api.mjs';
 import { ComboField, Field, optionNodes, useFocusAfterRender } from './field.jsx';
+import { FormTopBar, useDirtyState } from './form-actions.jsx';
 import { ValidatedForm } from './form-validation.jsx';
 import { HelpButton } from './help-panel.jsx';
 import { Busy, usePending } from './records.jsx';
@@ -36,6 +37,7 @@ function TextInput({ id, label, value, onChange, optional = true, hint, type = '
 // Create or edit one soil analysis of the plot with its results (full replace on save).
 function SoilForm({ plot, record, campaigns, labs, csrfToken, onSaved, onCancel }) {
   const [form, setForm] = useState(() => record ? soilFromRecord(record) : emptySoilAnalysis());
+  const { dirty } = useDirtyState(form);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const set = changes => setForm(current => ({ ...current, ...changes }));
@@ -62,9 +64,12 @@ function SoilForm({ plot, record, campaigns, labs, csrfToken, onSaved, onCancel 
     finally { setBusy(false); }
   }
 
-  return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar análisis de suelo' : 'Nuevo análisis de suelo'}</h2>
+  const title = record ? 'Editar análisis de suelo' : 'Nuevo análisis de suelo';
+  return <section className="bo-editor bo-analysis-form"><h2>{title}</h2>
     {!record && <p className="bo-context">Se registra en el lote {rowLabel('plots', plot)}.</p>}
     <ValidatedForm onSubmit={save}>
+      <FormTopBar id="bo-soil-form" title={title} dirty={dirty} onDiscard={onCancel} busy={busy} disabled={!campaigns.length}
+        submitLabel={busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Crear análisis'} />
       <div className="bo-pair">
         <ComboField id="bo-soil-campaign" label="Campaña" value={form.campaignId} onChange={campaignId => set({ campaignId })}
           options={options(campaigns)} placeholder="Busca y elige una campaña" />

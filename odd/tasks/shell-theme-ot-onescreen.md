@@ -42,7 +42,7 @@ Owner round of 2026-11-28. Public repository: no client values.
 - T2 (S4) worker: business document Markdown (content only), parallel. | done
 - T3 (S1, S2, S3 generic) worker | done: top bar with Ayuda and user menu, Mi cuenta, dark theme via variables, shared
   top action bar for generic forms, business document section + print, parallel with T1-T2.
-- T4 (S3 OT/quotes/analyses, S5) worker: one-screen OT form with Chequeos panel; top action bar on the remaining
+- T4 (S3 OT/quotes/analyses, S5) worker | done: one-screen OT form with Chequeos panel; top action bar on the remaining
   full forms.
 - T5: launcher 014, docs/help updates, real DB apply, browser verification at 1440x900 and 390 px, push.
 

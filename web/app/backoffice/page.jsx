@@ -5,6 +5,7 @@ import Backoffice from './workspace.jsx';
 import './brand.css';
 import './help.css';
 import './style.css';
+import './orders.css';
 import './business.css';
 
 export const dynamic = 'force-dynamic';

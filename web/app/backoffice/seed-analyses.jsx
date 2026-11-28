@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
 import { ComboField, Field, optionNodes } from './field.jsx';
+import { FormTopBar, useDirtyState } from './form-actions.jsx';
 import { ValidatedForm } from './form-validation.jsx';
 import { Busy, RecordDetail, SectionHeader, usePending } from './records.jsx';
 import {
@@ -34,6 +35,7 @@ function NumberInput({ id, label, value, onChange, hint, optional = true, min = 
 // Create or edit one seed analysis. Every measured value is optional; each treatment block adds up to at most 100 %.
 function SeedForm({ record, refs, labs, csrfToken, onSaved, onCancel }) {
   const [form, setForm] = useState(() => record ? seedFromRecord(record) : emptySeedAnalysis());
+  const { dirty } = useDirtyState(form);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const set = changes => setForm(current => ({ ...current, ...changes }));
@@ -51,8 +53,11 @@ function SeedForm({ record, refs, labs, csrfToken, onSaved, onCancel }) {
   }
 
   const ready = refs.clients.length && refs.crops.length;
-  return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar análisis de semillas' : 'Nuevo análisis de semillas'}</h2>
+  const title = record ? 'Editar análisis de semillas' : 'Nuevo análisis de semillas';
+  return <section className="bo-editor bo-analysis-form"><h2>{title}</h2>
     <ValidatedForm onSubmit={save}>
+      <FormTopBar id="bo-seed-form" title={title} dirty={dirty} onDiscard={onCancel} busy={busy} disabled={!ready}
+        submitLabel={busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Crear análisis'} />
       <div className="bo-pair">
         <ComboField id="bo-seed-client" label="Cliente" value={form.clientId} onChange={clientId => set({ clientId })} options={options(refs.clients)}
           placeholder="Busca por nombre o CUIT" hint="Productor de procedencia de la semilla." />

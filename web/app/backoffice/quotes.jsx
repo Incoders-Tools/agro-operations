@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, send } from './api.mjs';
 import { ComboField, Field, useFocusAfterRender } from './field.jsx';
+import { FormTopBar, useDirtyState } from './form-actions.jsx';
 import { ValidatedForm } from './form-validation.jsx';
 import { InputPicker, Select } from './providers.jsx';
 import { Busy, RecordDetail, SectionHeader, usePending } from './records.jsx';
@@ -24,6 +25,7 @@ function ComparisonForm({ record, clients, clientId, csrfToken, onSaved, onCance
   const [form, setForm] = useState(() => ({
     clientId: record?.clientId ?? clientId ?? '', title: record?.title ?? '', requestedOn: record?.requestedOn ?? todayIso(),
   }));
+  const { dirty } = useDirtyState(form);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const set = changes => setForm(current => ({ ...current, ...changes }));
@@ -36,8 +38,11 @@ function ComparisonForm({ record, clients, clientId, csrfToken, onSaved, onCance
     } catch (cause) { setError(cause.message); }
     finally { setBusy(false); }
   }
-  return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar comparación' : 'Nueva comparación de presupuestos'}</h2>
+  const title = record ? 'Editar comparación' : 'Nueva comparación de presupuestos';
+  return <section className="bo-editor bo-analysis-form"><h2>{title}</h2>
     <ValidatedForm onSubmit={save}>
+      <FormTopBar id="bo-cmp-form" title={title} dirty={dirty} onDiscard={onCancel} busy={busy} disabled={!record && !clients.length}
+        submitLabel={busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Crear comparación'} />
       <div className="bo-pair">
         {record ? <Field id="bo-cmp-client" label="Cliente"><output id="bo-cmp-client">{nameOf(clients, record.clientId)}</output></Field>
           : <ComboField id="bo-cmp-client" label="Cliente" value={form.clientId} onChange={value => set({ clientId: value })} options={options(clients)}
@@ -58,6 +63,7 @@ function ComparisonForm({ record, clients, clientId, csrfToken, onSaved, onCance
 // Add or replace one quote with its lines. Totals follow the API: 4 decimals, rounded half away from zero.
 function QuoteForm({ comparison, record, providers, inputs, csrfToken, onSaved, onCancel }) {
   const [form, setForm] = useState(() => record ? quoteFromRecord(record) : emptyQuote());
+  const { dirty } = useDirtyState(form);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const set = changes => setForm(current => ({ ...current, ...changes }));
@@ -82,8 +88,11 @@ function QuoteForm({ comparison, record, providers, inputs, csrfToken, onSaved, 
     } catch (cause) { setError(cause.message); }
     finally { setBusy(false); }
   }
-  return <section className="bo-editor bo-analysis-form"><h2>{record ? 'Editar presupuesto' : 'Nuevo presupuesto'}</h2>
+  const title = record ? 'Editar presupuesto' : 'Nuevo presupuesto';
+  return <section className="bo-editor bo-analysis-form"><h2>{title}</h2>
     <ValidatedForm onSubmit={save}>
+      <FormTopBar id="bo-quote-form" title={title} dirty={dirty} onDiscard={onCancel} busy={busy} disabled={!choices.length}
+        submitLabel={busy ? 'Guardando…' : record ? 'Guardar cambios' : 'Agregar presupuesto'} />
       <div className="bo-pair">
         <ComboField id="bo-quote-provider" label="Proveedor" value={form.providerId} onChange={providerId => set({ providerId })} options={options(choices)}
           placeholder="Busca por nombre o CUIT" hint={choices.length ? 'Proveedores de tipo Insumos.' : 'Aún no hay proveedores de tipo Insumos.'} />

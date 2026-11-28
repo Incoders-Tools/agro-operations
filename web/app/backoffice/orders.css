@@ -1,0 +1,123 @@
+/* S5: the OT create/edit form as one dense sheet, like the workbook `Orden` sheet (orders.jsx OrderForm, .bo-wo-sheet).
+   Header band in a compact grid; then plots, inputs and the "Chequeos" panel side by side (the checks go below the
+   first two under 1400 px); observations and the bottom actions last. Under 950 px everything stacks. Colours come from
+   brand.css variables only, so the sheet follows the light and dark themes. Labels keep 5 px from their controls and
+   the focus ring is drawn 1 px out, so it never touches a label (S1). */
+
+/* While the sheet is open the page around it is compact, so the whole form fits a 1440x900 screen. */
+.bo-main:has(.bo-wo-sheet){padding-top:18px;padding-left:24px;padding-right:24px}
+.bo-main:has(.bo-wo-sheet) header{padding-bottom:12px;margin-bottom:12px}
+.bo-main:has(.bo-wo-sheet) header h1{font-size:30px}
+.bo-main:has(.bo-wo-sheet) header p:last-child{margin-top:6px}
+
+.bo-editor.bo-wo-sheet{padding:10px 14px 12px}
+.bo-editor.bo-wo-sheet form{gap:10px}
+.bo-wo-sheet .bo-form-topbar{margin:0 -14px;padding:6px 14px}
+.bo-wo-sheet .bo-form-topbar button{padding:7px 14px}
+.bo-app .bo-wo-sheet :is(input,select,textarea,button):focus-visible{outline-offset:1px}
+
+/* Compact fields. */
+.bo-wo-sheet .bo-field,.bo-wo-sheet .bo-readout{gap:5px}
+.bo-wo-sheet .bo-field>label,.bo-wo-sheet .bo-readout>span{font-size:12px;line-height:16px}
+.bo-wo-sheet .bo-hint{font-size:11px;line-height:1.35}
+.bo-wo-sheet .bo-field-error{font-size:12px;line-height:1.35}
+.bo-app .bo-wo-sheet .bo-field>input:not([type=checkbox]):not([type=radio]),.bo-app .bo-wo-sheet .bo-field>select{min-height:34px;height:34px;padding:6px 8px}
+.bo-app .bo-wo-sheet .bo-combobox>input[role=combobox]{min-height:34px;height:34px;padding:6px 30px 6px 8px}
+.bo-wo-sheet .bo-combobox::after{right:11px}
+.bo-editor.bo-wo-sheet textarea{min-height:52px;padding:6px 8px}
+.bo-wo-sheet .bo-readout output{padding:7px 0;font-size:13px}
+.bo-wo-sheet .bo-warning{padding:6px 10px;font-size:12px}
+.bo-wo-sheet .bo-group{padding:6px 10px 10px;gap:8px}
+.bo-wo-sheet .bo-group legend{font-size:13px}
+.bo-wo-sheet .bo-total{font-size:13px}
+
+/* Header band: auto-filled cells, a 12-column grid from 1200 px (Cliente 3 · Firma 3 · Fecha 2 · Labor 4, then six of 2). */
+.bo-wo-head{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px 12px;align-items:start}
+.bo-wo-cell{min-width:0}
+.bo-wo-span-6{grid-column:1/-1}
+@media(min-width:1200px){
+  .bo-wo-head{grid-template-columns:repeat(12,minmax(0,1fr))}
+  .bo-wo-span-2{grid-column:span 2}.bo-wo-span-3{grid-column:span 3}.bo-wo-span-4{grid-column:span 4}.bo-wo-span-6{grid-column:span 6}
+}
+.bo-wo-fixed{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 12px}
+.bo-wo-fixed .bo-hint{grid-column:1/-1;margin:0}
+
+/* Body: plots | inputs | checks. */
+.bo-wo-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:12px;align-items:start}
+.bo-wo-checks{grid-column:1/-1}
+@media(min-width:1400px){.bo-wo-body{grid-template-columns:minmax(0,1fr) minmax(0,1.45fr) minmax(0,1fr)}.bo-wo-checks{grid-column:auto}}
+@media(max-width:950px){.bo-wo-body{grid-template-columns:minmax(0,1fr)}}
+
+/* Plots: the client's plots by field in a list that scrolls inside the block, then the chosen ones as rows. */
+.bo-wo-plot-pick{max-height:132px;overflow-y:auto;overscroll-behavior:contain;display:grid;gap:4px;align-content:start;padding:2px 6px 4px;
+  border:1px solid var(--brand-line-soft);border-radius:3px;background:var(--brand-paper)}
+.bo-wo-sheet .bo-field-group{gap:2px;padding-top:4px}
+.bo-wo-sheet .bo-wo-plot-pick>.bo-field-group:first-child{border-top:0;padding-top:0}
+.bo-wo-sheet .bo-field-group h3{font-size:12px;line-height:18px;color:var(--brand-label)}
+.bo-wo-sheet .bo-field-group h3 small{font-size:11px}
+.bo-wo-sheet .bo-plots{grid-template-columns:minmax(0,1fr);gap:0}
+.bo-wo-sheet .bo-plot{padding:2px 4px;border:0;background:transparent;gap:0}
+.bo-wo-sheet .bo-plot-on{background:var(--brand-selected-bg);box-shadow:inset 2px 0 0 var(--brand-selected-line)}
+.bo-wo-sheet .bo-check{grid-template-columns:16px minmax(0,1fr) auto;column-gap:8px;row-gap:2px}
+.bo-wo-sheet .bo-check input{width:16px;height:16px}
+.bo-wo-sheet .bo-check>label{font-weight:400;overflow-wrap:anywhere}
+.bo-wo-sheet .bo-check .bo-hint{grid-column:3;grid-row:1;white-space:nowrap}
+.bo-wo-sheet .bo-check .bo-field-error{grid-column:2/-1}
+.bo-wo-chosen{font-size:12px}
+.bo-wo-sheet .bo-table.bo-compact th,.bo-wo-sheet .bo-table.bo-compact td{padding:3px 4px;vertical-align:middle}
+.bo-wo-chosen td:last-child{width:104px}
+.bo-app .bo-wo-sheet .bo-wo-chosen .bo-field>input:not([type=checkbox]){height:28px;min-height:28px;padding:2px 6px;text-align:right}
+.bo-wo-sheet .bo-wo-chosen .bo-warning-inline{font-size:11px;white-space:normal;text-align:right}
+.bo-wo-chosen .bo-field>label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* Inputs: one compact row per line under a column header (the header is visual; every control keeps its label). */
+.bo-wo-line-head,.bo-wo-sheet .bo-wo-line{display:grid;grid-template-columns:minmax(0,1fr) 84px 44px 92px 48px;gap:6px;align-items:start}
+.bo-wo-line-head{font-size:12px;font-weight:700;color:var(--brand-label);border-bottom:1px solid var(--brand-line-strong);padding-bottom:3px}
+.bo-wo-sheet .bo-wo-lines{gap:4px}
+.bo-wo-sheet .bo-wo-line{border-top:0;padding-top:0}
+.bo-wo-sheet .bo-wo-line>.bo-link{padding:8px 0;font-size:13px}
+.bo-wo-sheet .bo-wo-line>.bo-warning{grid-column:1/-1}
+.bo-wo-sheet .bo-wo-inputs>.bo-link{padding:4px 0;font-size:13px}
+@media(min-width:561px){
+  .bo-wo-line>.bo-field>label,.bo-wo-line>.bo-readout>span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .bo-wo-line .bo-combobox-popup{right:auto;width:max(100%,340px);max-width:calc(100vw - 48px)}
+}
+@media(max-width:560px){
+  .bo-wo-line-head{display:none}
+  .bo-wo-sheet .bo-wo-line{grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid var(--brand-line-soft);padding:8px;background:var(--brand-paper)}
+  .bo-wo-sheet .bo-wo-line>.bo-field:first-child{grid-column:1/-1}
+  .bo-main:has(.bo-wo-sheet){padding-left:12px;padding-right:12px}
+  .bo-editor.bo-wo-sheet{padding:8px 10px 10px}
+  .bo-wo-sheet .bo-form-topbar{margin:0 -10px;padding:6px 10px}
+  .bo-wo-fixed{grid-template-columns:minmax(0,1fr)}
+}
+
+/* Checks: the workbook helper columns. Dose within range green, out of range red; costs from the reference cost. */
+.bo-wo-checks{display:grid;gap:8px;align-content:start;min-width:0;padding:6px 10px 10px;border:1px solid var(--brand-group-line);border-radius:3px;background:var(--brand-paper)}
+.bo-wo-checks h3{margin:0;font-family:var(--brand-font);font-size:13px;color:var(--brand-ink)}
+.bo-editor form .bo-wo-checks p{margin:0;font-size:12px}
+.bo-wo-check-crop{overflow-wrap:anywhere}
+.bo-wo-check-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px}
+.bo-wo-check-table caption{text-align:left;font-weight:700;font-size:12px;padding-bottom:2px;color:var(--brand-label)}
+.bo-wo-check-table th,.bo-wo-check-table td{padding:3px 4px;border-bottom:1px solid var(--brand-line-soft);text-align:left;vertical-align:middle}
+.bo-wo-check-table thead th{font-size:11px;line-height:1.2;color:var(--brand-label);border-bottom-color:var(--brand-line-strong);vertical-align:bottom}
+.bo-wo-check-table tbody th{font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bo-wo-check-table tfoot th,.bo-wo-check-table tfoot td{font-weight:700;border-bottom:0;border-top:1px solid var(--brand-line-strong)}
+.bo-wo-check-table .bo-num{text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bo-wo-check-doses thead th:nth-child(2),.bo-wo-check-doses thead th:nth-child(3){width:17%}
+.bo-wo-check-doses thead th:nth-child(4){width:21%}
+.bo-wo-check-doses thead th:nth-child(5){width:15%}
+.bo-wo-check-costs thead th:nth-child(2){width:28%}
+.bo-wo-check-costs thead th:nth-child(3){width:33%}
+.bo-wo-dose-within{background:var(--brand-notice-bg);color:var(--brand-notice-ink)}
+.bo-wo-dose-below,.bo-wo-dose-above{background:var(--brand-error-bg);color:var(--brand-danger);font-weight:700}
+@media(min-width:951px) and (max-width:1399px){
+  .bo-wo-checks{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px}
+  .bo-wo-checks>:not(table){grid-column:1/-1}
+}
+
+/* Observations and the bottom actions share the last row. */
+.bo-wo-foot{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 16px;align-items:end}
+.bo-wo-foot-actions{display:grid;gap:6px;justify-items:end;min-width:0}
+.bo-wo-sheet .bo-actions button:first-child{padding:8px 16px}
+@media(max-width:950px){.bo-wo-foot{grid-template-columns:minmax(0,1fr)}.bo-wo-foot-actions{justify-items:start}}
