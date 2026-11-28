@@ -231,31 +231,23 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel, onOpenStaff }) 
                     {!plots.length ? <p className="bo-muted">Este campo aún no tiene lotes.</p> : <div className="bo-plots">{plots.map(plot => {
                       const chosen = form.plots.some(row => row.plotId === plot.id);
                       const id = `bo-wo-plot-${plot.id}`;
+                      const row = form.plots.find(item => item.plotId === plot.id);
+                      const workedId = `${id}-worked`;
+                      // A chosen plot takes its worked area in the same row, like the workbook's Has / Has tarea columns.
                       return <div key={plot.id} className={chosen ? 'bo-plot bo-plot-on' : 'bo-plot'}>
-                        <Field id={id} label={rowLabel('plots', plot)} hint={`Superficie ${formatAmount(plot.areaHectares)} ha`} check>{hintId =>
+                        <Field id={id} label={<span title={rowLabel('plots', plot)}>{rowLabel('plots', plot)}</span>} hint={`${formatAmount(plot.areaHectares)} ha`} check>{hintId =>
                           <input id={id} type="checkbox" checked={chosen} aria-describedby={hintId} onChange={event => togglePlot(plot, event.target.checked)} />}</Field>
+                        {row && <div className="bo-wo-worked">
+                          <Field id={workedId} label={`Has tarea de ${rowLabel('plots', plot)}`} noun="las ha a trabajar">
+                            <input id={workedId} type="number" min="0.0001" max="99999999.9999" step="0.0001" required value={row.worked}
+                              onChange={event => setWorked(row.plotId, event.target.value)} /></Field>
+                          {exceedsPlot(row.worked, plot.areaHectares) && <span className="bo-warning-inline" role="status">⚠ Supera la superficie ({formatAmount(plot.areaHectares)} ha).</span>}
+                        </div>}
                       </div>;
                     })}</div>}
                   </section>)}
               </div>
             </>}
-          {form.plots.length > 0 && <table className="bo-table bo-compact bo-wo-chosen"><caption className="bo-sr">Lotes seleccionados</caption>
-            <thead><tr><th scope="col">Campo</th><th scope="col">Lote</th><th scope="col" className="bo-num">Has</th><th scope="col" className="bo-num">Has tarea</th></tr></thead>
-            <tbody>{form.plots.map(row => {
-              const plot = byId(clientPlots, row.plotId);
-              const label = plot ? rowLabel('plots', plot) : 'Sin referencia';
-              const id = `bo-wo-plot-${row.plotId}-worked`;
-              return <tr key={row.plotId}>
-                <td data-label="Campo">{plot ? nameOf(refs.fields, plot.fieldId) ?? 'Sin referencia' : 'Sin referencia'}</td>
-                <td data-label="Lote">{label}</td>
-                <td data-label="Has" className="bo-num">{plot ? formatAmount(plot.areaHectares) : '—'}</td>
-                <td data-label="Has tarea" className="bo-num">
-                  <Field id={id} label={`Has tarea de ${label}`} noun="las ha a trabajar">
-                    <input id={id} type="number" min="0.0001" max="99999999.9999" step="0.0001" required value={row.worked}
-                      onChange={event => setWorked(row.plotId, event.target.value)} /></Field>
-                  {plot && exceedsPlot(row.worked, plot.areaHectares) && <span className="bo-warning-inline" role="status">⚠ Supera la superficie del lote ({formatAmount(plot.areaHectares)} ha).</span>}</td>
-              </tr>;
-            })}</tbody></table>}
           <p className="bo-total" role="status">Total a trabajar: <strong>{total} ha</strong> en {form.plots.length} {form.plots.length === 1 ? 'lote' : 'lotes'}</p>
         </fieldset>
 
@@ -286,11 +278,13 @@ function OrderForm({ record, refs, csrfToken, onSaved, onCancel, onOpenStaff }) 
         </fieldset>
 
         <OrderChecks lines={form.lines} inputs={refs.inputs} worked={total} crop={crop} />
+        <div className="bo-wo-notes">
+          <Field id="bo-wo-notes" label="Observaciones" optional>
+            <textarea id="bo-wo-notes" rows={2} maxLength={2000} value={form.observations} onChange={event => set({ observations: event.target.value })} /></Field>
+        </div>
       </div>
 
       <div className="bo-wo-foot">
-        <Field id="bo-wo-notes" label="Observaciones" optional>
-          <textarea id="bo-wo-notes" rows={2} maxLength={2000} value={form.observations} onChange={event => set({ observations: event.target.value })} /></Field>
         <div className="bo-wo-foot-actions">
           {error && <p className="bo-error" role="alert">{error}</p>}
           {!ready && <p>Primero crea clientes, labores y contratistas.</p>}

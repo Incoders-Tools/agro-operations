@@ -121,3 +121,27 @@
 .bo-wo-foot-actions{display:grid;gap:6px;justify-items:end;min-width:0}
 .bo-wo-sheet .bo-actions button:first-child{padding:8px 16px}
 @media(max-width:950px){.bo-wo-foot{grid-template-columns:minmax(0,1fr)}.bo-wo-foot-actions{justify-items:start}}
+/* One-screen sheet: the page header shrinks to its title, plots take their worked area inline, observations sit under
+   the inputs, and the duplicated bottom actions hide on wide screens (the top bar carries them). */
+.bo-main:has(.bo-wo-sheet) header .bo-kicker,.bo-main:has(.bo-wo-sheet) header p:last-child{display:none}
+.bo-main:has(.bo-wo-sheet) header{padding-bottom:8px;margin-bottom:10px}
+.bo-wo-sheet .bo-wo-plot-pick{max-height:none}
+.bo-wo-sheet .bo-plot{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:8px}
+.bo-wo-worked{display:flex;align-items:center;gap:6px}
+.bo-wo-worked .bo-field>label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.bo-app .bo-wo-sheet .bo-wo-worked .bo-field>input{width:92px;height:28px;min-height:28px;padding:2px 6px;text-align:right}
+.bo-wo-worked .bo-warning-inline{font-size:11px;max-width:140px}
+/* Long hints stay for screen readers only; the plot area hint stays visible inline. */
+.bo-wo-sheet .bo-wo-head .bo-hint,.bo-wo-sheet .bo-wo-plots>.bo-field .bo-hint{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.bo-wo-sheet .bo-plot .bo-field>label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+@media(min-width:951px){
+  .bo-wo-body{grid-template-rows:auto 1fr}
+  .bo-wo-plots{grid-row:1/3}
+  .bo-wo-notes{grid-column:2}
+  .bo-wo-sheet .bo-wo-plot-pick{max-height:clamp(180px,calc(100vh - 560px),420px)}
+  .bo-wo-foot .bo-actions{display:none}
+}
+@media(min-width:1400px){
+  .bo-wo-checks{grid-row:1/3;grid-column:3}
+}
+

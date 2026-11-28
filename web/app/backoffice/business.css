@@ -74,7 +74,7 @@
   .bd-sheet{font-size:10.5pt}
   .bd-sheet .bd-body{font-size:10.5pt}
   /* The title page stands alone; each H2 starts a new page. */
-  .bd-sheet .bd-body>h2{break-before:page;margin-top:0}
+  .bd-sheet .bd-body>h2{break-before:auto;margin-top:18pt}
   .bd-cover{min-height:220mm}
   .bd-cover-facts{grid-template-columns:repeat(3,minmax(0,1fr))}
   .bd-sheet .bd-body,.bd-sheet .bd-body *,.bd-cover,.bd-cover *{color:var(--brand-ink)}

@@ -44,7 +44,7 @@ Owner round of 2026-11-28. Public repository: no client values.
   top action bar for generic forms, business document section + print, parallel with T1-T2.
 - T4 (S3 OT/quotes/analyses, S5) worker | done: one-screen OT form with Chequeos panel; top action bar on the remaining
   full forms.
-- T5: launcher 014, docs/help updates, real DB apply, browser verification at 1440x900 and 390 px, push.
+- T5: launcher 014, docs/help updates, real DB apply, browser verification at 1440x900 and 390 px, push. | done
 
 ## Log
 - L1 (owner, 2026-11-28, verbatim): "1. Debemos corregir el boton de ayuda no me gusto del todo donde quedo ubicado al
@@ -69,3 +69,13 @@ Owner round of 2026-11-28. Public repository: no client values.
 - L3 (decision): the business document lives as Markdown in the repository and is rendered in-app (same pipeline as
   help), not edited in the UI; in-app editing can follow if the engineers need to change it themselves. Preferences
   are keyed by the logged-in identity email (today the temporary local admin), ready for invitation-based accounts.
+- L4 (T5 evidence): private DB backed up to `.local/backups/before-014.dump`; 014 applied; data intact (28 clients, 174
+  fields, 468 plots, 2 OTs, 2 staff). Browser on real data, nothing saved: "Ayuda" top right opens the panel, user
+  menu has theme/Mi cuenta/logout, no "?" buttons, logout gone from the sidebar; dark theme applies and toggles back
+  (left light); Descartar asks for confirmation and returns to the list. The first one-screen check failed (form bottom
+  1,083 px of 900: narrow plot block with a separate chosen-plots table and a tall page header); fixed by entering the
+  worked area inline in each chosen plot row, moving Observaciones under the inputs, compacting the page header and
+  hints, and single-line plot labels: 2-field client, 5 plots, 4 inputs now ends at 817 px with no page scroll at
+  1440x900; 390 px stacks without overflow. Business document: 15 TOC entries; the print forced a page per H2 (12
+  pages, mostly blank); now flows in 9 A4 pages, no browser URL. 0 label overlaps (visually hidden labels excluded),
+  no page errors.
