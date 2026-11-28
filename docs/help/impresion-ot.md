@@ -52,7 +52,7 @@ mano muestra solo ese texto; sin responsable, "Sin indicar".
 4. Guarda el archivo y envíalo al contratista.
 5. Pulsa **Volver** para regresar al backoffice.
 
-El botón **?** de la barra abre esta ayuda; ni el botón ni la ayuda salen en el PDF.
+El botón **Ayuda** de la barra abre esta ayuda; ni el botón ni la ayuda salen en el PDF.
 
 ## Reglas y validaciones
 

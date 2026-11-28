@@ -129,6 +129,7 @@ if ([int]$laborCategory.Trim() -eq 0) { Apply-Migration '010_reference_alignment
 Ensure-Migration '011_providers_and_quotes.sql' 'public.providers,public.provider_contacts,public.client_providers,public.provider_prices,public.quote_comparisons,public.quotes,public.quote_lines'
 Ensure-Migration '012_analyses.sql' 'public.soil_analyses,public.soil_analysis_results,public.seed_analyses'
 Ensure-Migration '013_staff.sql' 'public.staff'
+Ensure-Migration '014_user_preferences.sql' 'public.user_preferences'
 
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
 $env:AGRO_LOCAL_ADMIN_EMAIL = $settings.email

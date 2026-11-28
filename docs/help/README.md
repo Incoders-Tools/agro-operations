@@ -1,7 +1,7 @@
 # Contextual help content
 
 One Markdown file per backoffice screen. The backoffice shows the file of the current screen in a help side panel that
-opens with the "?" button and can stay open while the user works (odd/tasks/staff-help-polish.md, S10 and L3). Humans
+opens with the "Ayuda" button at the top right of the screen and can stay open while the user works (odd/tasks/staff-help-polish.md, S10 and L3). Humans
 and AI agents read the same files, so this folder is also the functional reference for each screen.
 
 Help files describe screens. The business-level reference, which describes the operation those screens support
@@ -69,8 +69,10 @@ backoffice navigation map to help keys as follows:
 
 `index.md` lists every screen with its title and summary.
 
-The "?" button (accessible name "Ayuda de esta pantalla") sits next to each screen title, next to the soil analysis
-title of a plot, in the print view toolbar and on the login screen. The panel loads the file from
+One "Ayuda" button (accessible name "Ayuda de esta pantalla") sits in the top bar, at the right of the whole screen
+(odd/tasks/shell-theme-ot-onescreen.md, S1). It opens the help of the most specific context on screen: the section,
+the plot level of a client, or the soil analysis panel. The print view toolbar has its own "Ayuda" button and the
+login screen a help link. The panel loads the file from
 `/backoffice/help/<key>` (`web/app/backoffice/help/[key]/route.js`, served only in the local preview, keys matching
 `^[a-z0-9-]+$`), renders it with `markdown.mjs` and `markdown-render.mjs` (no HTML passthrough) and follows the screen
 the user moves to. Links to another help file open in the panel; `../engineer-questions.md` shows as text; web links
