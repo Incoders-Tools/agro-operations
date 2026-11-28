@@ -31,7 +31,7 @@ try
     }
     string[] previousMigrations = ["001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql"];
     Migrate(builder.ConnectionString, [.. previousMigrations, "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql",
-        "010_reference_alignment.sql", "011_providers_and_quotes.sql", "012_analyses.sql", "013_staff.sql"]);
+        "010_reference_alignment.sql", "011_providers_and_quotes.sql", "012_analyses.sql", "013_staff.sql", "014_user_preferences.sql"]);
     var service = new OperationsService(new PostgresOperationsRepository(builder.ConnectionString));
     static void Check(bool condition, string label)
     {
@@ -1411,6 +1411,56 @@ try
           workOrders.Document(staffOrder.Id)!.Responsible?.FullName == "Ingeniera Renombrada", "deactivation keeps issued orders");
     RejectSql($"UPDATE work_orders SET responsible_engineer = NULL WHERE id = '{staffOrder.Id}'", "staff order without name snapshot");
 
+    // 014: preferences of the logged-in identity, keyed by its email in lower case; a missing row reads as the light default.
+    string PreferenceStateOf(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand(
+            "SELECT coalesce(string_agg(to_jsonb(p)::text, ',' ORDER BY p.identity_email), '') FROM user_preferences p", connection);
+        return (string)command.ExecuteScalar()!;
+    }
+    string StoredIdentities()
+    {
+        using var connection = new NpgsqlConnection(builder.ConnectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand(
+            "SELECT coalesce(string_agg(identity_email || ':' || theme || ':' || revision, ',' ORDER BY identity_email), '') FROM user_preferences", connection);
+        return (string)command.ExecuteScalar()!;
+    }
+    var preferences = new UserPreferenceService(new PostgresUserPreferenceRepository(builder.ConnectionString));
+    const string themeError = "Theme must be light or dark";
+    Check(preferences.Get("owner@example.test") == new UserPreferences("light", 0) && PreferenceStateOf(builder.ConnectionString) == "",
+          "missing preferences read as light without writing");
+    foreach (var theme in new[] { null, "", " ", "blue", "darkest", "light dark" })
+        Check(Rejected<DomainValidationException>(() => preferences.Save("owner@example.test", 0, theme), $"invalid theme '{theme}'").Message == themeError,
+              "theme message");
+    Check(PreferenceStateOf(builder.ConnectionString) == "", "rejected theme created a row");
+    var createdPreferences = preferences.Save(" Owner@Example.TEST ", 0, "dark");
+    Check(createdPreferences == new UserPreferences("dark", 1) && preferences.Get("owner@example.test") == createdPreferences &&
+          preferences.Get("OWNER@EXAMPLE.test") == createdPreferences && StoredIdentities() == "owner@example.test:dark:1", "preferences created under the lower-case email");
+    var preferenceState = PreferenceStateOf(builder.ConnectionString);
+    foreach (var theme in new[] { "blue", " " })
+        Check(Rejected<DomainValidationException>(() => preferences.Save("owner@example.test", 1, theme), $"invalid theme update '{theme}'").Message == themeError,
+              "theme update message");
+    foreach (var revision in new[] { 0L, 2L, -1L })
+        Check(Rejected<DomainConflictException>(() => preferences.Save("OWNER@example.test", revision, "light"), $"stale preferences {revision}").Message ==
+              "Stale revision", "stale preferences message");
+    Check(Rejected<DomainConflictException>(() => preferences.Save("nobody@example.test", 1, "light"), "update without a row").Message == "Stale revision",
+          "update without a row message");
+    Check(Rejected<DomainValidationException>(() => preferences.Save(" ", 0, "light"), "blank identity").Message == "Identity email is required",
+          "blank identity message");
+    Check(PreferenceStateOf(builder.ConnectionString) == preferenceState && preferences.Get("nobody@example.test") == new UserPreferences("light", 0),
+          "rejected preference writes changed stored rows");
+    var updatedPreferences = preferences.Save("OWNER@EXAMPLE.TEST", 1, " Light ");
+    var otherPreferences = preferences.Save("Otra@Example.test", 0, "light");
+    Check(updatedPreferences == new UserPreferences("light", 2) && preferences.Get("owner@example.test") == updatedPreferences &&
+          otherPreferences == new UserPreferences("light", 1) && StoredIdentities() == "otra@example.test:light:1,owner@example.test:light:2",
+          "revision-guarded update and independent identities");
+    RejectSql("UPDATE user_preferences SET theme = 'blue'", "preference theme check");
+    RejectSql("UPDATE user_preferences SET identity_email = 'Owner@example.test' WHERE identity_email = 'owner@example.test'", "lower-case identity check");
+    RejectSql("UPDATE user_preferences SET revision = 0", "preference revision check");
+
     // 006 on a database that already holds rows in every earlier table, including a same-name labor.
     Migrate(seedBuilder.ConnectionString, previousMigrations);
     var keptLaborId = Guid.NewGuid();
@@ -1754,7 +1804,31 @@ try
     Check(EarlierStateOf(seedBuilder.ConnectionString) + "|" + ProviderStateOf(seedBuilder.ConnectionString) + "|" + AnalysisStateOf(seedBuilder.ConnectionString) + "|" +
           StaffStateOf(seedBuilder.ConnectionString) + "|" + ConstraintsOf(seedBuilder.ConnectionString) == rerunBefore, "rerunning 013 changed stored rows or constraints");
 
-    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas, recipes and work orders with concurrent revisions and numbering, across fields, search, print documents, default client firms, the 010 reference alignment, the 011 providers, contacts, client links, prices and quote comparisons, the 012 soil and seed analyses, and the 013 staff and work order responsibles");
+    // 014 on a database with rows in every earlier table keeps them and their constraints; a rerun over its own rows changes nothing.
+    string ConstraintsBefore014(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new NpgsqlCommand("""
+            SELECT string_agg(conrelid::regclass::text || ':' || conname || ':' || pg_get_constraintdef(oid), ',' ORDER BY conrelid::regclass::text, conname)
+            FROM pg_constraint WHERE connamespace = current_schema()::regnamespace AND conrelid::regclass::text <> 'user_preferences'
+            """, connection);
+        return (string)command.ExecuteScalar()!;
+    }
+    string StateBefore014(string connectionString) => SnapshotOf(connectionString) + "|" + AttributeTablesOf(connectionString) + "|" +
+        WorkOrderStateOf(connectionString) + "|" + ProviderStateOf(connectionString) + "|" + AnalysisStateOf(connectionString) + "|" +
+        StaffStateOf(connectionString) + "|" + ConstraintsBefore014(connectionString);
+    var before014 = StateBefore014(seedBuilder.ConnectionString);
+    Migrate(seedBuilder.ConnectionString, "014_user_preferences.sql");
+    Check(StateBefore014(seedBuilder.ConnectionString) == before014, "014 changed rows or constraints of earlier tables");
+    var seedPreferences = new UserPreferenceService(new PostgresUserPreferenceRepository(seedBuilder.ConnectionString));
+    seedPreferences.Save("Owner@Example.test", 0, "dark");
+    rerunBefore = StateBefore014(seedBuilder.ConnectionString) + "|" + PreferenceStateOf(seedBuilder.ConnectionString) + "|" + ConstraintsOf(seedBuilder.ConnectionString);
+    Migrate(seedBuilder.ConnectionString, "014_user_preferences.sql");
+    Check(StateBefore014(seedBuilder.ConnectionString) + "|" + PreferenceStateOf(seedBuilder.ConnectionString) + "|" + ConstraintsOf(seedBuilder.ConnectionString) == rerunBefore &&
+          seedPreferences.Get("owner@example.test") == new UserPreferences("dark", 1), "rerunning 014 changed stored rows or constraints");
+
+    Console.WriteLine("PASS: isolated PostgreSQL service boundary, validation, hierarchy and its attributes, commercial firms, crops and their seed, plot crops, campaigns, labors, stages, contractors, inputs, plot campaign areas, recipes and work orders with concurrent revisions and numbering, across fields, search, print documents, default client firms, the 010 reference alignment, the 011 providers, contacts, client links, prices and quote comparisons, the 012 soil and seed analyses, the 013 staff and work order responsibles, and the 014 user preferences");
     return 0;
 }
 finally

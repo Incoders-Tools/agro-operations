@@ -33,6 +33,7 @@ public static class BackofficeRoutes
         var soilAnalyses = new SoilAnalysisService(new PostgresSoilAnalysisRepository(connectionString));
         var seedAnalyses = new SeedAnalysisService(new PostgresSeedAnalysisRepository(connectionString));
         var staff = new StaffCatalog(new PostgresStaffRepository(connectionString));
+        var preferences = new UserPreferenceService(new PostgresUserPreferenceRepository(connectionString));
         var protectedRoutes = local.MapGroup("").RequireAuthorization().AddEndpointFilter(async (context, next) =>
         {
             if (HttpMethods.IsGet(context.HttpContext.Request.Method)) return await next(context);
@@ -113,6 +114,11 @@ public static class BackofficeRoutes
         protectedRoutes.MapGet("/staff/{id:guid}", (Guid id) => Item(staff.Get(id)));
         protectedRoutes.MapPost("/staff", (StaffInput input) => Create(() => staff.Create(input.Draft())));
         protectedRoutes.MapPut("/staff/{id:guid}", (Guid id, RevisionStaffInput input) => Change(() => staff.Update(id, input.Revision, input.Draft())));
+        // Preferences of the logged-in identity, keyed by the session's email: without stored ones, light at revision 0 (nothing is written).
+        // Revision 0 creates them; any other revision updates them.
+        protectedRoutes.MapGet("/me/preferences", (ClaimsPrincipal principal) => Change(() => preferences.Get(principal.FindFirstValue(ClaimTypes.NameIdentifier))));
+        protectedRoutes.MapPut("/me/preferences", (ClaimsPrincipal principal, PreferencesInput input) =>
+            Change(() => preferences.Save(principal.FindFirstValue(ClaimTypes.NameIdentifier), input.Revision, input.Theme)));
         protectedRoutes.MapGet("/clients/{id:guid}", (Guid id) => Item(operations.GetClient(id)));
         protectedRoutes.MapGet("/fields/{id:guid}", (Guid id) => Item(operations.GetField(id)));
         protectedRoutes.MapGet("/plots/{id:guid}", (Guid id) => Item(operations.GetPlot(id)));
@@ -229,6 +235,7 @@ public static class BackofficeRoutes
     {
         public StaffDraft Draft() => new(FullName, Title, Role, LicenseNumber, Email, Phone, Active ?? true, Notes);
     }
+    public sealed record PreferencesInput(string? Theme, long Revision);
     public sealed record CancelWorkOrderInput(long Revision, string? Reason);
     public sealed record RevisionOnlyInput(long Revision);
     public sealed record PlotCropInput(Guid PlotId, Guid CampaignId, Guid CropId, short Position, string Role, string? Variety,

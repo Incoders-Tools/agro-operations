@@ -22,7 +22,7 @@ try
     using (var db = new NpgsqlConnection(scoped.ConnectionString))
     {
         db.Open();
-        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql", "010_reference_alignment.sql", "011_providers_and_quotes.sql", "012_analyses.sql", "013_staff.sql" })
+        foreach (var name in new[] { "001_operations.sql", "003_crops.sql", "004_agronomy.sql", "005_import_records.sql", "006_catalogs.sql", "007_attributes.sql", "008_work_orders.sql", "009_ot_across_fields.sql", "010_reference_alignment.sql", "011_providers_and_quotes.sql", "012_analyses.sql", "013_staff.sql", "014_user_preferences.sql" })
         {
             var file = Path.Combine(root, "src", "AgroOperations.Api", "Persistence", "Migrations", name);
             using var migration = new NpgsqlCommand(File.ReadAllText(file), db);
@@ -1187,6 +1187,34 @@ try
         if (freeEdit.StatusCode != HttpStatusCode.OK || (await Body(freeEdit)) is var freeEditRow && (!Absent(freeEditRow, "responsibleStaffId") ||
             freeEditRow.GetProperty("responsibleEngineer").GetString() != "Texto libre" || freeEditRow.GetProperty("revision").GetInt64() != 2))
             throw new Exception("Work order edit without staff failed");
+
+        // Preferences of the logged-in identity: a missing row reads as light at revision 0; revision 0 creates, later writes are revision-guarded.
+        using (var anonymous = new HttpClient { BaseAddress = client.BaseAddress })
+            if ((await anonymous.GetAsync("/api/v1/me/preferences")).StatusCode != HttpStatusCode.Unauthorized ||
+                (await anonymous.PutAsJsonAsync("/api/v1/me/preferences", new { theme = "dark", revision = 0L })).StatusCode != HttpStatusCode.Unauthorized)
+                throw new Exception("Anonymous preferences accessible");
+        async Task<string> Preferences() => await client.GetStringAsync("/api/v1/me/preferences");
+        var defaultPreferences = await Preferences();
+        if (defaultPreferences != "{\"theme\":\"light\",\"revision\":0}" ||
+            (await client.PutAsJsonAsync("/api/v1/me/preferences", new { theme = "dark", revision = 0L })).StatusCode != HttpStatusCode.Forbidden ||
+            !await IsError(await Send(HttpMethod.Put, "/api/v1/me/preferences", new { theme = "blue", revision = 0L }), HttpStatusCode.BadRequest, "Theme must be light or dark") ||
+            !await IsError(await Send(HttpMethod.Put, "/api/v1/me/preferences", new { theme = (string?)null, revision = 0L }), HttpStatusCode.BadRequest,
+                "Theme must be light or dark") ||
+            await Preferences() != defaultPreferences)
+            throw new Exception("Rejected preferences changed the stored theme");
+        var darkPreferences = await Send(HttpMethod.Put, "/api/v1/me/preferences", new { theme = "dark", revision = 0L });
+        if (darkPreferences.StatusCode != HttpStatusCode.OK || await darkPreferences.Content.ReadAsStringAsync() != "{\"theme\":\"dark\",\"revision\":1}" ||
+            await Preferences() != "{\"theme\":\"dark\",\"revision\":1}")
+            throw new Exception("Preferences create failed");
+        if (!await IsError(await Send(HttpMethod.Put, "/api/v1/me/preferences", new { theme = "light", revision = 0L }), HttpStatusCode.Conflict, "Stale revision") ||
+            !await IsError(await Send(HttpMethod.Put, "/api/v1/me/preferences", new { theme = "light", revision = 5L }), HttpStatusCode.Conflict, "Stale revision") ||
+            (await client.PutAsJsonAsync("/api/v1/me/preferences", new { theme = "light", revision = 1L })).StatusCode != HttpStatusCode.Forbidden ||
+            await Preferences() != "{\"theme\":\"dark\",\"revision\":1}")
+            throw new Exception("Stale or unprotected preferences write changed the stored theme");
+        var lightPreferences = await Send(HttpMethod.Put, "/api/v1/me/preferences", new { theme = "light", revision = 1L });
+        if (lightPreferences.StatusCode != HttpStatusCode.OK || await lightPreferences.Content.ReadAsStringAsync() != "{\"theme\":\"light\",\"revision\":2}" ||
+            await Preferences() != "{\"theme\":\"light\",\"revision\":2}")
+            throw new Exception("Preferences update failed");
 
         using (var anonymous = new HttpClient { BaseAddress = client.BaseAddress })
             if ((await anonymous.GetAsync("/api/v1/import-records")).StatusCode != HttpStatusCode.Unauthorized)
